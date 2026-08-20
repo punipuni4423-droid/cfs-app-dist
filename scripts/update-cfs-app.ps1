@@ -112,6 +112,53 @@ function Invoke-WithProductionNodeEnv {
   }
 }
 
+function Start-CfsAppServer {
+  # Starts the app on $Port. Prefers the freshly built .next standalone output;
+  # falls back to the shipped runtime\server.js (packaged installs keep it even
+  # after a failed rebuild) so the browser can always reconnect and read the
+  # update status - including a failure.
+  $outLog = Join-Path $appPath ("start-" + $Port + ".out.log")
+  $errLog = Join-Path $appPath ("start-" + $Port + ".err.log")
+  $standaloneServer = Join-Path $appPath ".next\standalone\server.js"
+  $bundledRuntimeServer = Join-Path $appPath "runtime\server.js"
+  $serverEntry = $null
+  if (Test-Path -LiteralPath $standaloneServer) {
+    $serverEntry = $standaloneServer
+    Write-Log "Using Next standalone runtime for restart."
+  } elseif (Test-Path -LiteralPath $bundledRuntimeServer) {
+    $serverEntry = $bundledRuntimeServer
+    Write-Log "Using bundled runtime\server.js for restart."
+  }
+  if ($serverEntry) {
+    $bundledNodeHome = $null
+    $runtimeDir = Join-Path $appPath ".cfs-runtime"
+    if (Test-Path -LiteralPath $runtimeDir) {
+      $bundledNodeExe = Get-ChildItem -LiteralPath $runtimeDir -Filter "node.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($bundledNodeExe) {
+        $bundledNodeHome = $bundledNodeExe.Directory.FullName
+      }
+    }
+    $pathPrefix = if ($bundledNodeHome) { "set `"PATH=$bundledNodeHome;%PATH%`" && " } else { "" }
+    $startCommand = $pathPrefix + "set `"PORT=$Port`" && set `"HOSTNAME=$HostName`" && set `"NODE_ENV=production`" && set `"CFS_APP_DIR=$appPath`" && node.exe `"$serverEntry`""
+    Start-Process -FilePath $env:ComSpec `
+      -ArgumentList @("/d", "/s", "/c", $startCommand) `
+      -WorkingDirectory $appPath `
+      -RedirectStandardOutput $outLog `
+      -RedirectStandardError $errLog `
+      -WindowStyle Hidden | Out-Null
+    return
+  }
+  Write-Log "Using NODE_ENV=production for Next start."
+  Invoke-WithProductionNodeEnv {
+    Start-Process -FilePath "npm.cmd" `
+      -ArgumentList @("run", "start", "--", "-p", [string]$Port, "-H", $HostName) `
+      -WorkingDirectory $appPath `
+      -RedirectStandardOutput $outLog `
+      -RedirectStandardError $errLog `
+      -WindowStyle Hidden | Out-Null
+  }
+}
+
 function Clear-NextRuntimeEnvironmentForBuild {
   $runtimeEnvNames = @(
     "__NEXT_PRIVATE_STANDALONE_CONFIG",
@@ -338,43 +385,24 @@ try {
   Write-UpdateStatus -State "running" -Step "restart" -Message "Restarting app." -Progress 94 -BackupPath $backupPath
   Stop-AppListeners -TargetPort $Port
   Start-Sleep -Seconds 1
-  $outLog = Join-Path $appPath ("start-" + $Port + ".out.log")
-  $errLog = Join-Path $appPath ("start-" + $Port + ".err.log")
-  $standaloneServer = Join-Path $appPath ".next\standalone\server.js"
-  if (Test-Path -LiteralPath $standaloneServer) {
-    Write-Log "Using Next standalone runtime for restart."
-    $bundledNodeHome = $null
-    $runtimeDir = Join-Path $appPath ".cfs-runtime"
-    if (Test-Path -LiteralPath $runtimeDir) {
-      $bundledNodeExe = Get-ChildItem -LiteralPath $runtimeDir -Filter "node.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-      if ($bundledNodeExe) {
-        $bundledNodeHome = $bundledNodeExe.Directory.FullName
-      }
-    }
-    $pathPrefix = if ($bundledNodeHome) { "set `"PATH=$bundledNodeHome;%PATH%`" && " } else { "" }
-    $startCommand = $pathPrefix + "set `"PORT=$Port`" && set `"HOSTNAME=$HostName`" && set `"NODE_ENV=production`" && set `"CFS_APP_DIR=$appPath`" && node.exe `"$standaloneServer`""
-    Start-Process -FilePath $env:ComSpec `
-      -ArgumentList @("/d", "/s", "/c", $startCommand) `
-      -WorkingDirectory $appPath `
-      -RedirectStandardOutput $outLog `
-      -RedirectStandardError $errLog `
-      -WindowStyle Hidden | Out-Null
-  } else {
-    Write-Log "Using NODE_ENV=production for Next start."
-    Invoke-WithProductionNodeEnv {
-    Start-Process -FilePath "npm.cmd" `
-      -ArgumentList @("run", "start", "--", "-p", [string]$Port, "-H", $HostName) `
-      -WorkingDirectory $appPath `
-      -RedirectStandardOutput $outLog `
-      -RedirectStandardError $errLog `
-      -WindowStyle Hidden | Out-Null
-    }
-  }
+  Start-CfsAppServer
 
   Write-UpdateStatus -State "completed" -Step "done" -Message "Update completed. Reload the browser." -Progress 100 -BackupPath $backupPath
   Write-Log "CFS self update completed."
 } catch {
   Write-Log ("FAILED: " + $_.Exception.Message)
   Write-UpdateStatus -State "failed" -Step "failed" -Message $_.Exception.Message -Progress 100
+  # The listeners may already be stopped (install/build steps stop them). Bring
+  # the previous app back up so the waiting browser page can reconnect and show
+  # this failure instead of sitting on "reconnecting" forever.
+  try {
+    $stillListening = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    if (-not $stillListening) {
+      Write-Log "Restarting app after failed update so the UI can reconnect."
+      Start-CfsAppServer
+    }
+  } catch {
+    Write-Log ("Could not restart app after failure: " + $_.Exception.Message)
+  }
   exit 1
 }

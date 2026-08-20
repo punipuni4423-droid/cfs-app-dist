@@ -39,6 +39,10 @@ interface AppUpdateStatus {
 }
 
 const UPDATE_SESSION_KEY = "cfs-self-update-active";
+// How long the page may fail to reach the server mid-update before we surface
+// recovery guidance. Dependency install + rebuild on a fresh package can
+// legitimately take 10+ minutes.
+const STALL_THRESHOLD_MS = 15 * 60 * 1000;
 
 const STEP_LABELS: Record<string, string> = {
   queued: "Starting update",
@@ -127,8 +131,13 @@ function statusMessage(status: AppUpdateStatus | null, applyStarted: boolean): s
 }
 
 function runStepLabel(status: AppUpdateStatus | null, updateSessionActive: boolean): string {
-  if (status?.state === "checking_failed" && updateSessionActive) return "Restarting / reconnecting";
   const step = status?.lastRun?.currentStep;
+  if (status?.state === "checking_failed" && updateSessionActive) {
+    // The server is intentionally offline during install/build/restart. Show
+    // the last known real step instead of pretending we are at the end.
+    const base = step ? STEP_LABELS[step] ?? step : "Restarting";
+    return `${base} (reconnecting)`;
+  }
   if (!step) return updateSessionActive ? "Starting update" : "Checking update";
   return STEP_LABELS[step] ?? step;
 }
@@ -136,9 +145,9 @@ function runStepLabel(status: AppUpdateStatus | null, updateSessionActive: boole
 function runProgress(status: AppUpdateStatus | null, updateSessionActive: boolean): number {
   const progress = status?.lastRun?.progress;
   if (typeof progress === "number" && Number.isFinite(progress)) return boundedProgress(progress);
-  if (status?.state === "checking_failed" && updateSessionActive) return 96;
   const step = status?.lastRun?.currentStep;
   if (step && STEP_PROGRESS[step] !== undefined) return STEP_PROGRESS[step];
+  if (status?.state === "checking_failed" && updateSessionActive) return 96;
   return updateSessionActive ? 2 : 0;
 }
 
@@ -149,10 +158,10 @@ function overlayTitle(status: AppUpdateStatus | null): string {
 }
 
 function overlayMessage(status: AppUpdateStatus | null, updateSessionActive: boolean): string {
-  if (status?.lastRun?.message) return status.lastRun.message;
   if (status?.state === "checking_failed" && updateSessionActive) {
-    return "The app is restarting. This page will reconnect and reload automatically.";
+    return "The server is offline while the update installs dependencies and rebuilds. This can take 5-15 minutes; the page reconnects and reloads automatically.";
   }
+  if (status?.lastRun?.message) return status.lastRun.message;
   return "Please do not edit, import, export, or save while the update is running.";
 }
 
@@ -161,9 +170,11 @@ export default function AppUpdateControl() {
   const [busy, setBusy] = useState(false);
   const [applyStarted, setApplyStarted] = useState(false);
   const [updateSessionActive, setUpdateSessionActive] = useState(false);
+  const [stalled, setStalled] = useState(false);
   const checkingRef = useRef(false);
   const statusRef = useRef<AppUpdateStatus | null>(null);
   const updateSessionActiveRef = useRef(false);
+  const disconnectedSinceRef = useRef<number | null>(null);
 
   const title = useMemo(() => {
     if (updateSessionActive || applyStarted) return "Update is running. The app will reload automatically.";
@@ -208,10 +219,15 @@ export default function AppUpdateControl() {
       const query = options.fetchRemote === true ? "?fetchRemote=1" : "?fetchRemote=0";
       const response = await fetch(`/api/app-update/status${query}`, { cache: "no-store" });
       const payload = (await response.json()) as AppUpdateStatus;
+      disconnectedSinceRef.current = null;
+      setStalled(false);
       statusRef.current = payload;
       setStatus(payload);
       return payload;
     } catch {
+      if (updateSessionActiveRef.current && disconnectedSinceRef.current === null) {
+        disconnectedSinceRef.current = Date.now();
+      }
       const failed: AppUpdateStatus = {
         enabled: true,
         state: "checking_failed",
@@ -224,7 +240,13 @@ export default function AppUpdateControl() {
         checkedAt: new Date().toISOString(),
         appDir: statusRef.current?.appDir,
         gitPath: statusRef.current?.gitPath,
+        // Keep the last progress the server reported before it went offline so
+        // the overlay shows the real step instead of a fake near-complete bar.
+        lastRun: statusRef.current?.lastRun,
       };
+      if (updateSessionActiveRef.current && disconnectedSinceRef.current !== null) {
+        setStalled(Date.now() - disconnectedSinceRef.current > STALL_THRESHOLD_MS);
+      }
       statusRef.current = failed;
       setStatus(failed);
       return failed;
@@ -391,6 +413,13 @@ export default function AppUpdateControl() {
             </div>
             {status?.lastRun?.state === "completed" ? (
               <p className="app-update-overlay-note">Reloading automatically.</p>
+            ) : null}
+            {stalled && status?.state === "checking_failed" ? (
+              <p className="app-update-overlay-note">
+                The update is taking longer than expected. Check the newest log in
+                artifacts\self-update, or close this page and start CFS again with
+                LAUNCH_CFS_APP.cmd.
+              </p>
             ) : null}
             {status?.lastRun?.state === "failed" ? (
               <div className="app-update-overlay-actions">
