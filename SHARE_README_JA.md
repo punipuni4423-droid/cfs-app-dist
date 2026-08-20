@@ -106,20 +106,9 @@ Git管理ZIPでは、利用者PCにGit for Windowsがインストールされて
 
 Git管理ZIPでは、Project Selection画面のApp Updateから更新確認できます。`Git was not found` が出る場合は、古いZIPまたはPortableGitなしのZIPを起動している可能性があります。最新版のGit管理ZIPを使い、ショートカットを作り直してください。
 
-### 更新リポジトリへのサインイン（初回のみ）
+### 更新元リポジトリについて
 
-更新元のGitHubリポジトリは非公開のため、更新確認には利用者PC側のGit読み取り認証が必要です。`Update repository sign-in failed` と表示された場合は、次の手順で一度だけサインインしてください。
-
-1. 配布元に、自分のGitHubアカウントへ読み取り権限（collaborator招待）を付与してもらう。GitHubアカウントがない場合は先に作成する。
-2. CFSの展開フォルダで `START_CFS_APP_CONSOLE.bat` などのコンソールを開くか、エクスプローラーのアドレス欄に `cmd` と入力してコマンドプロンプトを開く。
-3. 次を実行する（同梱PortableGitを使用）:
-
-```text
-.cfs-runtime\git\cmd\git.exe fetch
-```
-
-4. ブラウザでGitHubサインイン画面が開くので、招待を受けたアカウントでサインインする。
-5. 完了後、CFS画面のApp UpdateでRetry Checkを押す。認証情報はWindowsに保存されるため、次回以降の操作は不要です。
+更新元は公開配布リポジトリ（cfs-app-dist）です。読み取りに認証は不要のため、**GitHubアカウントやサインインなしで**更新確認・更新ができます。`Update repository sign-in failed` が表示される場合は、旧ZIP（非公開リポジトリを参照する版）を使用している可能性があるため、最新のZIPへ入れ替えてください。
 
 Personal Access Tokenや秘密鍵をZip、フォルダ、メモに保存しないでください。
 

@@ -3,6 +3,10 @@ param(
   [string]$PackageName = "CFS-GitManaged",
   [string]$RemoteUrl,
   [string]$RuntimeSourceDirectory,
+  # Repository the package .git is cloned from. Default is the app repo itself.
+  # For public distribution, pass the dist working copy (clean single-commit
+  # history) so the private cfs-app history never ships inside the ZIP.
+  [string]$CloneSourceDirectory,
   [switch]$IncludeSharedDatabaseConfig,
   [switch]$SkipRuntimeBuild,
   [switch]$ExcludeBundledNode,
@@ -96,8 +100,16 @@ function New-ZipArchiveIncludingHidden {
   }
 }
 
+if (-not $CloneSourceDirectory) {
+  $CloneSourceDirectory = $appRoot
+}
+$cloneSource = (Resolve-Path -LiteralPath $CloneSourceDirectory).Path
+if (-not (Test-Path -LiteralPath (Join-Path $cloneSource ".git"))) {
+  throw "CloneSourceDirectory is not a Git repository: $cloneSource"
+}
+
 if (-not $RemoteUrl) {
-  $RemoteUrl = (& git -C $appRoot remote get-url origin).Trim()
+  $RemoteUrl = (& git -C $cloneSource remote get-url origin).Trim()
 }
 if (-not $RemoteUrl) {
   throw "RemoteUrl is required when the source repository has no origin remote."
@@ -161,7 +173,7 @@ if ($IncludeSharedDatabaseConfig -and -not (Test-Path -LiteralPath (Join-Path $r
   throw "Runtime source is missing public shared database config."
 }
 
-& git clone --local --no-hardlinks $appRoot $packageRoot | Out-Host
+& git clone --local --no-hardlinks $cloneSource $packageRoot | Out-Host
 if ($LASTEXITCODE -ne 0) {
   throw "Git clone failed."
 }

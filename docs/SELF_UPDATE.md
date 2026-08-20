@@ -83,3 +83,21 @@ git push -u origin <branch-name>
 Private repositoryを使う場合、本番PCのGit認証はGitHub credential manager、deploy key、または組織の標準手順で読み取り権限を付与してください。秘密鍵やPersonal Access TokenをCFSのZip、Git、説明書、ログへ入れないでください。
 
 同梱PortableGitの`etc/gitconfig`は、パッケージ作成時に`credential.helper = manager`(パス非依存の形式)へ自動修正されます。ビルド機の絶対パス入りcredential helper設定が混入すると配布先でGit認証が壊れるため、`audit-release-secrets.ps1`もこの形式を検査します。
+
+## 公開配布リポジトリ(cfs-app-dist)運用
+
+2026-08-20以降、配布パッケージの更新元は公開リポジトリ `punipuni4423-droid/cfs-app-dist` です。受領者はGitHubアカウント不要で更新できます。本体`cfs-app`はprivateのまま維持し、顧客名を含む一時スクリプト(scripts/sync-cfs-dist-repo.ps1の除外リスト参照)と非公開履歴はdistへ出しません。
+
+リリース手順:
+
+```powershell
+# 1. cfs-appをコミットしてから、distへ1コミット追記(除外+内容監査つき)
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\sync-cfs-dist-repo.ps1
+
+# 2. distをcloneソースにしてパッケージ作成(package originはdistのURLになる)
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-cfs-git-managed-share-package.ps1 `
+  -PackageName "CFS-Database-Latest-GitManaged" -IncludeSharedDatabaseConfig `
+  -CloneSourceDirectory "C:\dev\AI\CFS\_cfs-app-dist"
+```
+
+distの履歴は線形(fast-forward)を維持すること。ZIP内の`.git`はdistのクリーン履歴のみを含み、cfs-appのprivate履歴を含まないことをリリース前に確認する。
