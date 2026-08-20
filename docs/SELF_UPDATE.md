@@ -86,7 +86,9 @@ Private repositoryを使う場合、本番PCのGit認証はGitHub credential man
 
 ## 公開配布リポジトリ(cfs-app-dist)運用
 
-2026-08-20以降、配布パッケージの更新元は公開リポジトリ `punipuni4423-droid/cfs-app-dist` です。受領者はGitHubアカウント不要で更新できます。本体`cfs-app`はprivateのまま維持し、顧客名を含む一時スクリプト(scripts/sync-cfs-dist-repo.ps1の除外リスト参照)と非公開履歴はdistへ出しません。
+2026-08-20以降、配布パッケージの更新元は公開リポジトリ `punipuni4423-droid/cfs-app-dist` です。受領者はGitHubアカウント不要で更新できます。本体`cfs-app`はprivateのまま維持し、非公開履歴はdistへ出しません。
+
+顧客名を含む一回限りのデータ修正スクリプトは2026-08-20にGit管理から削除済みです(必要なら本体privateリポジトリの履歴から復元可能)。**今後、顧客名や案件識別子を含む一時スクリプトはGit管理外の `scripts-local/` に置くこと**(.gitignore登録済み)。`scripts/sync-cfs-dist-repo.ps1` の除外リストと内容監査(顧客名・Supabase ref検査)は再発防止の保険として維持します。
 
 リリース手順:
 
