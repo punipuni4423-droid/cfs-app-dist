@@ -2221,6 +2221,13 @@ body.cfs-top-ui-collapsed .project-screen-shell > .collaboration-bar {
   font-size: 0.72rem;
   font-weight: 800;
   line-height: 1.2;
+  /* Long status messages (e.g. Git auth failures) must not grow the header
+     pill; clamp to two lines. The full text stays available via the pill's
+     title tooltip. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 .app-update-control-available,
