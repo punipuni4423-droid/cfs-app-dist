@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">CFS app icon 07 - C mark</title>
+  <desc id="desc">A bold C-shaped mark built from schedule cells.</desc>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#f7f9fa"/>
+  <rect x="14" y="14" width="100" height="100" rx="23" fill="#ffffff" stroke="#e5e7eb" stroke-width="3"/>
+  <path d="M90 37C83 31 73 28 62 28C42 28 27 43 27 64C27 85 42 100 62 100C75 100 85 95 92 87" fill="none" stroke="#007b7e" stroke-width="15" stroke-linecap="round"/>
+  <rect x="43" y="43" width="42" height="42" rx="8" fill="#ffffff"/>
+  <path d="M43 57H85M43 71H85M57 43V85M71 43V85" stroke="#d6e6e7" stroke-width="3"/>
+  <circle cx="90" cy="37" r="7" fill="#f59e0b"/>
+  <circle cx="92" cy="87" r="7" fill="#007b7e"/>
+</svg>

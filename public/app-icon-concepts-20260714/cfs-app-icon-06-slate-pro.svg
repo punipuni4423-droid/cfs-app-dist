@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">CFS app icon 06 - slate pro</title>
+  <desc id="desc">A darker professional CFS app tile with a white sheet mark.</desc>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#374151"/>
+  <rect x="25" y="28" width="78" height="72" rx="16" fill="#ffffff"/>
+  <path d="M25 50H103M25 72H103M46 28V100M64 28V100M82 28V100" stroke="#dbe5ea" stroke-width="3"/>
+  <path d="M41 82L55 66L69 75L89 53" fill="none" stroke="#007b7e" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="41" cy="82" r="6" fill="#007b7e"/>
+  <circle cx="89" cy="53" r="7" fill="#f59e0b"/>
+  <path d="M40 41H88" stroke="#007b7e" stroke-width="6" stroke-linecap="round"/>
+</svg>

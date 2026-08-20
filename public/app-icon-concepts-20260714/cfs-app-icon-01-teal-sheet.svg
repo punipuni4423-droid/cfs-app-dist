@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">CFS app icon 01 - teal sheet</title>
+  <desc id="desc">A high-contrast teal app icon with a white CFS sheet mark.</desc>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#007b7e"/>
+  <rect x="27" y="28" width="74" height="72" rx="14" fill="#ffffff"/>
+  <path d="M27 48H101M46 28V100M64 28V100M82 28V100M27 66H101M27 84H101" stroke="#d6e6e7" stroke-width="3"/>
+  <path d="M40 78L55 64L70 73L91 50" fill="none" stroke="#007b7e" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="40" cy="78" r="7" fill="#007b7e"/>
+  <circle cx="70" cy="73" r="7" fill="#007b7e"/>
+  <circle cx="91" cy="50" r="7" fill="#f59e0b"/>
+</svg>

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CFS App ユーザーマニュアル</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --text: #172033;
+      --muted: #5f6b7a;
+      --line: #d9e1ea;
+      --accent: #0f8fa8;
+      --accent-soft: #e8f7fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Noto Sans JP", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.7;
+    }
+    header {
+      padding: 40px 28px 28px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+    main {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 22px;
+      margin: 0 0 18px;
+    }
+    h1, h2, h3 { line-height: 1.3; margin: 0 0 12px; }
+    h1 { font-size: 30px; }
+    h2 { font-size: 22px; border-left: 5px solid var(--accent); padding-left: 10px; }
+    h3 { font-size: 17px; margin-top: 18px; }
+    p { margin: 0 0 12px; }
+    ul, ol { margin-top: 8px; padding-left: 24px; }
+    li { margin: 4px 0; }
+    code {
+      background: var(--accent-soft);
+      color: #0b6273;
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-family: Consolas, monospace;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      vertical-align: top;
+    }
+    th { background: #eef5f8; text-align: left; }
+    .meta { color: var(--muted); }
+    .note {
+      background: #fff8e6;
+      border: 1px solid #ecd28a;
+      border-radius: 8px;
+      padding: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>CFS App ユーザーマニュアル</h1>
+    <p class="meta">一般配布版 / 更新日: 2026-06-23</p>
+    <p>このマニュアルは、CFSアプリをローカル環境で共有・運用するための一般化された説明書です。特定プロジェクト名には依存しません。</p>
+  </header>
+  <main>
+    <section>
+      <h2>1. アプリの目的</h2>
+      <p>CFS Appは、照明制御、デバイス割当、シーン、スイッチ、PIR/QSM、Backlight、HVACなどの情報を整理し、CFSとして確認・出力するためのローカルWebアプリです。</p>
+      <p>作業データはアプリフォルダ内の <code>data/projects.json</code> と <code>data/trash/trash.json</code> に保存されます。</p>
+    </section>
+
+    <section>
+      <h2>2. 起動方法</h2>
+      <ol>
+        <li>ZIPを任意のフォルダへ展開します。</li>
+        <li>Node.js LTSをインストールします。</li>
+        <li><code>START_CFS_APP.bat</code> をダブルクリックします。</li>
+        <li>初回のみ依存関係のインストールが実行されます。</li>
+        <li>ブラウザで <code>http://localhost:3000</code> を開きます。</li>
+      </ol>
+      <div class="note">既に別のアプリが3000番ポートを使用している場合、起動ログに表示される別ポートのURLを開いてください。</div>
+    </section>
+
+    <section>
+      <h2>3. 基本ワークフロー</h2>
+      <ol>
+        <li>Projectを作成または選択します。</li>
+        <li>Locations / Areasで部屋・エリアを登録します。</li>
+        <li>Fixturesで照明器具情報を登録します。</li>
+        <li>Circuitで回路、調光方式、Detail、Areaを登録します。</li>
+        <li>Device Assignでデバイス、ゾーン、CCI/CCO、DALIアドレスを割り当てます。</li>
+        <li>CorridorPicoはDevice AssignではなくPDUからPico Switchへ反映します。MUR LED、DND LEDはCFS専用行として確認します。</li>
+        <li>Scene / Area Scene / Switch / Command / Backlightを設定します。</li>
+        <li>CFSタブで最終的な並び、Detail、Area Address、Programming Nameを確認します。検査時に値を調整する場合はInspectionModeでドラフトを作り、終了時の確認ダイアログで反映します。</li>
+        <li>必要に応じてExcelやJSONを出力します。</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>4. 主要タブ</h2>
+      <table>
+        <thead><tr><th>タブ</th><th>用途</th></tr></thead>
+        <tbody>
+          <tr><td>Project</td><td>プロジェクトの作成、選択、名前変更、エクスポートを行います。</td></tr>
+          <tr><td>Locations / Areas</td><td>部屋、エリア、エリアコードを整理します。</td></tr>
+          <tr><td>Fixtures</td><td>器具型番、W数、数量などを整理します。</td></tr>
+          <tr><td>Circuit</td><td>Designer #、調光方式、Detail、Areaを整理します。</td></tr>
+          <tr><td>Device Assign</td><td>機器、ゾーン、CCI/CCO、DALIアドレスを割り当てます。</td></tr>
+          <tr><td>Scene / Area Scene</td><td>シーン名、対象回路、明るさなどを設定します。</td></tr>
+          <tr><td>Switch / PIR / QSM</td><td>スイッチ、センサー、QSMの機能を設定します。Row列のマイナスはFunction行削除、Switch列のコピー/ゴミ箱はスイッチ/CCI/Palladiom/Pico/PIR全体のCopy/Deleteです。PicoのButtonsは通常の1〜5に加えてCorridorとPrivacyを選べます。CorridorPicoはPDU数量からCorridorのPico Switchとして追加され、Chime ButtonはPress4secを初期条件にします。PrivacyはM1をMUR、M2をDNDとして初期化します。</td></tr>
+          <tr><td>Command</td><td>コマンド情報や連携用の値を確認します。</td></tr>
+          <tr><td>Backlight</td><td>スイッチバックライトの条件とレベルを設定します。Palladiom Backlight Assignmentは未設定時にBy Sceneを既定として扱い、Uneffectedは選択肢に出しません。</td></tr>
+          <tr><td>CFS</td><td>最終確認、Area Highlight、Area Address、Programming Name、列表示切替、InspectionModeでのドラフト調整を行います。Link Mapなどの診断機能はSettingsのAdmin Modeで必要時だけ表示します。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>5. CFSタブの確認ポイント</h2>
+      <ul>
+        <li>Area Highlightを使い、同じAreaの行まとまりを確認します。</li>
+        <li>Area Addressが重複していないことを確認します。</li>
+        <li>Programming Nameが標準形式になっていることを確認します。</li>
+        <li>DALIの個別灯にSwitch/Scene値を設定している場合、CFSの同じDetail行に値が出ていることを確認します。</li>
+        <li>Base Columns / Function Columnsは、列見出し上の小ボタンまたは列メニューで表示/非表示を切り替えます。</li>
+        <li>Circuit / Device Assign / Switchの表は大きめのリサイズ可能な作業領域で表示し、表内スクロール時も見出し行を固定して確認します。</li>
+        <li>CFS表は横方向の右端列を固定Base列の直後まで、縦方向の最下行を固定ヘッダーの直下までスクロールできます。右端の機能列やBacklight Logicなどの最終行を、固定列・見出しと並べて確認します。</li>
+        <li>InspectionModeでは、CFSの見た目を保ったままセルをクリックしてドラフト編集します。%セルはオーバーレイで現在値、入力欄、+/-1、+/-10、Raise/Lower/Uneffectedを表示します。On/Off照明とCCOはOn / Off / Blinking / 0.5 sec / Uneffectedをオーバーレイで選び、CCIとHVACはInspectionModeでは編集対象にしません。Linkedは参照元のArea Scene値を調整し、Unlinkはセル単位のOverrideとして調整します。セル編集オーバーレイのOKは入力済みのドラフト値を保持して閉じ、Resetはそのセルを元の値へ戻して閉じます。InspectionMode開始前の値へ戻す場合は、InspectionModeツールバーのRevertでセッション全体を取り消します。InspectionModeを終了する時は、確認ダイアログで新Revisionとして保存するか、現在のRevisionのまま完了するかを選びます。保存済みInspection MarkはHighlightsのInspection Marksで表示/非表示を切り替えられ、通常のSave as New Revisionでは一度リセットされます。</li>
+        <li>Linked Valuesの塗りつぶしは通常非表示です。SettingsのDisplayでAdmin ModeをONにし、CFS Linked Values fillをONにした場合だけ、Scene / Switch / Commandなどと連動しているCFSの機能セルが薄いシアンで表示されます。</li>
+        <li>通常確認やExcel出力前は、InspectionModeをOFFにして表示状態を確認します。</li>
+        <li>Link Mapは通常非表示です。SettingsのDisplayでAdmin ModeとCFS Link MapをONにした場合だけ、CFSタブにLink Mapボタンが表示されます。Overviewは固定レーン型のDependency mapで、Source Data、Scene Values、System Logic、CFS Output、Inspection Finishの流れを確認します。各レーンの代表ノードや連動ルートカードをクリックすると、Current Links、All Rules、Warningsで現状リンク、期待ルール、警告、スナップショット署名を確認できます。通常のCFSタブやサブタブにはリンク未接続の赤い警告表示を出さず、必要時だけLink Mapで診断します。</li>
+        <li>BacklightのLink Map警告では、参照先グループが存在しない場合と、グループは存在するがBacklight対象ではない場合を分けて表示します。CFS Backlight Logicに出す場合は、対象側をBy SceneまたはBaseに設定します。By Sceneは対象指定用の状態であり、CFSには値として表示せず、BaseやMaster Onなど実際のBacklight Scene名だけを表示します。Switch番号、名称、CCI割当、Functionなどが空の未入力行はBacklight警告対象にしません。</li>
+        <li>WarningsにStale HVAC targetが出た場合は、旧HVAC IDをArea Sceneが参照している可能性があります。復旧候補が一意に判定できる場合はRepair Stale HVACで現行HVAC targetへ置換し、復旧直後のRepaired Linksハイライトで該当セルを確認します。</li>
+        <li>DALIはGroup/AddressまたはLine/Group/Addressの並びを確認します。</li>
+        <li>CCIは動作の起点としてSwitch/Command側の列に表示し、CFSのベース行には表示しません。CCOは出力対象としてCFSのベース行に表示します。</li>
+        <li>HVACとBacklight Logicは照明系の並びとは別扱いとして確認します。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>6. データ保存とバックアップ</h2>
+      <p>プロジェクトデータは <code>data</code> フォルダ内に保存されます。アプリを更新するときは、このフォルダを削除または上書きしないでください。</p>
+      <ul>
+        <li>通常バックアップ: <code>data</code> フォルダをコピーします。</li>
+        <li>共有前バックアップ: Project画面のExport、またはJSONバックアップを保存します。</li>
+        <li>共有DBで保存競合が出た場合: 画面を閉じずに、表示された確認で上書き、サーバー版の再読込、JSONバックアップ出力を選択します。上書きは、確認時に表示されたサーバー更新時刻と保存時点の更新時刻が一致する場合だけ実行されます。</li>
+        <li>復旧: バックアップした <code>data/projects.json</code> を戻します。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>7. 共有とアップデート</h2>
+      <h3>フルZIP</h3>
+      <p>初回配布用です。アプリ本体と現在の <code>data</code> フォルダを含みます。別のPCへ同じ状態を渡す場合に使います。</p>
+      <h3>アップデートパッチZIP</h3>
+      <p>更新用です。アプリ本体だけを含み、<code>data</code> フォルダは含みません。既存プロジェクトを残したまま更新する場合に使います。</p>
+      <div class="note">既存環境を更新するときは、フルZIPで上書きせず、データなしのアップデートパッチZIPを使用してください。</div>
+    </section>
+
+    <section>
+      <h2>8. 標準ガイドライン</h2>
+      <p>入力順序、命名、アップデート時のデータ保護については、同梱の <code>docs/CFS_STANDARD_GUIDELINES_2026-06-22.md</code> を確認してください。</p>
+    </section>
+  </main>
+</body>
+</html>

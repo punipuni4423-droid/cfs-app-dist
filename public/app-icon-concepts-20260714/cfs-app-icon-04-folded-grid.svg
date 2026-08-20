@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">CFS app icon 04 - folded grid</title>
+  <desc id="desc">A document-grid app icon with a folded corner and CFS circuit path.</desc>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#f7f9fa"/>
+  <rect x="14" y="14" width="100" height="100" rx="23" fill="#ffffff" stroke="#e5e7eb" stroke-width="3"/>
+  <path d="M34 26H78L97 45V101H34V26Z" fill="#ffffff" stroke="#d1d5db" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M78 27V45H96" fill="#e6f3f3" stroke="#d1d5db" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M43 56H88M43 72H88M43 88H75" stroke="#d1d5db" stroke-width="5" stroke-linecap="round"/>
+  <path d="M44 72L57 58L70 68L88 50" fill="none" stroke="#007b7e" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="88" cy="50" r="6" fill="#f59e0b"/>
+</svg>

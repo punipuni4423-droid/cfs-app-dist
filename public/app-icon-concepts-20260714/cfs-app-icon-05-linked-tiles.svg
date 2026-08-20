@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">CFS app icon 05 - linked tiles</title>
+  <desc id="desc">Three linked tiles representing CFS data coming together.</desc>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#ffffff" stroke="#e5e7eb" stroke-width="4"/>
+  <path d="M43 64H57M71 64H85M64 50V42M64 78V86" stroke="#007b7e" stroke-width="7" stroke-linecap="round"/>
+  <rect x="23" y="46" width="34" height="36" rx="10" fill="#e6f3f3" stroke="#007b7e" stroke-width="5"/>
+  <rect x="71" y="46" width="34" height="36" rx="10" fill="#ffffff" stroke="#007b7e" stroke-width="5"/>
+  <rect x="45" y="30" width="38" height="26" rx="9" fill="#ffffff" stroke="#d1d5db" stroke-width="4"/>
+  <rect x="45" y="72" width="38" height="26" rx="9" fill="#007b7e"/>
+  <path d="M53 43H75M53 85H75" stroke="#d6e6e7" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="88" cy="64" r="5" fill="#f59e0b"/>
+</svg>

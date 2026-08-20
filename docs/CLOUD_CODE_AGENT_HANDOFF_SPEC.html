@@ -1,0 +1,744 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CFS App Cloud Code Agent Handoff Spec</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d9e2ec;
+      --soft: #f6f8fb;
+      --soft-2: #eef6f7;
+      --accent: #0f7a83;
+      --accent-soft: #e4f4f5;
+      --warn: #b45309;
+      --danger: #b42318;
+      --ok: #067647;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Yu Gothic UI", "Meiryo", Arial, sans-serif;
+      color: var(--ink);
+      background: #ffffff;
+      line-height: 1.65;
+    }
+    header {
+      padding: 32px 40px 24px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff, #f8fbfc);
+    }
+    main {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 28px;
+      padding: 28px 40px 60px;
+    }
+    nav {
+      position: sticky;
+      top: 20px;
+      align-self: start;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+    nav a {
+      display: block;
+      padding: 5px 0;
+      color: #31546c;
+      text-decoration: none;
+      font-size: 13px;
+    }
+    nav a:hover { color: var(--accent); text-decoration: underline; }
+    section {
+      margin: 0 0 26px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+    h1, h2, h3 {
+      margin: 0;
+      line-height: 1.25;
+    }
+    h1 { font-size: 30px; letter-spacing: 0; }
+    h2 {
+      margin-bottom: 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+      font-size: 21px;
+    }
+    h3 {
+      margin-top: 20px;
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+    p { margin: 8px 0 12px; }
+    ul, ol { margin: 8px 0 12px 22px; padding: 0; }
+    li { margin: 4px 0; }
+    code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: #f0f3f7;
+      color: #243b53;
+      font-family: Consolas, "SFMono-Regular", monospace;
+      font-size: 0.92em;
+    }
+    pre {
+      overflow: auto;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0f172a;
+      color: #e5e7eb;
+      line-height: 1.5;
+    }
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 18px;
+      table-layout: fixed;
+    }
+    th, td {
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      vertical-align: top;
+      word-break: break-word;
+    }
+    th {
+      background: var(--soft);
+      font-weight: 700;
+      color: #344054;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .callout {
+      padding: 12px 14px;
+      border-left: 4px solid var(--accent);
+      border-radius: 6px;
+      background: var(--accent-soft);
+    }
+    .warning {
+      border-left-color: var(--warn);
+      background: #fff7ed;
+    }
+    .danger {
+      border-left-color: var(--danger);
+      background: #fff1f3;
+    }
+    .ok {
+      border-left-color: var(--ok);
+      background: #ecfdf3;
+    }
+    .small { color: var(--muted); font-size: 13px; }
+    .section-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .cardlet {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+    }
+    .cardlet h3 { margin-top: 0; }
+    .status-ok { color: var(--ok); font-weight: 700; }
+    .status-warn { color: var(--warn); font-weight: 700; }
+    .status-danger { color: var(--danger); font-weight: 700; }
+    @media (max-width: 980px) {
+      main { grid-template-columns: 1fr; padding: 20px; }
+      nav { position: static; }
+      header { padding: 24px 20px; }
+      .section-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>CFS App Cloud Code Agent Handoff Spec</h1>
+    <p>
+      この文書は、Cloud Code などの別エージェントに CFS アプリのフロントエンド/バックエンド確認、
+      コードレビュー、回帰確認を依頼するための引き継ぎ仕様書です。人間向けの簡易マニュアルではなく、
+      「何のための機能か」「どの挙動を壊してはいけないか」「どこを確認すべきか」を明示することを目的にしています。
+    </p>
+    <div class="meta">
+      <span class="pill">対象: cfs-app</span>
+      <span class="pill">Framework: Next.js 15 / React 19 / TypeScript</span>
+      <span class="pill">Current Date: 2026-06-07</span>
+      <span class="pill">Audience: Cloud Code / review agents</span>
+    </div>
+  </header>
+
+  <main>
+    <nav aria-label="Table of contents">
+      <strong>Contents</strong>
+      <a href="#mission">1. 目的と最重要方針</a>
+      <a href="#architecture">2. アーキテクチャ</a>
+      <a href="#data">3. データモデル</a>
+      <a href="#tabs">4. 画面/タブ仕様</a>
+      <a href="#pdu">5. PDU仕様</a>
+      <a href="#deviceassign">6. Circuit / Device Assign</a>
+      <a href="#scene">7. Area Scene / Scene / HVAC</a>
+      <a href="#switch">8. Switch / Command / PIR / QSM</a>
+      <a href="#cfs">9. CFS統合ビュー</a>
+      <a href="#settings">10. Settings / Master</a>
+      <a href="#ui">11. 共通UIルール</a>
+      <a href="#backend">12. バックエンド/保存</a>
+      <a href="#tests">13. 動作確認手順</a>
+      <a href="#review">14. レビュー観点</a>
+      <a href="#do-not-change">15. 勝手に変えないこと</a>
+      <a href="#files">16. 主要ファイル</a>
+    </nav>
+
+    <div>
+      <section id="mission">
+        <h2>1. 目的と最重要方針</h2>
+        <p>
+          CFS アプリは、ホテル/客室などの Lutron/GRMS 系の照明回路、デバイスアサイン、シーン、
+          スイッチ、HVAC、バックライト、CFS 統合表を一つの room type 単位で管理するための業務アプリです。
+          画面は Excel 由来の表入力に近いですが、単なる表ではなく、回路・デバイス・シーン・スイッチ設定を相互連動させることが目的です。
+        </p>
+        <div class="callout danger">
+          <strong>最重要:</strong>
+          レビューや修正時に、見た目の簡略化や一般的な UI 作法を理由に、ユーザーが意図して積み上げた業務仕様を勝手に変えないでください。
+          特に <code>Reserved</code>、<code>Uneffected</code>、DALI、PIR/QSM、CFS 表示、PDU 数量連動は意味を持つため、単純なリファクタ対象ではありません。
+        </div>
+        <h3>この文書で Cloud Code に期待すること</h3>
+        <ul>
+          <li>フロントエンドの全タブをブラウザで開き、表示崩れ、リストはみ出し、文字切れ、横スクロール過多、操作不能箇所を確認する。</li>
+          <li>バックエンド API、保存、移行、JSON ファイルの読み書き、フォールバック挙動を確認する。</li>
+          <li>型チェック、必要に応じて Playwright 監査テストを実行する。</li>
+          <li>変更を入れる場合は既存 UI の意味を維持し、勝手に用語やタブ構成を変えない。</li>
+        </ul>
+      </section>
+
+      <section id="architecture">
+        <h2>2. アーキテクチャ</h2>
+        <table>
+          <thead>
+            <tr><th>項目</th><th>現状</th><th>注意</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Framework</td>
+              <td><code>Next.js 15.3.2</code>, <code>React 19.1.0</code>, TypeScript</td>
+              <td>App Router 構成。多くの UI は client component。</td>
+            </tr>
+            <tr>
+              <td>保存</td>
+              <td>プロジェクト本体は <code>/api/projects</code> 経由で <code>data/projects.json</code> に保存。Trash は <code>/api/trash</code> 経由で <code>data/trash/trash.json</code>。</td>
+              <td>ブラウザ localStorage はフォールバック/設定/表示設定にも使う。古い docs の「localStorage のみ」は現在の正ではない。</td>
+            </tr>
+            <tr>
+              <td>App Settings</td>
+              <td><code>cfs-app-settings-v3</code> in localStorage</td>
+              <td>Device Master、Input Master、Trigger Master、表示倍率、<code>wattPerPdu</code> を保持。</td>
+            </tr>
+            <tr>
+              <td>Project schema</td>
+              <td><code>STORAGE_KEY = cfs-projects-v14</code></td>
+              <td>API保存時も migration で正規化する。</td>
+            </tr>
+            <tr>
+              <td>Export</td>
+              <td><code>exceljs</code> を使用</td>
+              <td>CFS Excel 出力と CSV import/export がある。<code>xlsx</code> パッケージは現行依存ではない。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>起動/確認コマンド</h3>
+        <pre><code>cd "C:\Users\IoT-136\AppData\Local\Codex\cfs-app-run"
+npm run dev -- -p 3000
+
+# 型チェック
+npm run typecheck
+
+# 本番ビルド確認
+npm run build</code></pre>
+        <p class="small">
+          現在の開発/確認用実行コピーは <code>C:\Users\IoT-136\AppData\Local\Codex\cfs-app-run</code>。
+          ソース側は <code>C:\Dev\AI\CFS\cfs-app</code>。
+        </p>
+      </section>
+
+      <section id="data">
+        <h2>3. データモデル</h2>
+        <p>主要型は <code>app/types.ts</code> にある。レビュー時は型の意味を維持すること。</p>
+        <table>
+          <thead>
+            <tr><th>型</th><th>役割</th><th>重要フィールド</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ProjectData</code></td>
+              <td>プロジェクト全体</td>
+              <td><code>locations</code>, <code>fixtures</code>, <code>circuits</code>, <code>roomTypes</code></td>
+            </tr>
+            <tr>
+              <td><code>RoomType</code></td>
+              <td>客室タイプ単位の設定</td>
+              <td><code>deviceAssignments</code>, <code>hvacAssignments</code>, <code>hvacSeasons</code>, <code>scenes</code>, <code>roomScenes</code>, <code>switches</code>, <code>pduDeviceCounts</code>, <code>revisions</code></td>
+            </tr>
+            <tr>
+              <td><code>CircuitEntry</code></td>
+              <td>Circuit タブの回路行</td>
+              <td><code>designerNumber</code>, <code>internalNumber</code>, <code>dimmingType</code>, <code>fixture</code>, <code>pcs</code>, <code>area</code>, <code>detail</code>, <code>circuitGroupId</code>, <code>daliFixtureGroupId</code></td>
+            </tr>
+            <tr>
+              <td><code>DeviceAssignment</code></td>
+              <td>Device Assign タブのデバイス/ゾーン/回路割当</td>
+              <td><code>deviceGroupId</code>, <code>device</code>, <code>deviceNum</code>, <code>zoneAddress</code>, <code>circuitNumber</code>, <code>detail</code>, <code>group</code></td>
+            </tr>
+            <tr>
+              <td><code>Scene</code></td>
+              <td>Area Scene タブのエリア内シーン</td>
+              <td><code>areaId</code>, <code>name</code>, <code>settings</code></td>
+            </tr>
+            <tr>
+              <td><code>RoomScene</code></td>
+              <td>Scene タブの PMS/Door Magnet などのシーン呼び出し設定</td>
+              <td><code>phase</code>, <code>sceneType</code>, <code>triggerCondition</code>, <code>backlightCondition</code>, <code>areaSceneSelections</code>, <code>settings</code></td>
+            </tr>
+            <tr>
+              <td><code>SwitchEntry</code></td>
+              <td>CCI/Palladiom/Pico/PIR/QSM/Command/Backlight の行</td>
+              <td><code>kind</code>, <code>switchGroupId</code>, <code>switchNumber</code>, <code>switchName</code>, <code>allocation</code>, <code>buttonLabel</code>, <code>buttonSetting</code>, <code>backlightLevels</code></td>
+            </tr>
+            <tr>
+              <td><code>DeviceMaster</code></td>
+              <td>アプリ共通のデバイスマスター</td>
+              <td><code>model</code>, <code>control</code>, <code>addressMode</code>, <code>pdu</code>, <code>watts</code>, <code>isDefault</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="tabs">
+        <h2>4. 画面/タブ仕様</h2>
+        <p>上段タブは <code>Area</code>, <code>Fixture</code>, <code>Room Type</code>。Room Type 選択後のサブタブは次の順番が正です。</p>
+        <ol>
+          <li><code>PDU</code></li>
+          <li><code>Circuit</code></li>
+          <li><code>Device Assign</code></li>
+          <li><code>Area Scene</code></li>
+          <li><code>Scene</code></li>
+          <li><code>Switch</code></li>
+          <li><code>Command</code></li>
+          <li><code>Backlight</code></li>
+          <li><code>CFS</code></li>
+        </ol>
+        <div class="callout">
+          <strong>意図:</strong>
+          PDU は後から確認するだけのタブではなく、先にデバイス数量を決めて他タブへ反映する入口にもするため、一番左に移動されています。
+        </div>
+      </section>
+
+      <section id="pdu">
+        <h2>5. PDU仕様</h2>
+        <p>
+          PDU は Lutron デバイスの PDU/VA と照明器具 VA を統合して、合計 VA と必要ブレーカー数を確認するタブです。
+          ここで数量を変えると、対象の種類に応じて Device Assign / HVAC / Switch / 手動 PDU 数量へ反映されます。
+        </p>
+        <table>
+          <thead>
+            <tr><th>要素</th><th>仕様</th><th>確認ポイント</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>上部 KPI</td>
+              <td><code>Total PDU</code>, <code>1 PDU = N VA</code>, <code>Correction</code>, <code>Breaker</code>, <code>Fixture VA</code>, <code>Lutron Device VA</code>, <code>Combined VA</code></td>
+              <td><code>Fixture VA</code> 横に <code>DALI Included</code> または <code>DALI Excluded</code> を表示する。</td>
+            </tr>
+            <tr>
+              <td>Lutron Device PDU Summary</td>
+              <td>Device Master の <code>pdu</code> または <code>watts</code> を持つデバイスを表示。数量は source 別に連動。</td>
+              <td><code>Show Reserved / Hide Reserved</code> ボタンで数量 0 の行を表示/非表示。ボタンサイズは共通。</td>
+            </tr>
+            <tr>
+              <td>数量 source</td>
+              <td><code>Device Assign</code>, <code>HVAC</code>, <code>Switch</code>, <code>Manual</code></td>
+              <td>アドレス設定を持つデバイスは Device Assign に展開。TSTAT は HVAC。Palladiom/Pico/PIR/QSM は Switch 系へ展開。</td>
+            </tr>
+            <tr>
+              <td>Lighting Fixture VA Summary</td>
+              <td>Circuit と Fixture Master から <code>fixtureUnitVa</code> を使って集計。</td>
+              <td><code>Exclude DALI</code> はチェックボックスではなくボタン。押下後は <code>Show DALI</code> になり、DALI 行が除外される。</td>
+            </tr>
+            <tr>
+              <td>Total Power Summary</td>
+              <td>Lighting Fixture Total VA + Lutron Device Total VA = Combined Total VA。Breaker Rating は 20A。</td>
+              <td>Voltage と Total Current は現在表示しない。Per-Room Device Quantities 表も削除済み。</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>Device Master の現行デフォルト方針</h3>
+        <ul>
+          <li>追加済み: <code>MP-1L-GCU</code>, <code>MP-2L-GCU</code>, <code>GCU-HOSP</code>, <code>GCU-HOSP-1</code>, <code>QSPS-DH-1-75</code>, <code>Palladiom Tstat</code>, <code>QSM</code>, <code>Palladiom Keypad</code> など。</li>
+          <li>削除対象/復活禁止: <code>HQP7-1</code>, <code>Wireless OCC</code>, <code>Pico Remote</code>。</li>
+          <li><code>DeviceAssign</code> で選べるのは <code>DEVICE_ADDRESSES</code> を持つデバイスのみ。PDU 専用/スイッチ専用デバイスを勝手に Device Assign に出さない。</li>
+        </ul>
+      </section>
+
+      <section id="deviceassign">
+        <h2>6. Circuit / Device Assign</h2>
+        <h3>Circuit タブ</h3>
+        <ul>
+          <li>DALI 以外は 1 回路で複数器具がある場合、<code>+</code> ボタン等の見た目は行結合される。DALI は除外。</li>
+          <li><code>pcs</code> は Backspace 後に初期値 <code>1</code> が残って <code>12</code> になる問題を避けるため、空入力を許容する。</li>
+          <li>Fixture Type が <code>DL</code> の場合は pcs を整数単位で上下。<code>Indirect</code> の場合は <code>+0.1/-0.1</code> と <code>+1/-1</code> の調整ボタンを持つ。</li>
+          <li>Fixture の Correction は 0.1 単位で扱う。</li>
+          <li>Detail には Clear ボタンがある。</li>
+          <li>CSV Import / CSV Export を持つ。</li>
+        </ul>
+
+        <h3>Device Assign タブ</h3>
+        <ul>
+          <li>Circuit 選択肢は、割当済みの場合 <code>1 - MQSE-4A1-D/1 Zn1</code> のように回路がどのデバイス/アドレスに割り当たっているかを表示する。</li>
+          <li>リストでは <code>Reserved</code> を表示しない。Clear は <code>Reserved</code> と同義。</li>
+          <li><code>Hide Reserved</code> 状態は localStorage に保持され、タブ移動後も維持する。</li>
+          <li>CCI の Circuit 入力時に Detail を自動入力する機能は削除された。勝手に復活させない。</li>
+          <li>固定デバイスと DALI デバイスでアサインロジックが違う。DALI は line/group/address 表示を持つ。</li>
+          <li>Detail は Clear 可能。Reserved 行の見た目はグレー系で、入力済みと誤認しないようにする。</li>
+          <li>HVAC は Device Assign 内の別モード/セクションとして管理する。</li>
+        </ul>
+      </section>
+
+      <section id="scene">
+        <h2>7. Area Scene / Scene / HVAC</h2>
+        <p>
+          シーン値の未設定状態は UI 上 <code>Uneffected</code> と表示する。この綴りは現在の UI 仕様として維持する。
+          空文字が実データ上の未設定であり、<code>0</code> やグレーの仮値で誤認させないことが重要です。
+        </p>
+        <h3>Area Scene</h3>
+        <ul>
+          <li>Lighting と HVAC は分離されたセクション。HVAC を Bedroom などの通常エリア内に混ぜない。</li>
+          <li>Lighting も HVAC 同様に最小化/最大化できる。</li>
+          <li>On/Off 系には <code>On</code>, <code>Off</code>, <code>Blinking (Short)</code>, <code>Blinking (Long)</code>, <code>0.5 sec</code>, <code>Uneffected</code> がある。</li>
+          <li>調光/パーセント系は <code>0%</code>, <code>100%</code>, <code>-10</code>, <code>-1</code>, <code>+1</code>, <code>+10</code>, <code>Uneffected</code>, <code>Raise</code>, <code>Lower</code> を扱う。InspectionModeでは終了時の確認でドラフトを反映する。</li>
+          <li>HVAC には <code>Link all HVAC</code> があり、チェック時は同じ metric の設定が全 HVAC ターゲットへ連動する。</li>
+        </ul>
+        <h3>Scene タブ</h3>
+        <ul>
+          <li>PMS / Door Magnet などのシーン呼び出し設定を行う。</li>
+          <li>Setting は別ウィンドウではなく、暗い backdrop の手前 overlay として表示する。</li>
+          <li>Overlay は Esc または backdrop で閉じられる。</li>
+          <li>Scene Value と Backlight は overlay 内のボタンで行き来できる。切り替えても上位置がずれないこと。</li>
+          <li>設定が入っている Setting ボタンは色を濃く、未設定は文字が読める程度のグレーにする。</li>
+          <li>Area Scene を割り当てても Individual Override には値を自動コピーしない。CFS では Area Scene 値を基礎とし、Individual があれば Individual を優先する。</li>
+          <li>Individual OverrideはCFS上で優先表示され、HighlightsのIndividual Overrideで表示確認する。旧来の自動展開/Uneffectedのみ折りたたみ挙動には依存しない。</li>
+        </ul>
+        <h3>HVAC Season Schedule</h3>
+        <ul>
+          <li>日付は編集可能。</li>
+          <li>1 行目 end と 2 行目 start、2 行目 end と 3 行目 start、最後の end と 1 行目 start は 1 日違いで連動させる。</li>
+          <li>行追加/削除後も日付が wrap しすぎないように正規化する。</li>
+          <li>HVAC assignment には <code>thermostatRole: Master | Slave</code> がある。CFS の Group/Zone/Address と連動する意味を持つ。</li>
+        </ul>
+      </section>
+
+      <section id="switch">
+        <h2>8. Switch / Command / PIR / QSM</h2>
+        <h3>Switch 共通</h3>
+        <ul>
+          <li>Switch 種別: <code>CCI</code>, <code>Palladiom</code>, <code>Pico</code>, <code>PIR</code>, <code>QSM</code>。</li>
+          <li>Palladiom/Pico はボタン数に応じて行が展開される。</li>
+          <li>Function行の削除とスイッチ全体の削除は列で分ける。Row列のマイナスは該当Function行、Switch列のゴミ箱はスイッチ/CCI/Palladiom/Pico/PIR全体、コピーはCopy Switchを対象にする。Switch列はスイッチ単位で行結合し、中央配置する。</li>
+          <li>Trigger Condition は Trigger Master から選択でき、自由入力も可能。</li>
+          <li>リストは画面外にはみ出さないよう portal/fixed positioning を使う。外側クリックで閉じる。</li>
+        </ul>
+
+        <h3>PIR</h3>
+        <ul>
+          <li>PIR タブ上部に <code>PIR Registration</code> 表がある。ここで Area ごとに PIR の数量を登録する。</li>
+          <li>Area Scene に出ていないエリアにも PIR がある可能性があるため、すべての Area から登録できる。</li>
+          <li>登録された PIR は連番表示 <code>PIR1</code>, <code>PIR2</code>... を持つ。セル内で <code>PIR13</code> のような紛らわしい結合表示を作らない。</li>
+          <li>下のロジック表では、登録済み PIR から複数選択できる。Location 列でどの場所か分かるようにする。</li>
+          <li>CFS 上では PIR 番号と Location を表示する。複数 PIR が絡む場合は summary + 展開 UI で見せる。</li>
+        </ul>
+
+        <h3>QSM</h3>
+        <ul>
+          <li>QSM は PIR に紐づくレシーバー。QSM タブで QSM 行を追加/削除する。</li>
+          <li>PIR 1 台につき QSM は必ず 1 台に紐づく。複数 QSM へ同時割当は不可。</li>
+          <li>片方の QSM に PIR をチェックしたら、他方の QSM からは外れる OR 条件。</li>
+          <li>全 PIR はいずれかの QSM に割り当てられている必要がある。未割当が生じた場合は先頭 QSM などに正規化する。</li>
+        </ul>
+
+        <h3>Command</h3>
+        <ul>
+          <li>Command タブの Switch 選択肢に UUID のような不明値を表示しない。</li>
+          <li>表示名は switch number/name/button/condition など、ユーザーが理解できる値に整形する。</li>
+        </ul>
+
+        <h3>Backlight</h3>
+        <ul>
+          <li>複数 Palladiom がある場合に 1 つだけに潰れないこと。</li>
+          <li>Scene タブの Backlight setting と Switch 側の UI は共通思想で扱う。</li>
+          <li>Palladiom Backlight Assignment は未設定時に By Scene を既定として扱い、Uneffected は選択肢に出さない。</li>
+          <li>Backlight Logic は CFS で HVAC より下に表示し、同じスイッチ/ターゲットで重複行を作らない。</li>
+        </ul>
+      </section>
+
+      <section id="cfs">
+        <h2>9. CFS統合ビュー</h2>
+        <p>
+          CFS は最終確認/Excel 出力に近い統合ビューです。Circuit, Device Assign, Area Scene, Scene, Switch, Command, Backlight, HVAC の値を統合して表示します。
+        </p>
+        <table>
+          <thead>
+            <tr><th>機能</th><th>仕様</th><th>意図</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Toolbar</td>
+              <td><code>Base</code>, <code>Function</code>, <code>Device</code>, <code>Area</code>, <code>Display</code>, <code>Programming Name</code>, <code>Highlights</code>, <code>Excel Export</code>, <code>Maximize</code></td>
+              <td>項目が増えたため、表示設定はメニューにまとめる。ボタン高さは揃える。</td>
+            </tr>
+            <tr>
+              <td>Sort</td>
+              <td>Device / Area / Internal # / Programming Name ソート</td>
+              <td>Internal # と Programming Name ソートを入れている。削除しない。</td>
+            </tr>
+            <tr>
+              <td>Display</td>
+              <td>Number Display, Area Scene Name 表示, Area Scene Highlight 表示を切替</td>
+              <td>Area Scene 名やハイライトは必要に応じて表示/非表示できる。</td>
+            </tr>
+            <tr>
+              <td>行/列</td>
+              <td>見出し固定、最大化で上部 UI を減らす、最下部まで見やすくスクロール</td>
+              <td>表の内部スクロールとブラウザスクロールの混在を減らす。</td>
+            </tr>
+            <tr>
+              <td>表示文字</td>
+              <td>Slash 区切りを 2 行表示する場合は不要な slash/colon を出さない</td>
+              <td>文字が潰れないようにしつつ、意味が重複しない表示にする。</td>
+            </tr>
+            <tr>
+              <td>Group / Zone</td>
+              <td>列幅と折り返しを調整済み</td>
+              <td>文字切れを避ける。Cloud Code は全体を見て clipping を検査する。</td>
+            </tr>
+            <tr>
+              <td>Area Scene 値</td>
+              <td>Area Scene 由来の値はシーン名表示も選択可能。Individual Override があれば優先。</td>
+              <td>「どのシーンから来た値か」と「個別上書き」を区別する。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="settings">
+        <h2>10. Settings / Master</h2>
+        <p>Settings は <code>/settings/devices</code> にある。共有 App Settings として全プロジェクトに効く。</p>
+        <ul>
+          <li>Device Master: device model/control/abbrev/lowEnd/highEnd/addressMode/PDU/VA を管理する。</li>
+          <li>デフォルト行の model/control/addressMode は基本的に業務上の意味がある。編集可否は現状コードに従う。</li>
+          <li>PDU/VA 値は編集可能。<code>VA / PDU</code> も直接入力可能。</li>
+          <li>Input Master: CCI/Input 系の Detail/入力候補に使う。</li>
+          <li>Trigger Master: Trigger Condition の候補に使う。ただし自由入力も可能。</li>
+          <li>Display: 表示倍率、Admin Mode、CFS Linked Values fill、CFS Link Mapの表示許可。</li>
+          <li>Linked Values塗りつぶしとLink Map入口は通常非表示。SettingsのDisplayでAdmin ModeをONにしたうえで、それぞれのCFS診断表示をONにした場合だけCFSタブへ表示する。</li>
+        </ul>
+      </section>
+
+      <section id="ui">
+        <h2>11. 共通UIルール</h2>
+        <div class="section-grid">
+          <div class="cardlet">
+            <h3>Reserved</h3>
+            <p><code>Reserved</code> は未割当/クリア状態。リスト上には基本表示しない。Clear 操作で <code>Reserved</code> に戻す。</p>
+          </div>
+          <div class="cardlet">
+            <h3>Uneffected</h3>
+            <p>シーン値の未設定表示。空文字を意味する。<code>Unaffected</code> へ勝手に改名しない。</p>
+          </div>
+          <div class="cardlet">
+            <h3>Dropdown</h3>
+            <p>リストは portal/fixed 表示で画面内に収める。外側クリックと Esc で閉じる。複数リストが残らないようにする。</p>
+          </div>
+          <div class="cardlet">
+            <h3>Keyboard</h3>
+            <p><code>Ctrl + Arrow</code> で表内の上下左右セルへ移動。Select/Combobox は上下キー単独で候補移動できる。</p>
+          </div>
+          <div class="cardlet">
+            <h3>Buttons</h3>
+            <p><code>Show/Hide Reserved</code>, <code>Exclude/Show DALI</code> などは共通ボタンサイズで、位置を揃える。</p>
+          </div>
+          <div class="cardlet">
+            <h3>Item count</h3>
+            <p><code>14 items</code> のような汎用件数表示は削除済み。PIR 登録数など意味のある badge は残してよい。</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="backend">
+        <h2>12. バックエンド/保存</h2>
+        <h3>API</h3>
+        <table>
+          <thead>
+            <tr><th>Endpoint</th><th>Method</th><th>内容</th><th>制約</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>/api/projects</code></td>
+              <td>GET</td>
+              <td><code>data/projects.json</code> から読み込み、migration 済み projects を返す。</td>
+              <td>ファイルなしなら空配列。</td>
+            </tr>
+            <tr>
+              <td><code>/api/projects</code></td>
+              <td>POST</td>
+              <td>payload の <code>projects</code> を検証/migration し、atomic-ish に tmp から rename 保存。</td>
+              <td>最大 10MB。invalid JSON は 400。</td>
+            </tr>
+            <tr>
+              <td><code>/api/trash</code></td>
+              <td>GET/POST</td>
+              <td>Trash projects/roomTypes を <code>data/trash/trash.json</code> に保存。</td>
+              <td>最大 10MB。空/ファイルなしは empty trash。</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>フロント保存フロー</h3>
+        <ul>
+          <li>起動時は DB/API から projects/trash を取得する。</li>
+          <li>10 秒 timeout または API 失敗時は localStorage backup を読む。</li>
+          <li>projects は 1200ms debounce で API 保存し、<code>Saving...</code>, <code>Saved at</code>, <code>Save failed</code> を表示する。</li>
+          <li>trash は 300ms debounce で保存する。</li>
+          <li>Import/Export は JSON backup 形式にも対応する。</li>
+        </ul>
+      </section>
+
+      <section id="tests">
+        <h2>13. 動作確認手順</h2>
+        <h3>必須の静的確認</h3>
+        <pre><code>cd "C:\Users\IoT-136\AppData\Local\Codex\cfs-app-run"
+npm run typecheck
+npm run build</code></pre>
+        <h3>ブラウザ確認</h3>
+        <ol>
+          <li><code>http://localhost:3000/</code> を開く。</li>
+          <li>プロジェクト <code>test</code> がある場合は開く。なければ新規作成し、Room Type を作成する。</li>
+          <li>上段 <code>Area</code>, <code>Fixture</code>, <code>Room Type</code> を確認する。</li>
+          <li>Room Type サブタブ <code>PDU</code>, <code>Circuit</code>, <code>Device Assign</code>, <code>Area Scene</code>, <code>Scene</code>, <code>Switch</code>, <code>Command</code>, <code>Backlight</code>, <code>CFS</code> をすべて開く。</li>
+          <li>各画面で dropdown が画面外に出ない、外側クリックで閉じる、横スクロールが過剰でない、文字が切れないことを確認する。</li>
+          <li>PDU で <code>Exclude DALI</code> を押し、<code>Show DALI</code> と <code>DALI Excluded</code> に切り替わることを確認する。</li>
+          <li>Device Assign で <code>Hide Reserved</code> 状態が保持されることを確認する。</li>
+          <li>Scene Setting overlay が backdrop 前面に出て、Project/Room tabs が前面にかぶらないことを確認する。</li>
+          <li>CFS で <code>Maximize</code>, filter menus, Excel Export, Area Scene Name/Highlight toggles を確認する。</li>
+        </ol>
+        <h3>既存 Playwright 監査テスト</h3>
+        <p>テストファイルは <code>cfs-app/tests/e2e</code> にあります。文字化けコメントがあるが、テスト自体は既存監査資産として扱う。</p>
+        <ul>
+          <li><code>_audit_01_projects.spec.ts</code> から <code>_audit_10_crosscutting.spec.ts</code> まで。</li>
+          <li><code>cfs-smoke.spec.ts</code>, <code>verify-fill.spec.ts</code>。</li>
+        </ul>
+      </section>
+
+      <section id="review">
+        <h2>14. レビュー観点</h2>
+        <h3>フロントエンド</h3>
+        <ul>
+          <li>表内の text/button/select/input が親幅に収まり、見切れ・重なりがない。</li>
+          <li>タブ切替後に scroll position が変に飛ばない。</li>
+          <li>Overlay は固定サイズ/上位置の安定性を保ち、内容だけスクロールする。</li>
+          <li>Setting ボタンの有無状態が色で判別できる。</li>
+          <li>Reserved/DALI/PIR/QSM/HVAC の特殊表示が壊れていない。</li>
+          <li><code>Ctrl + Arrow</code> ナビゲーションが button/select/input/textarea で破綻しない。</li>
+          <li>ブラウザ console に key warning や hydration error が出ていない。</li>
+        </ul>
+        <h3>バックエンド</h3>
+        <ul>
+          <li><code>GET/POST /api/projects</code> が JSON を正しく read/write し、invalid payload を拒否する。</li>
+          <li><code>GET/POST /api/trash</code> が空ファイル/ファイルなし/invalid payload に耐える。</li>
+          <li>保存中に bar/toolbar のサイズが変動しない。</li>
+          <li>migration が既存データを落とさない。特に <code>pduDeviceCounts</code>, <code>switchGroupId</code>, <code>roomScenes</code>, <code>hvacSeasons</code>, <code>thermostatRole</code>。</li>
+          <li>App Settings は localStorage だが、Device Master の default merge/remove ルールを守る。</li>
+        </ul>
+      </section>
+
+      <section id="do-not-change">
+        <h2>15. 勝手に変えないこと</h2>
+        <div class="callout warning">
+          <strong>エージェント向け注意:</strong>
+          一見すると表記ゆれや冗長 UI に見える箇所でも、ユーザーとのやり取りで業務意図が定まっているものがあります。
+        </div>
+        <ul>
+          <li><code>Uneffected</code> 表記を勝手に変えない。</li>
+          <li><code>Reserved</code> を dropdown に戻さない。Clear = Reserved の考え方を維持する。</li>
+          <li>PDU の <code>Exclude DALI</code> をチェックボックスに戻さない。ボタン方式が正。</li>
+          <li>PDU の <code>Per-Room Device Quantities</code> 表を復活させない。</li>
+          <li>PDU タブを CFS の後ろへ戻さない。左端が正。</li>
+          <li>Device Assign の CCI detail 自動入力を復活させない。</li>
+          <li>PIR の area registration と logic selection を一つの表に戻さない。</li>
+          <li>QSM の PIR 割当を複数 QSM 同時選択可能にしない。</li>
+          <li>CFS の Area Scene 名/ハイライト表示切替を消さない。</li>
+          <li>Backlight Logic を HVAC より上に戻さない。</li>
+          <li>Default Device から削除済みの <code>HQP7-1</code>, <code>Wireless OCC</code>, <code>Pico Remote</code> を戻さない。</li>
+          <li>汎用 <code>items</code> 件数表示を復活させない。ただし <code>PIRs</code> など意味のある badge は別。</li>
+        </ul>
+      </section>
+
+      <section id="files">
+        <h2>16. 主要ファイル</h2>
+        <table>
+          <thead>
+            <tr><th>ファイル</th><th>役割</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>app/page.tsx</code></td><td>プロジェクト一覧、ロード/保存、trash、import/export、active project 制御。</td></tr>
+            <tr><td><code>app/components/ProjectScreen.tsx</code></td><td>上段タブ/Room Type サブタブ、Undo/Redo、Revision Management、各 View の親。</td></tr>
+            <tr><td><code>app/components/PduView.tsx</code></td><td>PDU/VA 集計、DALI 除外、PDU 数量から各タブへの連動。</td></tr>
+            <tr><td><code>app/components/CircuitsView.tsx</code></td><td>Circuit 表、DALI 展開、pcs 調整、CSV。</td></tr>
+            <tr><td><code>app/components/DeviceAssignView.tsx</code></td><td>固定/DALI/HVAC の device assignment、Reserved、回路候補ラベル。</td></tr>
+            <tr><td><code>app/components/SceneView.tsx</code></td><td>Area Scene。Lighting/HVAC の area 単位シーン値。</td></tr>
+            <tr><td><code>app/components/RoomSceneView.tsx</code></td><td>Scene tab。PMS/Door Magnet、overlay setting、backlight setting。</td></tr>
+            <tr><td><code>app/components/SwitchView.tsx</code></td><td>CCI/Palladiom/Pico/PIR/QSM、switch setting、PIR registration/QSM assignment。</td></tr>
+            <tr><td><code>app/components/BacklightView.tsx</code></td><td>Backlight logic table。</td></tr>
+            <tr><td><code>app/components/CfsView.tsx</code></td><td>CFS 統合表、filter/display/highlight/maximize/export。</td></tr>
+            <tr><td><code>app/components/Combobox.tsx</code></td><td>portal dropdown、外側クリック、キーボード候補移動。</td></tr>
+            <tr><td><code>app/lib/useGridArrowNavigation.ts</code></td><td>Ctrl+Arrow / arrow navigation helper。</td></tr>
+            <tr><td><code>app/lib/storage.ts</code></td><td>Project/trash migration、local backup、API client 保存。</td></tr>
+            <tr><td><code>app/api/projects/route.ts</code></td><td>projects.json の GET/POST API。</td></tr>
+            <tr><td><code>app/api/trash/route.ts</code></td><td>trash.json の GET/POST API。</td></tr>
+            <tr><td><code>app/lib/constants.ts</code></td><td>Default devices, addresses, options, factory functions。</td></tr>
+            <tr><td><code>app/lib/appSettings.ts</code></td><td>Device/Input/Trigger master、displayScale、wattPerPdu の localStorage 設定。</td></tr>
+            <tr><td><code>app/settings/devices/page.tsx</code></td><td>Settings UI。</td></tr>
+            <tr><td><code>app/globals.css</code></td><td>全 UI のスタイル。表/overlay/dropdown/CFS/PDU の崩れ確認対象。</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

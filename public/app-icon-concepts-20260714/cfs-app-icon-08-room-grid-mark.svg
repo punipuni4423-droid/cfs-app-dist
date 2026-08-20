@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">CFS app icon 08 - room grid mark</title>
+  <desc id="desc">A simplified room-grid mark for the CFS app.</desc>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#ffffff" stroke="#e5e7eb" stroke-width="4"/>
+  <rect x="29" y="29" width="70" height="70" rx="14" fill="#f7f9fa" stroke="#d1d5db" stroke-width="4"/>
+  <path d="M29 54H99M54 29V99M74 54V99" stroke="#d1d5db" stroke-width="4"/>
+  <circle cx="43" cy="42" r="7" fill="#f59e0b"/>
+  <circle cx="85" cy="42" r="7" fill="#007b7e"/>
+  <circle cx="85" cy="83" r="7" fill="#007b7e"/>
+  <path d="M43 42C57 61 70 72 85 83" fill="none" stroke="#007b7e" stroke-width="7" stroke-linecap="round"/>
+  <path d="M35 83H60" stroke="#374151" stroke-width="6" stroke-linecap="round"/>
+</svg>

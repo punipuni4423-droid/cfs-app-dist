@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">CFS app icon 09 - light circuit</title>
+  <desc id="desc">A lighting-circuit brand mark on a clean app tile.</desc>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#007b7e"/>
+  <circle cx="64" cy="52" r="18" fill="#fef3c7" stroke="#ffffff" stroke-width="6"/>
+  <path d="M64 20V30M64 74V84M32 52H42M86 52H96M41 29L48 36M80 68L87 75M87 29L80 36M48 68L41 75" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+  <rect x="34" y="83" width="60" height="19" rx="9.5" fill="#ffffff"/>
+  <path d="M45 92H83" stroke="#007b7e" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="45" cy="92" r="5" fill="#007b7e"/>
+  <circle cx="83" cy="92" r="5" fill="#f59e0b"/>
+</svg>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">CFS app icon</title>
+  <desc id="desc">A navy CFS app icon with a white geometric C, cyan connector line, and gold node.</desc>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#001A43"/>
+  <path d="M92 39C83 28 64 24 49 30C32 37 24 52 26 69C29 90 46 101 65 100C78 99 88 93 94 84L77 76C73 81 67 84 60 84C49 84 41 76 41 64C41 52 49 44 61 44C68 44 74 47 78 52Z" fill="#FFFFFF"/>
+  <path d="M57 64H89" stroke="#00D8D8" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="92" cy="64" r="6" fill="#F2B84B"/>
+</svg>

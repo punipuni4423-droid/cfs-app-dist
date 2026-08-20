@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">CFS app icon 03 - CFS badge</title>
+  <desc id="desc">A crisp CFS monogram badge with a minimal schedule line.</desc>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#007b7e"/>
+  <rect x="19" y="19" width="90" height="90" rx="22" fill="#ffffff"/>
+  <path d="M34 40H94M34 88H94" stroke="#d6e6e7" stroke-width="5" stroke-linecap="round"/>
+  <text x="64" y="76" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="850" letter-spacing="0" fill="#374151">CFS</text>
+  <path d="M38 88H90" stroke="#007b7e" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="38" cy="88" r="5" fill="#007b7e"/>
+  <circle cx="90" cy="88" r="5" fill="#f59e0b"/>
+</svg>

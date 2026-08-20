@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">CFS app icon 02 - circuit C</title>
+  <desc id="desc">A C-shaped circuit mark over a subtle sheet grid.</desc>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#ffffff" stroke="#e5e7eb" stroke-width="4"/>
+  <rect x="29" y="28" width="70" height="72" rx="14" fill="#f7f9fa"/>
+  <path d="M29 50H99M29 72H99M52 28V100M76 28V100" stroke="#e5e7eb" stroke-width="3"/>
+  <path d="M88 40C80 33 68 30 56 34C43 38 34 50 34 64C34 81 48 94 65 94C75 94 83 90 89 84" fill="none" stroke="#007b7e" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="89" cy="40" r="8" fill="#007b7e"/>
+  <circle cx="89" cy="84" r="8" fill="#007b7e"/>
+  <circle cx="34" cy="64" r="6" fill="#f59e0b"/>
+</svg>

@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CFS App 取扱説明書</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d9e2ec;
+      --soft: #f6f8fb;
+      --soft-2: #eef6f7;
+      --accent: #0f7a83;
+      --accent-soft: #e4f4f5;
+      --warn: #b45309;
+      --danger: #b42318;
+      --ok: #067647;
+      --shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Yu Gothic UI", "Meiryo", Arial, sans-serif;
+      color: var(--ink);
+      background: #f4f7f9;
+      line-height: 1.72;
+    }
+    header {
+      padding: 34px 42px 28px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff, #f8fbfc);
+    }
+    main {
+      display: grid;
+      grid-template-columns: 290px minmax(0, 1fr);
+      gap: 28px;
+      padding: 28px 42px 64px;
+    }
+    nav {
+      position: sticky;
+      top: 18px;
+      align-self: start;
+      max-height: calc(100vh - 36px);
+      overflow: auto;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+    nav a {
+      display: block;
+      padding: 5px 0;
+      color: #31546c;
+      text-decoration: none;
+      font-size: 13px;
+    }
+    nav a:hover { color: var(--accent); text-decoration: underline; }
+    .content { min-width: 0; }
+    section {
+      margin: 0 0 24px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+    h1, h2, h3 {
+      margin: 0;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    h1 { font-size: 30px; }
+    h2 {
+      margin-bottom: 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+      font-size: 21px;
+    }
+    h3 {
+      margin-top: 20px;
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+    p { margin: 8px 0 12px; }
+    ul, ol { margin: 8px 0 12px 22px; padding: 0; }
+    li { margin: 4px 0; }
+    code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: #f0f3f7;
+      color: #243b53;
+      font-family: Consolas, "SFMono-Regular", monospace;
+      font-size: 0.92em;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 18px;
+      table-layout: fixed;
+    }
+    th, td {
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      vertical-align: top;
+      word-break: break-word;
+    }
+    th {
+      background: var(--soft);
+      font-weight: 700;
+      color: #344054;
+    }
+    figure {
+      margin: 18px 0 22px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
+    figure img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid #d5dde7;
+      border-radius: 6px;
+      background: #fff;
+    }
+    figcaption {
+      margin-top: 9px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .notice {
+      margin: 14px 0;
+      padding: 12px 14px;
+      border-left: 4px solid var(--accent);
+      border-radius: 6px;
+      background: var(--accent-soft);
+    }
+    .warning {
+      border-left-color: var(--warn);
+      background: #fff7ed;
+    }
+    .danger {
+      border-left-color: var(--danger);
+      background: #fff1f0;
+    }
+    .ok {
+      border-left-color: var(--ok);
+      background: #ecfdf3;
+    }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+    .flow div {
+      min-height: 82px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+      font-weight: 700;
+    }
+    .flow span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .role-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .role-card {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+    }
+    .role-card h3 { margin-top: 0; }
+    .small { color: var(--muted); font-size: 13px; }
+
+    @media (max-width: 980px) {
+      main { display: block; padding: 18px; }
+      header { padding: 24px 18px; }
+      nav { position: static; margin-bottom: 18px; max-height: none; }
+      .flow, .role-grid { grid-template-columns: 1fr; }
+    }
+    @media print {
+      body { background: #fff; }
+      header, main { padding-left: 18px; padding-right: 18px; }
+      nav { display: none; }
+      main { display: block; }
+      section, figure { box-shadow: none; break-inside: avoid; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>CFS App 取扱説明書</h1>
+    <p>
+      この取説は、CFS Appを使ってエリア、照明器具、回路、デバイス、シーン、スイッチ、バックライト、HVACを登録し、
+      最終的に <strong>CFS統合表を作成してExcel出力する</strong> ための操作ガイドです。
+    </p>
+    <div class="meta">
+      <span class="pill">対象: CFS App</span>
+      <span class="pill">作成日: 2026-06-08</span>
+      <span class="pill">形式: HTML + 実画面スクリーンショット</span>
+      <span class="pill">最終成果物: CFSタブ / Excel Export</span>
+    </div>
+  </header>
+
+  <main>
+    <nav aria-label="目次">
+      <strong>目次</strong>
+      <a href="#goal">1. アプリの目的</a>
+      <a href="#roles">2. ロール別の見方</a>
+      <a href="#launch">3. 起動とショートカット</a>
+      <a href="#workflow">4. 推奨作業フロー</a>
+      <a href="#common">5. 共通操作</a>
+      <a href="#project">6. Project / Area / Fixture</a>
+      <a href="#room">7. Room Type</a>
+      <a href="#pdu">8. PDU</a>
+      <a href="#circuit">9. Circuit</a>
+      <a href="#deviceassign">10. Device Assign / HVAC</a>
+      <a href="#areasScene">11. Area Scene</a>
+      <a href="#scene">12. Scene / Setting</a>
+      <a href="#switch">13. Switch / PIR / QSM</a>
+      <a href="#command">14. Command</a>
+      <a href="#backlight">15. Backlight</a>
+      <a href="#cfs">16. CFS</a>
+      <a href="#settings">17. Settings</a>
+      <a href="#revision">18. Revision</a>
+      <a href="#share">19. 共有 / 配布 / データ</a>
+      <a href="#checklist">20. 完成前チェック</a>
+    </nav>
+
+    <div class="content">
+      <section id="goal">
+        <h2>1. アプリの目的</h2>
+        <p>
+          CFS Appは、ホテル客室などのルームタイプ単位で、照明回路とLutron/GRMS系デバイスの関係を整理し、
+          シーン、スイッチ、コマンド、バックライト、HVACを一つのCFS表にまとめるためのWebアプリです。
+        </p>
+        <p>
+          最終的なゴールは、<strong>CFSタブで統合表を確認し、Excel Exportで提出・共有できる状態にすること</strong>です。
+          そのため、各タブは単独の入力画面ではなく、CFSに表示される情報を作るための入口として考えます。
+        </p>
+        <div class="notice">
+          <strong>重要:</strong> <code>Reserved</code> は未使用枠、<code>Uneffected</code> はシーンで影響させない値です。
+          どちらもCFSの意味に関わるため、単なる空欄とは扱いません。
+        </div>
+      </section>
+
+      <section id="roles">
+        <h2>2. ロール別の見方</h2>
+        <div class="role-grid">
+          <div class="role-card">
+            <h3>プロジェクト管理者 / PM</h3>
+            <p>プロジェクト作成、共有、Revision管理、最終Excel出力、マスター設定の管理を担当します。</p>
+            <p class="small">主に見る画面: Project Selection、Settings、Revision Management、CFS。</p>
+          </div>
+          <div class="role-card">
+            <h3>照明設計担当</h3>
+            <p>Area、Fixture、Circuit、Area Sceneを整備し、回路番号、器具数量、VA、Detailを正しく登録します。</p>
+            <p class="small">主に見る画面: Area、Fixture、Circuit、Area Scene、PDUのFixture VA。</p>
+          </div>
+          <div class="role-card">
+            <h3>制御 / Lutron担当</h3>
+            <p>Device Assign、Switch、Command、Backlightを登録し、実際の制御ロジックに沿ってCFS列を作ります。</p>
+            <p class="small">主に見る画面: PDU、Device Assign、Switch、Command、Backlight、CFS。</p>
+          </div>
+          <div class="role-card">
+            <h3>HVAC担当 / レビュー担当</h3>
+            <p>HVAC、TSTAT、季節スケジュール、CFS反映、PDU/VAの整合性を確認します。</p>
+            <p class="small">主に見る画面: Device AssignのHVAC、Area Scene/SceneのHVAC、PDU、CFS。</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="launch">
+        <h2>3. 起動とショートカット</h2>
+        <p>
+          通常はデスクトップの <code>CFS App</code> ショートカットから起動します。
+          起動後、ブラウザで <code>http://localhost:3000</code> が開きます。
+        </p>
+        <ol>
+          <li>デスクトップの <code>CFS App</code> をダブルクリックします。</li>
+          <li>初回のみ依存関係のインストールが走る場合があります。完了まで待ちます。</li>
+          <li>ブラウザが開き、Project Selection画面が表示されます。</li>
+        </ol>
+        <p>
+          ショートカットがない場合は、アプリフォルダ内の <code>CREATE_DESKTOP_SHORTCUT.vbs</code> を一度実行してください。
+          フォルダから直接起動する場合は <code>LAUNCH_CFS_APP.vbs</code> を使用します。
+        </p>
+        <div class="warning notice">
+          <strong>注意:</strong> この配布方式はローカル起動です。複数人が同じデータを同時編集するクラウド共有方式ではありません。
+          共有する場合は、ExportやZIPを使ってデータを受け渡します。
+        </div>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/01_project_selection.png" alt="Project Selection画面">
+          <figcaption>Project Selection画面。プロジェクトの作成、既存プロジェクトの選択、Import/Exportを行います。</figcaption>
+        </figure>
+      </section>
+
+      <section id="workflow">
+        <h2>4. 推奨作業フロー</h2>
+        <p>
+          CFSを作成する場合、次の順番で入力するとリンク関係が分かりやすくなります。
+          PDUは後から確認するだけでなく、先にデバイス数量を決める入口としても使います。
+        </p>
+        <div class="flow">
+          <div>1. Project準備<span>Area / Fixture / Room Typeを登録</span></div>
+          <div>2. PDU計画<span>デバイス数量とVA/PDUを確認</span></div>
+          <div>3. 回路登録<span>Circuitで器具、数量、Detailを登録</span></div>
+          <div>4. デバイス割当<span>Device AssignとHVACを登録</span></div>
+          <div>5. シーン登録<span>Area Scene、Scene、個別Overrideを登録</span></div>
+          <div>6. スイッチ登録<span>Switch、PIR、QSM、Commandを登録</span></div>
+          <div>7. Backlight登録<span>Backlight条件と対象を登録</span></div>
+          <div>8. CFS確認<span>表示切替、Revision、Excel Export</span></div>
+        </div>
+        <div class="notice ok">
+          <strong>基本方針:</strong> CFSタブは最終確認画面です。CFSで値を直すのではなく、元になるタブの入力を直してCFSへ反映させます。
+        </div>
+      </section>
+
+      <section id="common">
+        <h2>5. 共通操作</h2>
+        <h3>タブとテーブル</h3>
+        <ul>
+          <li>上段タブは <code>Area</code>、<code>Fixture</code>、<code>Room Type</code> です。</li>
+          <li><code>Room Type</code> 内に <code>PDU</code>、<code>Circuit</code>、<code>Device Assign</code>、<code>Area Scene</code>、<code>Scene</code>、<code>Switch</code>、<code>Command</code>、<code>Backlight</code>、<code>CFS</code> があります。</li>
+          <li><code>+ Add Row</code>、<code>+ Add Device</code>、Deleteアイコンで行を追加・削除します。</li>
+          <li><code>Clear</code> は入力を消します。シーン系では <code>Uneffected</code> に戻す操作として使います。</li>
+        </ul>
+        <h3>Reserved / DALI / 表示切替</h3>
+        <ul>
+          <li><code>Show Reserved</code> / <code>Hide Reserved</code> は未使用行の表示切替です。状態はタブ移動後も保持されます。</li>
+          <li>PDUのFixture VAでは、<code>Exclude DALI</code> / <code>Show DALI</code> でDALI器具をVA集計から除外するか切り替えます。</li>
+          <li>CFSでは <code>Areas</code>、<code>Devices</code>、<code>Base Columns</code>、<code>Function Columns</code>、<code>Display</code>、<code>Highlights</code> で表示列やハイライトを切り替えます。</li>
+        </ul>
+        <h3>キーボードとリスト</h3>
+        <ul>
+          <li>セル移動は <code>Ctrl + 矢印キー</code> を基準にしています。上下左右の同じ入力列へ移動するための操作です。</li>
+          <li>リスト形式の選択肢は、開いた状態で矢印キー単独により候補移動できます。</li>
+          <li>リスト外をクリックするとリストは閉じます。Settingオーバーレイは <code>Esc</code> でも閉じられます。</li>
+        </ul>
+      </section>
+
+      <section id="project">
+        <h2>6. Project / Area / Fixture</h2>
+        <h3>Project Selection</h3>
+        <p>
+          プロジェクト単位でデータを管理します。新規作成、Import Data、Export All、個別Export、Trash管理を行います。
+        </p>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/01_project_selection.png" alt="Project Selection">
+          <figcaption>Project Selection。既存プロジェクトを開く、プロジェクト名を変更する、Export/Deleteする画面です。</figcaption>
+        </figure>
+
+        <h3>Area</h3>
+        <p>
+          Areaは回路やシーンの場所名です。Room Type内のCircuit、Area Scene、PIR登録などで使用されます。
+          Area Sceneに出ていない場所でもPIRが存在する可能性があるため、Area Masterとして正しく登録しておきます。
+        </p>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/04_area_master.png" alt="Area Master">
+          <figcaption>Area Master。Entrance、Bedroom、Vanityなどの場所を管理します。</figcaption>
+        </figure>
+
+        <h3>Fixture</h3>
+        <p>
+          Fixtureは照明器具マスターです。器具名、属性、VA、補正値などを登録します。
+          Circuitの器具選択、pcs、Total VA、PDUのFixture VA集計に使われます。
+        </p>
+        <ul>
+          <li>Downlight系はpcsを <code>+1</code> / <code>-1</code> で調整します。</li>
+          <li>Indirect系は <code>+0.1</code> / <code>-0.1</code> と <code>+1</code> / <code>-1</code> で調整できます。</li>
+          <li>補正値は共通設定として管理し、Fixture VA計算へ反映します。</li>
+        </ul>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/05_fixture_master.png" alt="Fixture Master">
+          <figcaption>Fixture Master。照明器具の属性、VA、補正に関係する値を管理します。</figcaption>
+        </figure>
+      </section>
+
+      <section id="room">
+        <h2>7. Room Type</h2>
+        <p>
+          Room Typeは、客室タイプごとのCFS入力単位です。A、B、Suiteなど、タイプごとに回路・スイッチ・シーンを分けて管理します。
+        </p>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/02_room_type_manage.png" alt="Room Type管理">
+          <figcaption>Room Type管理。既存Room Typeの選択、Rename、Copy/Deleteアイコン操作を行います。</figcaption>
+        </figure>
+        <p>
+          Room Typeを開くと、PDUからCFSまでのサブタブが表示されます。上部にはUndo/Redo、Revision、Draft状態、Save as New Revision、
+          Highlight Updates、Revision Managementがあります。
+        </p>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/03_room_workspace_start.png" alt="Room Type作業画面">
+          <figcaption>Room Type作業画面。ここから各サブタブに移動してCFSに必要な情報を作ります。</figcaption>
+        </figure>
+      </section>
+
+      <section id="pdu">
+        <h2>8. PDU</h2>
+        <p>
+          PDUタブは、LutronデバイスのPDU/VAと照明器具VAを統合して、電源容量とブレーカー数を確認する画面です。
+          今の構成では、PDUを先に登録して各タブへデバイス数量を反映させる入口として使います。
+        </p>
+        <h3>主な表示</h3>
+        <ul>
+          <li><code>Total PDU</code>: Lutronデバイスの供給/消費PDU合計。0未満の場合は供給不足の警告が出ます。</li>
+          <li><code>Fixture VA</code>: CircuitとFixtureから集計した照明器具VA。</li>
+          <li><code>Lutron Device VA</code>: Device MasterのPDU/VA設定から計算したデバイスVA。<code>+75</code> などの供給側PDUは余りPDUには入りますが、消費VAには入れません。</li>
+          <li><code>Combined VA</code>: Fixture VAとLutron Device VAを合算した値。</li>
+          <li><code>Correction</code>: 補正値。計算に反映されます。</li>
+          <li><code>Breaker</code>: 必要ブレーカー数の目安です。</li>
+        </ul>
+        <h3>Qtyの意味</h3>
+        <ul>
+          <li><code>Device Assign</code>: アドレス付きデバイスとしてDevice Assignへ反映されます。</li>
+          <li><code>HVAC</code>: TSTAT/HVAC系としてHVAC Assignmentへ反映されます。</li>
+          <li><code>Switch</code>: Palladiom、Pico、PIR、QSMなどSwitch系に反映されます。</li>
+          <li><code>Manual</code>: PDU計算用の手動数量として扱います。</li>
+        </ul>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/07_pdu_tab.png" alt="PDUタブ">
+          <figcaption>PDUタブ。Lutron Device PDU Summary、Fixture VA、Combined VA、Breakerを確認します。</figcaption>
+        </figure>
+      </section>
+
+      <section id="circuit">
+        <h2>9. Circuit</h2>
+        <p>
+          Circuitタブは照明回路の基本情報を登録する画面です。CFSの行、Area Sceneの対象、Device Assignの回路紐づけの元になります。
+        </p>
+        <h3>主な入力項目</h3>
+        <ul>
+          <li><code>Designer #</code>: 図面・設計上の回路番号です。</li>
+          <li><code>Internal #</code>: 内部管理番号です。auto表示のものは必要に応じて編集します。</li>
+          <li><code>Dimming Type</code>: Phase、On/Off、PWM、DALIなどを選択します。</li>
+          <li><code>Area</code>: Area Masterから選択します。</li>
+          <li><code>Fixture</code> / <code>pcs.</code>: 照明器具と数量を登録します。</li>
+          <li><code>Detail</code>: Bedroom Main、Entrance DLなどCFSで見える回路説明です。</li>
+        </ul>
+        <p>
+          1つの回路に複数の器具が入る場合は、回路の行がまとまって表示され、回路追加ボタンなどは視覚的に結合された見た目になります。
+          DALIはこの結合ルールの例外として扱います。
+        </p>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/08_circuit_tab.png" alt="Circuitタブ">
+          <figcaption>Circuitタブ。回路、器具、数量、Detailを登録し、VA計算とCFS行の基礎を作ります。</figcaption>
+        </figure>
+      </section>
+
+      <section id="deviceassign">
+        <h2>10. Device Assign / HVAC</h2>
+        <p>
+          Device Assignタブでは、Lutronデバイスを回路やゾーン/アドレスへ割り当てます。
+          アサイン済みCircuitは、リスト上でどの回路に紐づいているか分かるように表示されます。
+        </p>
+        <ul>
+          <li>Device Assignで選べるのは、アドレス構成を持つデバイスです。PDU専用デバイスはここには出しません。</li>
+          <li><code>Reserved</code> は未使用枠です。必要に応じてShow/Hideを切り替えます。</li>
+          <li>CCIのCircuit入力によるDetail自動入力は使用しません。Detailは明示的に入力・Clearします。</li>
+        </ul>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/09_device_assign_tab.png" alt="Device Assignタブ">
+          <figcaption>Device Assignタブ。回路とデバイスの紐づけ、ゾーン/アドレス、Detailを管理します。</figcaption>
+        </figure>
+
+        <h3>HVAC</h3>
+        <p>
+          HVACはDevice Assign内のHVACセクションで管理されます。TSTATはHVACの数量と連動し、各HVACにMaster/Slaveを設定できます。
+          Master/SlaveはCFSのGroup/Zone/Address表示に関係します。
+        </p>
+        <ul>
+          <li><code>Link all HVAC</code> を有効にすると、HVACの共通設定を一括で連動できます。</li>
+          <li>季節スケジュールは開始日・終了日が連動します。行追加/削除後も日付がラップしないように自動調整されます。</li>
+          <li>SceneやArea SceneのHVAC値は、CFSに反映されます。</li>
+        </ul>
+      </section>
+
+      <section id="areasScene">
+        <h2>11. Area Scene</h2>
+        <p>
+          Area Sceneタブは、Area単位のシーン値を登録する画面です。Welcome Day、Relax、Mood、Offなどのエリアシーンを作り、
+          LightingとHVACの値をまとめて定義します。
+        </p>
+        <ul>
+          <li>LightingとHVACはそれぞれ最小化/展開できます。</li>
+          <li>On/Off系はOn、Off、Blinking(Short)、Blinking(Long)、0.5 sec、Uneffectedを選びます。</li>
+          <li>調光値はInspectionModeの編集オーバーレイで調整し、InspectionMode終了時の確認で反映します。</li>
+          <li>Clearは<code>Uneffected</code>に戻す操作です。</li>
+          <li>Area Scene値を選んでもIndividual Overrideへ自動コピーしません。CFSではArea Sceneをベースにし、IndividualがあればIndividualを優先します。</li>
+        </ul>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/10_area_scene_tab.png" alt="Area Sceneタブ">
+          <figcaption>Area Sceneタブ。AreaごとにLighting/HVACのシーン値を登録します。</figcaption>
+        </figure>
+      </section>
+
+      <section id="scene">
+        <h2>12. Scene / Setting</h2>
+        <p>
+          Sceneタブは、PMSやDoor Magnetなどのイベントに対して、どのシーン値・バックライト値を呼び出すかを登録する画面です。
+          Trigger ConditionはTrigger Masterから選択できますが、自由入力も可能です。
+        </p>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/11_scene_tab.png" alt="Sceneタブ">
+          <figcaption>Sceneタブ。PMS Scene、Door Magnet Scene、Trigger Condition、Settingを登録します。</figcaption>
+        </figure>
+
+        <h3>Settingオーバーレイ</h3>
+        <p>
+          <code>Setting</code> を押すと、画面手前に設定ウィンドウが表示され、背景は暗くなります。
+          左側でArea Sceneを呼び出し、右側のIndividual Overrideで差分だけ上書きします。
+        </p>
+        <ul>
+          <li>Area Sceneを選択しただけではIndividual Overrideに値は入りません。</li>
+          <li>Individual Overrideに値が入っているAreaは展開され、ボタン色も設定済みとして表示されます。</li>
+          <li>Scene ValueとBacklightは同じオーバーレイ内で切り替えます。上側の位置は揃えています。</li>
+          <li>EscまたはCloseで閉じます。</li>
+        </ul>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/12_scene_setting_overlay.png" alt="Scene Settingオーバーレイ">
+          <figcaption>Scene Setting。Area Sceneをベースに、Individual Overrideで個別差分を登録します。</figcaption>
+        </figure>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/12b_scene_backlight_overlay.png" alt="Scene Backlightオーバーレイ">
+          <figcaption>Scene Backlight。Scene Value画面からBacklight設定へ切り替えた状態です。</figcaption>
+        </figure>
+      </section>
+
+      <section id="switch">
+        <h2>13. Switch / PIR / QSM</h2>
+        <p>
+          Switchタブは、CCI、Palladiom、Pico、PIR、QSMを登録する画面です。
+          Switchで登録した内容は、Scene、Command、Backlight、CFSの列に影響します。
+        </p>
+
+        <h3>CCI / Palladiom / Pico</h3>
+        <ul>
+          <li>CCIはQSE-IOやQSE-CI-WCIなどの入力デバイスとCCI番号を紐づけます。</li>
+          <li>PalladiomはM1/M2/M3/M4などのボタン番号を持つスイッチです。</li>
+          <li>Picoはリモコン/スイッチとして登録します。</li>
+          <li>CopyアイコンはFunction単位ではなく、スイッチ単位でコピーします。</li>
+          <li>Trigger ConditionはTrigger Master候補から選べ、自由入力もできます。</li>
+        </ul>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/13_switch_cci.png" alt="Switch CCI">
+          <figcaption>Switch - CCI。デバイス、CCI番号、Switch #、Function、Trigger Condition、Settingを登録します。</figcaption>
+        </figure>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/14_switch_palladiom.png" alt="Switch Palladiom">
+          <figcaption>Switch - Palladiom。ボタン番号を持つスイッチを登録します。</figcaption>
+        </figure>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/14b_switch_pico.png" alt="Switch Pico">
+          <figcaption>Switch - Pico。Pico系スイッチを登録します。</figcaption>
+        </figure>
+
+        <h3>PIR</h3>
+        <p>
+          PIRは、まず上部のPIR RegistrationでAreaごとの数量を登録します。
+          その後、下部のロジック表で登録済みPIRの中から、どのPIRがシーンやロジックに関係するかを選択します。
+        </p>
+        <ul>
+          <li>PIRはArea Sceneに出ていないAreaにも存在する可能性があるため、すべてのAreaから登録できます。</li>
+          <li>登録PIRは <code>PIR1</code>、<code>PIR2</code> のような通し番号を持ち、Location列で場所を確認できます。</li>
+          <li>ロジック表では複数PIRを選択できます。CFSではPIR番号とLocationを表示します。</li>
+          <li>複数PIRが絡む場合は、CFSでsummaryと展開UIにより確認します。</li>
+        </ul>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/15_switch_pir.png" alt="Switch PIR">
+          <figcaption>Switch - PIR。AreaごとのPIR登録と、ロジックに使うPIR選択を分けて管理します。</figcaption>
+        </figure>
+
+        <h3>QSM</h3>
+        <p>
+          QSMはPIRに紐づくレシーバーです。PIR 1台につき必ず1台のQSMに割り当てます。
+          片方のQSMにPIRを割り当てると、他方のQSMからは自動的に外れます。
+        </p>
+        <ul>
+          <li>PIRは複数QSMへ同時割当できません。</li>
+          <li>すべてのPIRはいずれか1台のQSMへ割り当てられている必要があります。</li>
+          <li>QSM行は追加/削除できます。</li>
+        </ul>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/15b_switch_qsm.png" alt="Switch QSM">
+          <figcaption>Switch - QSM。PIRとQSMの1対1割当を管理します。</figcaption>
+        </figure>
+      </section>
+
+      <section id="command">
+        <h2>14. Command</h2>
+        <p>
+          Commandタブは、スイッチ入力からコマンドを呼び出すための画面です。
+          Switch #、Switch Name、Button、Trigger Condition、Settingを登録します。
+        </p>
+        <ul>
+          <li>CommandのSwitch選択肢にはPIRを表示しません。Commandはスイッチ系の操作に限定します。</li>
+          <li>Switch #の選択肢に不明なIDが出ないよう、Switch登録内容を元に表示します。</li>
+          <li>文字が長い場合でも、CFSではスイッチ番号、名前、条件を分けて表示し、スラッシュが残らないようにしています。</li>
+        </ul>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/16_command_tab.png" alt="Commandタブ">
+          <figcaption>Commandタブ。スイッチとTrigger Conditionからコマンド設定を作ります。</figcaption>
+        </figure>
+      </section>
+
+      <section id="backlight">
+        <h2>15. Backlight</h2>
+        <p>
+          Backlightタブは、スイッチのバックライト条件と対象を登録する画面です。
+          SceneタブやSwitchタブのBacklight Settingと同じ考え方で、共通UIとして扱います。
+        </p>
+        <ul>
+          <li>複数のPalladiomがある場合も、対象が1つに潰れないようにそれぞれ登録します。</li>
+          <li>SettingにはClear機能があり、不要な設定を削除できます。</li>
+          <li>CFSのBacklight Logicは、HVACより下に表示され、同じスイッチで重複行を増やさないようにします。</li>
+        </ul>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/17_backlight_tab.png" alt="Backlightタブ">
+          <figcaption>Backlightタブ。バックライト条件とターゲットを登録します。</figcaption>
+        </figure>
+      </section>
+
+      <section id="cfs">
+        <h2>16. CFS</h2>
+        <p>
+          CFSタブは、このアプリの最終確認画面です。Circuit、Device Assign、Area Scene、Scene、Switch、Command、Backlight、HVACの情報を統合し、
+          Excel Exportできる表として表示します。
+        </p>
+        <h3>表示切替</h3>
+        <ul>
+          <li><code>Areas</code>: 表示するAreaを絞り込みます。</li>
+          <li><code>Devices</code>: 表示するデバイスを絞り込みます。</li>
+          <li><code>Base Columns</code>: Device、Device #、Type、Group、Zone/Addressなどの基本列を切り替えます。</li>
+          <li><code>Function Columns</code>: Scene、Command、Switch、PIR、Backlight Logicなどの機能列を切り替えます。</li>
+          <li><code>Display</code>: 番号表示、Area Scene名表示、Area Scene由来の値表示などを切り替えます。</li>
+          <li><code>Highlights</code>: Area Sceneの色や変更ハイライトを切り替えます。</li>
+          <li><code>Maximize</code>: CFS確認時に上部UIを一部隠し、表の表示領域を広げます。</li>
+          <li><code>Excel Export</code>: 現在のCFSをExcel形式で出力します。</li>
+        </ul>
+        <h3>値の優先順位</h3>
+        <p>
+          CFSでは、Area Sceneで呼び出された値をベースとして表示し、Individual Overrideが設定されている場合はIndividual Overrideを優先します。
+          Area Scene名を表示するか、具体値を表示するかはDisplayで切り替えます。
+        </p>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/18_cfs_tab.png" alt="CFSタブ">
+          <figcaption>CFSタブ。最終的なCFS表を確認し、必要に応じて表示切替やExcel Exportを行います。</figcaption>
+        </figure>
+      </section>
+
+      <section id="settings">
+        <h2>17. Settings</h2>
+        <p>
+          Settingsはアプリ全体に効く共通マスターです。右上のギアボタンから移動できます。
+          プロジェクトごとの入力ではなく、全体の選択肢や計算マスターを管理します。
+        </p>
+        <h3>Device Master</h3>
+        <ul>
+          <li>Device model、control、abbrev、lowEnd、highEnd、addressMode、PDU、VAなどを管理します。</li>
+          <li>PDU/VAはPDUタブの計算に使われます。</li>
+          <li>Device Assignに出せるデバイスと、Switch/PDU専用デバイスは用途が異なります。</li>
+          <li>必要な場合はデバイスを追加できます。</li>
+        </ul>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/20_settings_device_master.png" alt="Settings Device Master">
+          <figcaption>Settings - Device Master。デバイスマスターとVA/PDU設定を管理します。</figcaption>
+        </figure>
+
+        <h3>Input Master / Trigger Master / Display</h3>
+        <ul>
+          <li>Input MasterはCCI/Input系のDetailや入力候補に使います。</li>
+          <li>Trigger MasterはScene、Switch、CommandなどのTrigger Condition候補に使います。自由入力も可能です。</li>
+          <li>Displayは表示倍率などの画面表示設定です。</li>
+        </ul>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/21_settings_input_master.png" alt="Settings Input Master">
+          <figcaption>Settings - Input Master。入力候補を管理します。</figcaption>
+        </figure>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/22_settings_trigger_master.png" alt="Settings Trigger Master">
+          <figcaption>Settings - Trigger Master。Trigger Condition候補を管理します。</figcaption>
+        </figure>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/23_settings_display.png" alt="Settings Display">
+          <figcaption>Settings - Display。表示倍率などを管理します。</figcaption>
+        </figure>
+      </section>
+
+      <section id="revision">
+        <h2>18. Revision</h2>
+        <p>
+          Room TypeごとにRevisionを管理できます。作業中はDraftとして保存され、区切りのよいタイミングで
+          <code>Save as New Revision</code> を押してRevisionを作成します。
+        </p>
+        <ul>
+          <li><code>Undo</code> / <code>Redo</code>: 直近の編集を戻す/やり直す操作です。</li>
+          <li><code>Save as New Revision</code>: 現在のDraftを新しいRevisionとして保存します。</li>
+          <li><code>Highlight Updates</code>: 前Revisionとの差分を画面上で強調します。</li>
+          <li><code>Revision Management</code>: Revision一覧、更新内容、Restoreを確認します。</li>
+        </ul>
+        <p>
+          更新内容は、タブごとに、どの項目が変わったか分かるように記載されます。
+          レビュー時はこの画面で変更内容を確認してからCFS出力へ進みます。
+        </p>
+        <figure>
+          <img src="assets/user_manual_2026-06-08/19_revision_management.png" alt="Revision Management">
+          <figcaption>Revision Management。Revisionごとの保存日時、更新メモ、Restoreを確認します。</figcaption>
+        </figure>
+      </section>
+
+      <section id="share">
+        <h2>19. 共有 / 配布 / データ</h2>
+        <h3>他の人へ共有するもの</h3>
+        <p>
+          暫定共有では、次のZIPを渡します。
+        </p>
+        <p><code>C:\Dev\AI\CFS\artifacts\cfs-app-share-20260608.zip</code></p>
+        <p>
+          ZIPにはアプリ本体、現在のデータ、ショートカット作成用スクリプト、起動用スクリプトが含まれます。
+          受け取った人はZIPを展開し、<code>cfs-app\CREATE_DESKTOP_SHORTCUT.vbs</code> を実行してから、
+          デスクトップの <code>CFS App</code> で起動します。
+        </p>
+        <h3>データの考え方</h3>
+        <ul>
+          <li>ローカル起動のため、編集内容はそのPCのアプリデータとして保存されます。</li>
+          <li>複数人で同じデータを同時編集する構造ではありません。</li>
+          <li>他の人へ結果を渡す場合は、Project Export、Export All、CFSのExcel Exportを使います。</li>
+          <li>本格配布では、社内サーバー、クラウド、またはWindowsアプリ化などを検討します。</li>
+        </ul>
+        <div class="warning notice">
+          <strong>運用注意:</strong> マスター設定を複数人が別々に変更すると、同じプロジェクトでも計算や選択肢がずれる可能性があります。
+          共有前にDevice Master、Input Master、Trigger Masterを確認してください。
+        </div>
+      </section>
+
+      <section id="checklist">
+        <h2>20. 完成前チェック</h2>
+        <p>CFSを提出・共有する前に、次を確認してください。</p>
+        <table>
+          <thead>
+            <tr>
+              <th>分類</th>
+              <th>確認内容</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Project / Master</td>
+              <td>Area、Fixture、Room Type、Device Master、Trigger Masterが最新である。</td>
+            </tr>
+            <tr>
+              <td>PDU</td>
+              <td>Total PDUが不足していない。DALIを含める/除外する状態が意図通りである。Combined VAとBreakerが確認済みである。</td>
+            </tr>
+            <tr>
+              <td>Circuit</td>
+              <td>Designer #、Dimming Type、Area、Fixture、pcs、Detailが正しい。Reserved行が不要に表示されていない。</td>
+            </tr>
+            <tr>
+              <td>Device Assign / HVAC</td>
+              <td>回路とデバイス、ゾーン/アドレス、HVAC Master/Slave、季節スケジュールが正しい。</td>
+            </tr>
+            <tr>
+              <td>Scene</td>
+              <td>Area SceneとIndividual Overrideの使い分けが正しい。Uneffectedにすべき箇所が値入りになっていない。</td>
+            </tr>
+            <tr>
+              <td>Switch / PIR / QSM</td>
+              <td>Switch #、Button、Trigger Condition、PIR登録、QSM割当が正しい。PIRは必ず1台のQSMに割当済みである。</td>
+            </tr>
+            <tr>
+              <td>Command / Backlight</td>
+              <td>Commandに不要なPIRが出ていない。Backlight LogicがCFSで重複していない。</td>
+            </tr>
+            <tr>
+              <td>CFS</td>
+              <td>必要な列が表示されている。Area Scene名/値表示、Highlights、Maximize、Excel Exportを確認済みである。</td>
+            </tr>
+            <tr>
+              <td>Revision</td>
+              <td>Save as New Revisionを行い、Revision Managementで更新内容が確認できる。</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

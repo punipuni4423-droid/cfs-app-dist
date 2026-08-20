@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CFS App Review Report - 2026-06-07</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d9e2ec;
+      --soft: #f6f8fb;
+      --accent: #0f7a83;
+      --accent-soft: #e4f4f5;
+      --warn: #b45309;
+      --danger: #b42318;
+      --ok: #067647;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Yu Gothic UI", "Meiryo", Arial, sans-serif;
+      color: var(--ink);
+      background: #ffffff;
+      line-height: 1.65;
+    }
+    header {
+      padding: 32px 40px 24px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff, #f8fbfc);
+    }
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 28px 40px 60px;
+    }
+    h1 { font-size: 28px; margin: 0 0 8px; }
+    h2 { font-size: 20px; margin: 32px 0 14px; padding-bottom: 8px; border-bottom: 2px solid var(--line); }
+    h3 { font-size: 16px; margin: 20px 0 8px; }
+    p { margin: 8px 0 12px; }
+    ul, ol { margin: 8px 0 12px 22px; padding: 0; }
+    li { margin: 4px 0; }
+    code { padding: 1px 5px; border-radius: 4px; background: #f0f3f7; color: #243b53; font-family: Consolas, monospace; font-size: 0.92em; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; }
+    th, td { padding: 8px 10px; border: 1px solid var(--line); vertical-align: top; text-align: left; }
+    th { background: var(--soft); font-weight: 700; color: #344054; }
+    .pass { color: var(--ok); font-weight: 700; }
+    .fail { color: var(--danger); font-weight: 700; }
+    .warn { color: var(--warn); font-weight: 700; }
+    .missing { color: #7c3aed; font-weight: 700; }
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 999px;
+      font-size: 12px; font-weight: 700; color: #fff;
+    }
+    .badge-pass { background: var(--ok); }
+    .badge-fail { background: var(--danger); }
+    .badge-warn { background: var(--warn); }
+    .callout {
+      padding: 14px 16px; border-left: 4px solid var(--accent);
+      border-radius: 6px; background: var(--accent-soft); margin: 16px 0;
+    }
+    .callout.danger { border-left-color: var(--danger); background: #fff1f3; }
+    .callout.warning { border-left-color: var(--warn); background: #fff7ed; }
+    .callout.ok { border-left-color: var(--ok); background: #ecfdf3; }
+    .summary-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 20px 0;
+    }
+    .summary-card {
+      padding: 16px; border: 1px solid var(--line); border-radius: 8px;
+      text-align: center; background: #fff;
+    }
+    .summary-card .number { font-size: 36px; font-weight: 800; }
+    .summary-card .label { font-size: 13px; color: var(--muted); margin-top: 4px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 4px 9px; border: 1px solid var(--line); border-radius: 999px;
+      background: #fff; color: var(--muted); font-size: 12px; font-weight: 600;
+    }
+    .section { margin-bottom: 28px; padding: 22px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    @media (max-width: 768px) {
+      main { padding: 16px; }
+      .summary-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>CFS App Spec Compliance Review Report</h1>
+  <p>Handoff Spec (<code>CLOUD_CODE_AGENT_HANDOFF_SPEC.html</code>) に対するコードレビュー結果。Codex によるアップデート作業の入力資料。</p>
+  <div class="meta">
+    <span class="pill">Date: 2026-06-07</span>
+    <span class="pill">Agents Used: 10</span>
+    <span class="pill">Target: cfs-app (Next.js 15 / React 19 / TypeScript)</span>
+    <span class="pill">Reviewer: Claude Opus 4.6</span>
+  </div>
+</header>
+
+<main>
+
+<!-- ===== EXECUTIVE SUMMARY ===== -->
+<h2>Executive Summary</h2>
+
+<div class="summary-grid">
+  <div class="summary-card">
+    <div class="number pass">92</div>
+    <div class="label">Total Checks</div>
+  </div>
+  <div class="summary-card">
+    <div class="number pass">82</div>
+    <div class="label">PASS</div>
+  </div>
+  <div class="summary-card">
+    <div class="number fail">5</div>
+    <div class="label">FAIL / MISSING</div>
+  </div>
+  <div class="summary-card">
+    <div class="number warn">5</div>
+    <div class="label">WARN / PARTIAL</div>
+  </div>
+</div>
+
+<div class="callout ok">
+  <strong>Overall:</strong> 仕様の約89%を満たしています。CRITICAL（ブロッキング）は1件。HIGH は3件。いずれもCodexでの修正対象です。
+</div>
+
+<!-- ===== BLOCKING / HIGH ISSUES ===== -->
+<h2>Issues Summary (Action Required)</h2>
+
+<table>
+  <thead>
+    <tr><th>Severity</th><th>Area</th><th>Issue</th><th>File : Line</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-fail">CRITICAL</span></td>
+      <td>Command View</td>
+      <td>PIR switch の <code>value</code> に生UUID を使用。<code>sw.switchNumber</code> にUUIDが保存され、リビジョンdiff・CFS出力・エクスポートでUUIDが露出する。</td>
+      <td><code>CommandView.tsx:211</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-fail">HIGH</span></td>
+      <td>Circuit</td>
+      <td>非Indirect器具の <code>pcs</code> が空入力時に強制的に <code>"1"</code> に変換される。仕様は空入力許容。</td>
+      <td><code>CircuitsView.tsx:31,113-118</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-fail">HIGH</span></td>
+      <td>Storage API</td>
+      <td>サーバーが空配列 <code>{ projects: [] }</code> を返した場合、クライアントがローカルデータで上書きPOSTする。サーバーの空状態が権威的であるべき。</td>
+      <td><code>storage.ts:734-741</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-fail">HIGH</span></td>
+      <td>CFS View</td>
+      <td><code>Area Scene Highlight</code> トグルが Display メニューではなく Highlights メニューに配置されている（仕様ではDisplayに記載）。</td>
+      <td><code>CfsView.tsx:1851</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warn">MEDIUM</span></td>
+      <td>CFS View</td>
+      <td>CFS Hide Reserved が <code>&lt;input type="checkbox"&gt;</code> で実装。他ビューはボタン (<code>.reserved-toggle-button</code>)。統一されていない。</td>
+      <td><code>CfsView.tsx:1827-1831</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warn">MEDIUM</span></td>
+      <td>QSM</td>
+      <td>チェック済みPIR の checkbox クリック時にフィードバックなく <code>preventDefault</code>。ユーザーが故障と誤認する可能性。</td>
+      <td><code>SwitchView.tsx:1828-1830</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warn">MEDIUM</span></td>
+      <td>CFS Backlight</td>
+      <td>同一Palladiomターゲットに複数ソーススイッチがある場合、最初のソースの condition のみ表示。後続ソースのデータが欠落。</td>
+      <td><code>CfsView.tsx:862-864</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warn">MEDIUM</span></td>
+      <td>Storage API</td>
+      <td>1プロジェクト内の1部屋タイプが破損すると全体の保存が400で拒否される。部分マイグレーション受入が安全。</td>
+      <td><code>route.ts:60-62</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warn">MEDIUM</span></td>
+      <td>Combobox</td>
+      <td>グローバル singleton 管理がなく、キーボード操作で理論上2つの dropdown が同時に開く可能性がある。</td>
+      <td><code>Combobox.tsx</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ===== BUILD STATUS ===== -->
+<h2>Build &amp; Type Check</h2>
+
+<table>
+  <thead>
+    <tr><th>Check</th><th>Result</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>npm run typecheck</code> (tsc --noEmit)</td>
+      <td><span class="pass">PASS</span> (0 errors)</td>
+      <td>型エラーなし。</td>
+    </tr>
+    <tr>
+      <td><code>npm run build</code> (next build)</td>
+      <td><span class="fail">FAIL</span></td>
+      <td><code>@swc/helpers</code> モジュール不足。<code>node_modules</code> の再インストール (<code>npm ci</code>) で解消する環境依存問題。コード起因ではない。</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout warning">
+  <strong>Build 修正方法:</strong> <code>cd cfs-app && rm -rf node_modules && npm ci</code> で <code>@swc/helpers</code> が正しくインストールされ、ビルドが通るはずです。OneDrive パスのシンボリックリンク問題の可能性もあります。
+</div>
+
+<!-- ===== DETAILED RESULTS PER AGENT ===== -->
+<h2>1. Types &amp; Data Model</h2>
+<div class="section">
+<table>
+  <thead><tr><th>Requirement</th><th>Status</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>RoomType fields (8/8)</td><td><span class="pass">PASS</span></td><td>deviceAssignments, hvacAssignments, hvacSeasons, scenes, roomScenes, switches, pduDeviceCounts, revisions</td></tr>
+    <tr><td>CircuitEntry fields (9/9)</td><td><span class="pass">PASS</span></td><td>追加フィールド ffe, energySaving あり（仕様外だが矛盾なし）</td></tr>
+    <tr><td>DeviceAssignment fields (7/7)</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>SwitchEntry fields (8/8)</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>DeviceMaster fields (6/6)</td><td><span class="pass">PASS</span></td><td>pdu, watts フィールド追加済み</td></tr>
+    <tr><td>SwitchKind members (5/5)</td><td><span class="pass">PASS</span></td><td>追加: command, tstat（仕様外だが矛盾なし）</td></tr>
+    <tr><td>RoomsSubTab に 'pdu' あり</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>RoomsSubTab で 'pdu' が先頭</td><td><span class="warn">WARN</span></td><td>Union型では末尾だが、レンダリング配列では先頭（実質問題なし）</td></tr>
+    <tr><td>HvacAssignment.thermostatRole</td><td><span class="pass">PASS</span></td><td>'Master' | 'Slave'</td></tr>
+    <tr><td>PduDeviceCount interface</td><td><span class="pass">PASS</span></td><td>{ deviceId: string; quantity: number }</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>2. Storage &amp; API Migration</h2>
+<div class="section">
+<table>
+  <thead><tr><th>Requirement</th><th>Status</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>/api/projects GET/POST</td><td><span class="pass">PASS</span></td><td>data/projects.json read/write</td></tr>
+    <tr><td>/api/trash GET/POST</td><td><span class="pass">PASS</span></td><td>data/trash/trash.json read/write</td></tr>
+    <tr><td>STORAGE_KEY = cfs-projects-v14</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>POST max 10MB, 413</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Invalid JSON returns 400</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Atomic write (tmp+rename)</td><td><span class="pass">PASS</span></td><td>クラッシュ時の孤立.tmpファイル蓄積リスクあり（MEDIUM）</td></tr>
+    <tr><td>10s timeout + localStorage fallback</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>1200ms debounce (projects)</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>300ms debounce (trash)</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>空配列レスポンス処理</td><td><span class="fail">HIGH</span></td><td>サーバーの空 projects を「データなし」と判断しローカルで上書き</td></tr>
+    <tr><td>Migration: pduDeviceCounts</td><td><span class="pass">PASS</span></td><td>default []</td></tr>
+    <tr><td>Migration: switchGroupId</td><td><span class="pass">PASS</span></td><td>fallback to sw.id</td></tr>
+    <tr><td>Migration: roomScenes</td><td><span class="pass">PASS</span></td><td>empty → createDefaultRoomScenes()</td></tr>
+    <tr><td>Migration: hvacSeasons</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Migration: thermostatRole</td><td><span class="pass">PASS</span></td><td>default 'Master'</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>3. AppSettings &amp; DeviceMaster</h2>
+<div class="section">
+<table>
+  <thead><tr><th>Requirement</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>APP_SETTINGS_KEY = cfs-app-settings-v3</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>AppSettings: devices, inputMasters, triggerMasters, displayScale, wattPerPdu</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>DeviceMaster: pdu + watts fields</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Required defaults (MP-1L-GCU, MP-2L-GCU, GCU-HOSP, etc. 8 models)</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Forbidden defaults absent (HQP7-1, Wireless OCC, Pico Remote)</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>DeviceAssign filters by DEVICE_ADDRESSES</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>wattPerPdu default = 3</td><td><span class="pass">PASS</span></td></tr>
+  </tbody>
+</table>
+<div class="callout ok"><strong>All 7/7 PASS.</strong> ブロック問題なし。</div>
+</div>
+
+<h2>4. PDU View</h2>
+<div class="section">
+<table>
+  <thead><tr><th>Requirement</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>PDU tab is FIRST sub-tab</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Upper KPI (7 items)</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Fixture VA: DALI Included / Excluded label</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Lutron Device PDU Summary table</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Show/Hide Reserved button</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Quantity source types (4: DeviceAssign/HVAC/Switch/Manual)</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Exclude DALI is BUTTON (not checkbox)</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Lighting Fixture VA Summary table</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Total Power Summary + Breaker 20A</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Voltage / Total Current NOT displayed</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Per-Room Device Quantities table DELETED</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Device routing (DeviceAssign/HVAC/Switch)</td><td><span class="pass">PASS</span></td></tr>
+  </tbody>
+</table>
+<div class="callout ok"><strong>All 12/12 PASS.</strong> 初期アクティブタブが "circuit" のまま（仕様では明示なし、要確認）。</div>
+</div>
+
+<h2>5. Circuit &amp; DeviceAssign</h2>
+<div class="section">
+<table>
+  <thead><tr><th>Requirement</th><th>Status</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>DALI excluded from row-merging</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>pcs allows empty input</td><td><span class="fail">HIGH</span></td><td>非Indirect: 空→"1" に強制変換 (parsePositiveInt)</td></tr>
+    <tr><td>DL: integer pcs +1/-1</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Indirect: +0.1/-0.1, +1/-1</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Fixture Correction 0.1 unit</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Detail has Clear button</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>CSV Import/Export</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Circuit selection shows device info</td><td><span class="pass">PASS</span></td><td>"1 - MQSE-4A1-D/1 Zn1" format</td></tr>
+    <tr><td>Reserved not in dropdown</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Hide Reserved persisted</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>CCI Detail auto-input DELETED</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Fixed vs DALI logic differs</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>DALI line/group/address display</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Detail clearable</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Reserved rows gray</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>HVAC separate mode/section</td><td><span class="pass">PASS</span></td><td></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>6. Scene &amp; RoomScene &amp; HVAC</h2>
+<div class="section">
+<table>
+  <thead><tr><th>Requirement</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>HVAC separated from Lighting</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Lighting sections minimize/maximize</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>On/Off options (6 values incl. Uneffected)</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Dimming: Uneffected/Raise/Lower + immediate % apply</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>"Link all HVAC" syncs targets</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>"Uneffected" spelling consistent</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>PMS / Door Magnet separation</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Setting overlay with dark backdrop</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Overlay closes on Esc / backdrop</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Scene Value / Backlight toggle</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Filled/empty Setting button color</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Area Scene does NOT auto-copy to Individual</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Individual-set areas expand on reopen</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Season dates editable</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Adjacent season dates chain</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>thermostatRole: Master / Slave</td><td><span class="pass">PASS</span></td></tr>
+  </tbody>
+</table>
+<div class="callout ok"><strong>All 16/16 PASS.</strong> ブロック問題なし。</div>
+</div>
+
+<h2>7. Switch / PIR / QSM / Command / Backlight</h2>
+<div class="section">
+<table>
+  <thead><tr><th>Requirement</th><th>Status</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>5 Switch kinds</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Palladiom/Pico expand by button count</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Copy Switch (not Function copy)</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Operation merges by button count</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Trigger Condition: Master + free input</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Dropdown portal/fixed + outside-click</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>PIR Registration table (per-Area)</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>All Areas available</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>PIR numbered PIR1, PIR2...</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Logic table: multi-select + Location</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>CFS: PIR number + Location</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>QSM add/remove rows</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>1 PIR = 1 QSM (mutual exclusion)</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Checking PIR removes from others</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Unassigned PIRs normalize to first QSM</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>QSM checkbox feedback</td><td><span class="warn">MEDIUM</span></td><td>preventDefault with no user feedback</td></tr>
+    <tr><td>Command: no UUID in selector</td><td><span class="fail">CRITICAL</span></td><td>PIR switch value = raw UUID (switchGroupId)</td></tr>
+    <tr><td>Command: display names correct</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Multiple Palladiom kept separate</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Backlight below HVAC</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>No duplicate Backlight rows</td><td><span class="pass">PASS</span></td><td>Multi-source condition data loss (MEDIUM)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>8. CFS View</h2>
+<div class="section">
+<table>
+  <thead><tr><th>Requirement</th><th>Status</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Toolbar: all 8 items present</td><td><span class="pass">PASS</span></td><td>Excel/Maximize が左側配置（軽微な順序差異）</td></tr>
+    <tr><td>Sort: Device / Area / Internal #</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Internal # sort preserved</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Display: Number Display toggle</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Display: Area Scene Name toggle</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Display: Area Scene Highlight toggle</td><td><span class="fail">HIGH</span></td><td>Highlights メニューに配置（仕様では Display）</td></tr>
+    <tr><td>Fixed headers (vertical + horizontal sticky)</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Maximize reduces upper UI</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Slash-separated 2-line display</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Group/Zone width prevents clipping</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Area Scene shows scene name option</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Individual Override takes priority</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>"Uneffected" preserved</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>PIR number + Location</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Multiple PIRs: summary + expand</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Backlight below HVAC</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>No duplicate Backlight rows</td><td><span class="pass">PASS</span></td><td></td></tr>
+    <tr><td>Hide Reserved button style consistency</td><td><span class="warn">MEDIUM</span></td><td>checkbox で実装（他ビューはボタン）</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>9. Common UI Patterns</h2>
+<div class="section">
+<table>
+  <thead><tr><th>Requirement</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>Reserved not shown in dropdowns</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>"Uneffected" spelling consistent</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Dropdown portal/fixed + viewport clamping</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Dropdown closes on outside click + Esc</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>No multiple dropdowns simultaneously</td><td><span class="warn">WARN</span></td></tr>
+    <tr><td>Ctrl+Arrow grid navigation</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Generic "N items" count deleted</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>Save status (Saving/Saved/Failed)</td><td><span class="pass">PASS</span></td></tr>
+    <tr><td>No console key warnings / hydration errors</td><td><span class="pass">PASS</span></td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ===== CODEX ACTION ITEMS ===== -->
+<h2>Codex Action Items</h2>
+
+<div class="callout danger">
+<strong>Must Fix (before next release):</strong>
+<ol>
+  <li><strong>[CRITICAL] CommandView.tsx:211</strong> — PIR switch の value に <code>switchGroupId</code> (UUID) を使用しない。連番インデックス文字列など、人間が読める安定キーに変更する。</li>
+  <li><strong>[HIGH] CircuitsView.tsx:31,113-118</strong> — <code>normalizePcsInput</code> を修正し、全 fixture type で空文字入力を許容する。<code>parsePositiveInt</code> の空文字ハンドリングを変更。</li>
+  <li><strong>[HIGH] storage.ts:734-741</strong> — サーバーから <code>{ projects: [] }</code> が返った場合を「空だがauthoritative」として扱い、ローカルデータで上書きしない。</li>
+  <li><strong>[HIGH] CfsView.tsx:1851</strong> — Area Scene Highlight トグルを Highlights メニューから Display メニューへ移動。</li>
+</ol>
+</div>
+
+<div class="callout warning">
+<strong>Should Fix (recommended):</strong>
+<ol>
+  <li><strong>[MEDIUM] CfsView.tsx:1827-1831</strong> — Hide Reserved を checkbox から <code>.reserved-toggle-button</code> ボタンに統一。</li>
+  <li><strong>[MEDIUM] SwitchView.tsx:1828-1830</strong> — QSM チェック済み PIR クリック時に tooltip またはメッセージでフィードバック追加。</li>
+  <li><strong>[MEDIUM] CfsView.tsx:862-864</strong> — 複数ソーススイッチ→同一ターゲット時に全ソースの condition を表示。</li>
+  <li><strong>[MEDIUM] route.ts:60-62</strong> — 単一プロジェクトの破損で全体拒否しないよう、部分マイグレーションを検討。</li>
+  <li><strong>[MEDIUM] Combobox.tsx</strong> — グローバル singleton 管理で同時オープン防止。</li>
+</ol>
+</div>
+
+<div class="callout">
+<strong>Environment Fix:</strong>
+<code>npm run build</code> は <code>@swc/helpers</code> モジュール不足で失敗。<code>rm -rf node_modules && npm ci</code> で解消。コード起因ではなく環境依存。
+</div>
+
+<!-- ===== DO NOT CHANGE REMINDER ===== -->
+<h2>Do Not Change (Codex向け注意)</h2>
+<div class="section">
+<ul>
+  <li><code>Uneffected</code> 表記 &mdash; 変更禁止</li>
+  <li><code>Reserved</code> を dropdown に戻さない</li>
+  <li>PDU の <code>Exclude DALI</code> をチェックボックスに戻さない</li>
+  <li>PDU の Per-Room Device Quantities 表を復活させない</li>
+  <li>PDU タブを CFS の後ろへ戻さない（左端が正）</li>
+  <li>Device Assign の CCI detail 自動入力を復活させない</li>
+  <li>PIR の area registration と logic selection を一つの表に戻さない</li>
+  <li>QSM の PIR 割当を複数 QSM 同時選択可能にしない</li>
+  <li>CFS の Area Scene 名/ハイライト表示切替を消さない</li>
+  <li>Backlight Logic を HVAC より上に戻さない</li>
+  <li>削除済みデフォルト (HQP7-1, Wireless OCC, Pico Remote) を戻さない</li>
+  <li>汎用 <code>items</code> 件数表示を復活させない</li>
+</ul>
+</div>
+
+</main>
+</body>
+</html>

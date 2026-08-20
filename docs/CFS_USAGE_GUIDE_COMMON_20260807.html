@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="CFS App共通版の起動条件、配布Zip、ログイン、全タブ、全主要ボタン、CFS出力、InspectionMode、Revision保存をスクショ番号付きで説明するHTML取扱説明書です。">
+  <title>CFS App 共通版 操作説明書 2026-08-07</title>
+  <style>
+    :root {
+      --ink: #24313f;
+      --muted: #627083;
+      --line: #d9e3ea;
+      --paper: #ffffff;
+      --ground: #f4f7f9;
+      --teal: #00878a;
+      --teal-dark: #006d70;
+      --teal-soft: #e8f6f5;
+      --cyan-soft: #eef9fb;
+      --amber-soft: #fff7df;
+      --red-soft: #fff0f0;
+      --shadow: 0 10px 28px rgba(31, 49, 64, 0.08);
+      --mark: #007f83;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--ground);
+      font-family: "Yu Gothic UI", "Meiryo", "Noto Sans JP", Arial, sans-serif;
+      line-height: 1.75;
+    }
+    a { color: var(--teal-dark); }
+    code {
+      padding: 0.1rem 0.35rem;
+      border-radius: 5px;
+      background: #eef3f6;
+      color: #344054;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.92em;
+    }
+    .page {
+      width: min(1240px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 72px;
+    }
+    header.hero,
+    nav.toc,
+    section.card {
+      margin-top: 18px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    header.hero { margin-top: 28px; }
+    h1, h2, h3 { line-height: 1.35; }
+    h1 { margin: 0; font-size: clamp(1.55rem, 3vw, 2.25rem); }
+    h2 {
+      margin: 42px 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--teal);
+      font-size: 1.42rem;
+    }
+    h3 { margin: 28px 0 10px; font-size: 1.1rem; }
+    p { margin: 0.65rem 0; }
+    .lead { color: var(--muted); font-size: 1.04rem; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: var(--teal-soft);
+      color: var(--teal-dark);
+      font-size: 0.82rem;
+      font-weight: 800;
+    }
+    nav.toc ol { columns: 2; margin: 10px 0 0; padding-left: 1.4rem; }
+    nav.toc li { break-inside: avoid; margin: 0.28rem 0; }
+    .note, .warning {
+      margin: 14px 0;
+      padding: 12px 14px;
+      border-radius: 8px;
+      border-left: 4px solid;
+    }
+    .note { border-color: #2d8fd6; background: #eef7ff; }
+    .warning { border-color: #d99a22; background: var(--amber-soft); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 20px;
+      background: var(--paper);
+      font-size: 0.93rem;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #edf3f5;
+      white-space: nowrap;
+      font-weight: 800;
+    }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 14px 0;
+    }
+    .flow > div {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fbfdfe;
+    }
+    .shot-card { margin: 18px 0 26px; }
+    .shot {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #f8fbfc;
+      box-shadow: 0 8px 20px rgba(31, 49, 64, 0.07);
+    }
+    .shot img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .pin {
+      position: absolute;
+      left: var(--x);
+      top: var(--y);
+      z-index: 2;
+      display: inline-grid;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      border: 2px solid #ffffff;
+      border-radius: 999px;
+      background: var(--mark);
+      color: #ffffff;
+      font-size: 0.82rem;
+      font-weight: 900;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+    }
+    .pin.small { width: 22px; height: 22px; font-size: 0.74rem; }
+    figcaption {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .two-col {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+    }
+    .compact-table td:first-child { width: 68px; text-align: center; font-weight: 800; color: var(--teal-dark); }
+    .footer-note { margin-top: 42px; color: var(--muted); font-size: 0.9rem; }
+    @media (max-width: 760px) {
+      .page { width: min(100% - 18px, 1240px); padding-top: 12px; }
+      nav.toc ol { columns: 1; }
+      table { display: block; overflow-x: auto; }
+      .pin { width: 22px; height: 22px; font-size: 0.72rem; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <h1>CFS App 共通版 操作説明書</h1>
+      <p class="lead">2026年8月7日時点の最新UIを、スクショ内の番号と対応表で説明します。配布Zipからの起動、ログイン、全タブ、主要ボタン、CFS表示、InspectionMode、Revision保存までを対象にしています。</p>
+      <div class="meta">
+        <span class="pill">対象: CFS Database版 / Common版</span>
+        <span class="pill">スクショ: Manual Demo Project</span>
+        <span class="pill">Git: 7812d606</span>
+        <span class="pill">HTML単体で閲覧可能</span>
+      </div>
+    </header>
+
+    <nav class="toc" aria-label="目次">
+      <strong>目次</strong>
+      <ol>
+        <li><a href="#startup">起動に必要な条件とファイル</a></li>
+        <li><a href="#launch">起動手順</a></li>
+        <li><a href="#project-list">プロジェクト一覧</a></li>
+        <li><a href="#common-header">共通ヘッダーとRevision</a></li>
+        <li><a href="#masters">Area / Fixture</a></li>
+        <li><a href="#roomtype">Room Typeと各サブタブ</a></li>
+        <li><a href="#cfs">CFSタブと表示設定</a></li>
+        <li><a href="#inspection">InspectionMode</a></li>
+        <li><a href="#trouble">トラブル対応</a></li>
+      </ol>
+    </nav>
+
+    <section id="startup" class="card">
+      <h2>起動に必要な条件とファイル</h2>
+      <table>
+        <thead><tr><th>分類</th><th>必要なもの</th><th>説明</th></tr></thead>
+        <tbody>
+          <tr><td>OS</td><td>Windows PC</td><td><code>LAUNCH_CFS_APP.cmd</code>、<code>START_CFS_APP_CONSOLE.bat</code>、ショートカット作成スクリプトはWindows向けです。</td></tr>
+          <tr><td>ネットワーク</td><td>Database接続とApp Update時のインターネット接続</td><td>最新版の配布Zipはビルド済みruntimeとNode.js runtimeを同梱します。Git管理ZipではPortableGitも同梱します。Database版ではSupabaseとMicrosoftログインへの接続が必要です。</td></tr>
+          <tr><td>認証</td><td>Microsoftアカウント</td><td>共有データベース版では、管理者が登録したメールアドレスでログインします。プロジェクトが表示されない場合はログイン状態と権限を確認します。</td></tr>
+          <tr><td>実行ファイル</td><td><code>LAUNCH_CFS_APP.cmd</code></td><td>通常起動用です。ダブルクリックすると起動準備を行い、ブラウザでCFSを開きます。</td></tr>
+          <tr><td>補助起動</td><td><code>START_CFS_APP_CONSOLE.bat</code></td><td>ログ確認や手動起動に使います。通常起動で開かない場合の診断用です。</td></tr>
+          <tr><td>ショートカット</td><td><code>CREATE_DESKTOP_SHORTCUT.vbs</code></td><td>デスクトップとスタートメニューにCFS Appショートカットを作成します。作成後のメッセージで参照先フォルダを確認できます。</td></tr>
+          <tr><td>Database設定</td><td><code>cfs-public-supabase.env</code></td><td>Database版に必要な公開設定です。Service Role Keyやクライアントシークレットは入れません。</td></tr>
+          <tr><td>同梱必須</td><td><code>runtime</code>、<code>.cfs-runtime</code>、<code>app</code>、<code>public</code>、<code>scripts</code></td><td>ビルド済みruntime、Node.js runtime、アプリ本体、起動補助スクリプトです。Git管理Zipでは <code>.cfs-runtime\git</code> も含みます。</td></tr>
+          <tr><td>同梱しないもの</td><td><code>data</code>、<code>.env.local</code>、生の <code>.next</code>、ルートの <code>node_modules</code></td><td>配布Zipではユーザーデータ、秘密情報、開発用ビルド成果物は含めません。通常Zipは <code>.git</code> を含めず、Git管理ZipのみApp Update用に含めます。</td></tr>
+        </tbody>
+      </table>
+      <div class="warning">OneDriveやネットワーク共有フォルダ上で直接起動すると、同期やファイルロックで不安定になることがあります。まずローカルフォルダへ解凍して起動してください。</div>
+    </section>
+
+    <section id="launch" class="card">
+      <h2>起動手順</h2>
+      <div class="flow">
+        <div><strong>1. Zipを解凍</strong><br>任意のローカルフォルダへ展開します。フォルダ名に日本語やスペースがあっても動作しますが、深すぎるパスは避けます。</div>
+        <div><strong>2. 起動</strong><br><code>LAUNCH_CFS_APP.cmd</code> をダブルクリックします。通常は利用者PCでnpm installやNext buildを行いません。</div>
+        <div><strong>3. ブラウザ表示</strong><br>準備が完了すると <code>http://localhost:3014</code> などのローカルURLが開きます。同じポートに別フォルダの古いCFSがいる場合は、自動で空きポートへ退避します。</div>
+        <div><strong>4. ログイン</strong><br>Database版ではMicrosoftログインを行います。ログイン後に権限があるプロジェクトが表示されます。</div>
+        <div><strong>5. ショートカット</strong><br>必要に応じて <code>CREATE_DESKTOP_SHORTCUT.vbs</code> を実行します。新しいZipへ入れ替えた時は、古いショートカットを削除して新しい解凍フォルダから作り直します。</div>
+      </div>
+      <p>起動状況は <code>artifacts\startup\latest-status.txt</code> と同フォルダの最新ログで確認できます。</p>
+    </section>
+
+    <section id="project-list" class="card">
+      <h2>プロジェクト一覧</h2>
+      <figure class="shot-card">
+        <div class="shot">
+          <img src="assets/cfs_usage_common_20260807/01-project-selection.png" alt="CFS Project Selection画面">
+          <span class="pin" style="--x:2.2%;--y:2.8%;">1</span>
+          <span class="pin" style="--x:60%;--y:2.8%;">2</span>
+          <span class="pin" style="--x:2.2%;--y:9.5%;">3</span>
+          <span class="pin" style="--x:3%;--y:17%;">4</span>
+          <span class="pin" style="--x:75%;--y:18%;">5</span>
+          <span class="pin" style="--x:4%;--y:29%;">6</span>
+          <span class="pin" style="--x:94%;--y:3%;">7</span>
+        </div>
+        <figcaption>プロジェクト選択、インポート/エクスポート、更新確認、共有編集状態を確認する入口画面です。</figcaption>
+      </figure>
+      <table class="compact-table">
+        <thead><tr><th>No</th><th>名称</th><th>機能</th><th>注意点</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>CFS Project Selection</td><td>プロジェクト一覧画面のタイトルです。</td><td>ログイン直後にプロジェクトがない場合は、権限またはログイン状態を確認します。</td></tr>
+          <tr><td>2</td><td>Check Update / Tablet URL</td><td>Git管理版の更新確認、タブレットや別端末から開くURL表示、URLコピーを行います。</td><td>Git管理Zipでは同梱PortableGitを使って更新確認できます。通常ZipはGit情報を持たないため更新対象外です。</td></tr>
+          <tr><td>3</td><td>編集ステータス</td><td>現在のユーザー、編集権限、ロック状態、Finish Editingを確認します。</td><td>Editできない場合は他ユーザーのロック、権限、ログイン状態を確認します。</td></tr>
+          <tr><td>4</td><td>New project name</td><td>新規プロジェクト名を入力します。</td><td>Database版では権限がないと作成/編集できません。</td></tr>
+          <tr><td>5</td><td>Create Project / Import Data / Export All</td><td>新規作成、JSONインポート、全プロジェクトエクスポートを行います。</td><td>インポート時は既存IDとの重複に注意します。</td></tr>
+          <tr><td>6</td><td>Project List</td><td>プロジェクトを開きます。編集、エクスポート、削除の各アイコンもここにあります。</td><td>削除したプロジェクトはTrashへ移動します。</td></tr>
+          <tr><td>7</td><td>設定アイコン</td><td>アプリ全体の設定画面を開きます。</td><td>端末側の表示設定やデバイス設定の確認に使います。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="common-header" class="card">
+      <h2>共通ヘッダーとRevision</h2>
+      <figure class="shot-card">
+        <div class="shot">
+          <img src="assets/cfs_usage_common_20260807/05-room-type-workspace.png" alt="Room Type作業画面の共通ヘッダー">
+          <span class="pin" style="--x:2%;--y:2.5%;">1</span>
+          <span class="pin" style="--x:46%;--y:2.6%;">2</span>
+          <span class="pin" style="--x:66%;--y:2.6%;">3</span>
+          <span class="pin" style="--x:83%;--y:2.6%;">4</span>
+          <span class="pin" style="--x:93%;--y:2.6%;">5</span>
+          <span class="pin" style="--x:2%;--y:8.2%;">6</span>
+          <span class="pin" style="--x:2%;--y:13.5%;">7</span>
+          <span class="pin" style="--x:2%;--y:22.8%;">8</span>
+        </div>
+        <figcaption>プロジェクト内では、編集ロック、Revision保存、ハイライト、上位タブ、Room Typeタブ、サブタブを共通で使います。</figcaption>
+      </figure>
+      <table class="compact-table">
+        <thead><tr><th>No</th><th>名称</th><th>機能</th><th>操作の考え方</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>View Only / Editing / Edit / Finish</td><td>表示専用と編集状態を切り替えます。Database版では編集ロックを取得してから編集します。</td><td>複数人運用では、作業後にFinishしてロックを解放します。</td></tr>
+          <tr><td>2</td><td>Undo / Redo</td><td>現在の編集セッション内の変更を戻す、やり直す操作です。</td><td>保存済みRevisionを戻す操作ではありません。</td></tr>
+          <tr><td>3</td><td>Revision表示 / Draft表示</td><td>選択RoomTypeの現在RevisionとDraft保存状態を表示します。</td><td>RevisionはRoomType単位で履歴管理されます。</td></tr>
+          <tr><td>4</td><td>Save Revision / Revision Management / Highlight Updates</td><td>Revision保存、履歴確認、差分ハイライト切替を行います。</td><td>Save Revisionは全RoomType一括保存ダイアログで対象を選択できます。</td></tr>
+          <tr><td>5</td><td>右上アイコン</td><td>表示補助メニューとアプリ設定を開きます。</td><td>歯車はアプリ設定、三本線は補助メニューです。</td></tr>
+          <tr><td>6</td><td>Back to Project List</td><td>プロジェクト一覧へ戻ります。</td><td>未保存の編集がある場合は先にRevision保存を検討します。</td></tr>
+          <tr><td>7</td><td>Area / Fixture / Room Type</td><td>マスター設定、器具マスター、RoomType作業エリアを切り替えます。</td><td>CFS作成はRoom Type内の各サブタブを使います。</td></tr>
+          <tr><td>8</td><td>PDUからCFSまでのサブタブ</td><td>RoomTypeごとの回路、機器、Scene、Switch、Command、Backlight、CFSを編集します。</td><td>左から登録していくとCFS出力の不足を減らせます。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="masters" class="card">
+      <h2>Area / Fixture</h2>
+      <div class="two-col">
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/03-area-tab.png" alt="Areaタブ">
+            <span class="pin" style="--x:2.2%;--y:14.5%;">1</span>
+            <span class="pin" style="--x:8%;--y:26%;">2</span>
+            <span class="pin" style="--x:45%;--y:27%;">3</span>
+            <span class="pin" style="--x:77%;--y:27%;">4</span>
+            <span class="pin" style="--x:48%;--y:41%;">5</span>
+          </div>
+          <figcaption>AreaはCFSのArea、Area Address、Scene所属、CFSソート順に影響します。</figcaption>
+        </figure>
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/04-fixture-tab.png" alt="Fixtureタブ">
+            <span class="pin" style="--x:2.2%;--y:13.5%;">1</span>
+            <span class="pin" style="--x:2.8%;--y:22%;">2</span>
+            <span class="pin" style="--x:86%;--y:21%;">3</span>
+            <span class="pin" style="--x:55%;--y:38%;">4</span>
+            <span class="pin" style="--x:48%;--y:45%;">5</span>
+          </div>
+          <figcaption>FixtureはCircuitの器具選択、VA/W計算、Excel出力の元データです。</figcaption>
+        </figure>
+      </div>
+      <table class="compact-table">
+        <thead><tr><th>No</th><th>Areaタブ</th><th>Fixtureタブ</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Areaタブを選択します。</td><td>Fixtureタブを選択します。</td></tr>
+          <tr><td>2</td><td>Area名、番号、Code、色を編集します。</td><td>CSV Import / CSV Exportで器具マスターを入出力します。</td></tr>
+          <tr><td>3</td><td>色はCFSや表示の識別に使います。</td><td>Correctionは器具の補正係数として使います。</td></tr>
+          <tr><td>4</td><td>削除アイコンでAreaを削除します。既存回路参照に注意します。</td><td>Type、Mode、VA/W値を設定します。</td></tr>
+          <tr><td>5</td><td>Add RowでAreaを追加します。順番はCFSのAreaソート順にも使われます。</td><td>Add Rowで器具を追加します。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="roomtype" class="card">
+      <h2>Room Typeと各サブタブ</h2>
+      <figure class="shot-card">
+        <div class="shot">
+          <img src="assets/cfs_usage_common_20260807/02-room-type-manage.png" alt="Room Type管理画面">
+          <span class="pin" style="--x:2%;--y:13.5%;">1</span>
+          <span class="pin" style="--x:6%;--y:20%;">2</span>
+          <span class="pin" style="--x:4%;--y:38%;">3</span>
+          <span class="pin" style="--x:11%;--y:48%;">4</span>
+        </div>
+        <figcaption>RoomTypeの追加、選択、複製、削除、バックアップ操作を行う管理画面です。</figcaption>
+      </figure>
+      <table class="compact-table">
+        <thead><tr><th>No</th><th>名称</th><th>機能</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Room Typeタブ</td><td>RoomType単位の設定画面へ移動します。</td></tr>
+          <tr><td>2</td><td>+ Manage</td><td>RoomTypeの作成、一覧、複製、削除を行う管理表示です。</td></tr>
+          <tr><td>3</td><td>New room type name / Create Room Type</td><td>RoomType名を入力し、新しいRoomTypeを作成します。</td></tr>
+          <tr><td>4</td><td>Room Typeカードと操作アイコン</td><td>カード選択で開く、鉛筆で名称変更、複製、削除などを行います。</td></tr>
+        </tbody>
+      </table>
+
+      <div class="two-col">
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/06-pdu-tab.png" alt="PDUタブ">
+            <span class="pin" style="--x:2%;--y:22%;">1</span>
+            <span class="pin" style="--x:10%;--y:37%;">2</span>
+            <span class="pin" style="--x:58%;--y:37%;">3</span>
+            <span class="pin" style="--x:50%;--y:47%;">4</span>
+          </div>
+          <figcaption>PDUタブでは機器台数とPDU負荷の目安を管理します。</figcaption>
+        </figure>
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/07-circuit-tab.png" alt="Circuitタブ">
+            <span class="pin" style="--x:2%;--y:27%;">1</span>
+            <span class="pin" style="--x:5%;--y:32%;">2</span>
+            <span class="pin" style="--x:40%;--y:50%;">3</span>
+            <span class="pin" style="--x:95%;--y:50%;">4</span>
+          </div>
+          <figcaption>CircuitタブはLightingとDry Contactを分けて登録します。</figcaption>
+        </figure>
+      </div>
+      <table class="compact-table">
+        <thead><tr><th>画面</th><th>ボタン/列</th><th>機能</th></tr></thead>
+        <tbody>
+          <tr><td>PDU</td><td>Device / Count / PDU</td><td>RoomTypeで使うデバイス数量とPDU消費を管理します。</td></tr>
+          <tr><td>PDU</td><td>Add Device</td><td>デバイス行を追加します。Device AssignやSwitch登録の入口として使います。</td></tr>
+          <tr><td>Circuit</td><td>Lighting / Dry Contact</td><td>照明回路とCCOなどの接点回路の登録を切り替えます。</td></tr>
+          <tr><td>Circuit</td><td>CSV Import / CSV Export</td><td>回路表をCSVで取り込み/書き出しします。</td></tr>
+          <tr><td>Circuit</td><td>Designer # / Internal # / Dimming Type / Area / Fixture / pcs. / Detail</td><td>CFSのBase列と計算に使う主要情報です。4P20系はCFS上PWMとして扱います。</td></tr>
+          <tr><td>Circuit</td><td>コピー / 削除</td><td>行の複製、削除を行います。通し番号は表示順に自動で振り直されます。</td></tr>
+        </tbody>
+      </table>
+
+      <div class="two-col">
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/08-device-assign-tab.png" alt="Device Assignタブ">
+            <span class="pin" style="--x:2%;--y:20%;">1</span>
+            <span class="pin" style="--x:8%;--y:24%;">2</span>
+            <span class="pin" style="--x:55%;--y:23%;">3</span>
+            <span class="pin" style="--x:82%;--y:23%;">4</span>
+          </div>
+          <figcaption>Device Assignは機器のZone/Address、Circuit/Input、Detailを紐付けます。</figcaption>
+        </figure>
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/09-area-scene-tab.png" alt="Area Sceneタブ">
+            <span class="pin" style="--x:2%;--y:19%;">1</span>
+            <span class="pin" style="--x:3%;--y:24%;">2</span>
+            <span class="pin" style="--x:88%;--y:29%;">3</span>
+            <span class="pin" style="--x:48%;--y:35%;">4</span>
+          </div>
+          <figcaption>Area SceneはBedroomなどArea単位のSceneを作り、SwitchやSceneから呼び出します。</figcaption>
+        </figure>
+      </div>
+      <table class="compact-table">
+        <thead><tr><th>画面</th><th>ボタン/列</th><th>機能</th></tr></thead>
+        <tbody>
+          <tr><td>Device Assign</td><td>On/Off / Dimming、DALI、HVAC</td><td>機器種別別に割り当て行を切り替えます。</td></tr>
+          <tr><td>Device Assign</td><td>Show Reserved / Hide Reserved</td><td>Reserved行を表示/非表示にします。非表示時も列は左詰めせず、上詰めで表示します。</td></tr>
+          <tr><td>Device Assign</td><td>Circuit # / Input</td><td>LightingはCircuit番号、CCIは入力起点、CCOはDry Contactリストまたは自由入力を選択します。</td></tr>
+          <tr><td>Device Assign</td><td>Detail</td><td>Circuit # / Inputが空の場合は入力しない運用です。CCOではCircuitがある場合、CFS上でDetail空欄時にCircuitを表示します。</td></tr>
+          <tr><td>Area Scene</td><td>Areaカード</td><td>AreaごとのSceneを切り替えます。</td></tr>
+          <tr><td>Area Scene</td><td>Add Scene</td><td>Area Sceneを追加します。Refresh、Relax、NightなどRoomType共通で使うSceneを登録します。</td></tr>
+          <tr><td>Area Scene</td><td>設定セル</td><td>各CircuitにOn/Off、%値、Raise/Lowerなどを設定します。カーテンOpen/CloseはSingle動作として扱います。</td></tr>
+        </tbody>
+      </table>
+
+      <div class="two-col">
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/10-scene-tab.png" alt="Sceneタブ">
+            <span class="pin" style="--x:2%;--y:18%;">1</span>
+            <span class="pin" style="--x:2%;--y:24%;">2</span>
+            <span class="pin" style="--x:32%;--y:35%;">3</span>
+            <span class="pin" style="--x:61%;--y:35%;">4</span>
+          </div>
+          <figcaption>SceneタブはFrom PMS SceneとDoor Magnet Sceneを管理します。</figcaption>
+        </figure>
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/11-switch-tab.png" alt="Switchタブ">
+            <span class="pin" style="--x:2%;--y:28%;">1</span>
+            <span class="pin" style="--x:12%;--y:32%;">2</span>
+            <span class="pin" style="--x:44%;--y:38%;">3</span>
+            <span class="pin" style="--x:88%;--y:38%;">4</span>
+          </div>
+          <figcaption>SwitchタブではPalladiom、CCI、Pico、PIR、QSMの順でボタン/入力系を登録します。</figcaption>
+        </figure>
+      </div>
+      <table class="compact-table">
+        <thead><tr><th>画面</th><th>ボタン/列</th><th>機能</th></tr></thead>
+        <tbody>
+          <tr><td>Scene</td><td>From PMS Scene</td><td>From PMS、Check-in/Check-out、PMS VAR: EnableのようなPMS連動列を登録します。</td></tr>
+          <tr><td>Scene</td><td>Door Magnet Scene</td><td>ドアマグネットなどを起点にしたWelcome Sceneなどを登録します。</td></tr>
+          <tr><td>Scene</td><td>Setting / Backlight Setting</td><td>Sceneの照明値、Area Scene参照、Backlight条件を設定します。</td></tr>
+          <tr><td>Switch</td><td>Palladiom / CCI / Pico / PIR / QSM</td><td>スイッチ種別を切り替えます。CCIは動作の起点であり、CFSのBase列には通常表示しません。</td></tr>
+          <tr><td>Switch</td><td>Switch # / Name / Button / Trigger Condition</td><td>スイッチ番号、名称、ボタン、起動条件を設定します。</td></tr>
+          <tr><td>Switch</td><td>Setting</td><td>Area Scene呼び出し、直接%値、On/Offなどを設定します。Refresh/Relax/NightはBedroomのArea Sceneとして呼ぶ運用です。</td></tr>
+        </tbody>
+      </table>
+
+      <div class="two-col">
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/12-command-tab.png" alt="Commandタブ">
+            <span class="pin" style="--x:2%;--y:25%;">1</span>
+            <span class="pin" style="--x:9%;--y:32%;">2</span>
+            <span class="pin" style="--x:52%;--y:32%;">3</span>
+            <span class="pin" style="--x:88%;--y:33%;">4</span>
+          </div>
+          <figcaption>CommandタブはWelcome Resetなど、スイッチ/条件から呼ぶコマンド列を作ります。</figcaption>
+        </figure>
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/13-backlight-tab.png" alt="Backlightタブ">
+            <span class="pin" style="--x:2%;--y:24%;">1</span>
+            <span class="pin" style="--x:10%;--y:34%;">2</span>
+            <span class="pin" style="--x:48%;--y:45%;">3</span>
+            <span class="pin" style="--x:89%;--y:45%;">4</span>
+          </div>
+          <figcaption>BacklightタブはPalladiomなどのバックライト条件と出力を管理します。</figcaption>
+        </figure>
+      </div>
+      <table class="compact-table">
+        <thead><tr><th>画面</th><th>ボタン/列</th><th>機能</th></tr></thead>
+        <tbody>
+          <tr><td>Command</td><td>Command Name</td><td>CFS上のCommand列名になります。</td></tr>
+          <tr><td>Command</td><td>Switch # / Switch Name / Button</td><td>コマンドを起動するスイッチ情報を登録します。</td></tr>
+          <tr><td>Command</td><td>Trigger Condition</td><td>Hold 4sec.などの起動条件を設定します。</td></tr>
+          <tr><td>Command</td><td>Setting</td><td>対象回路やSceneに対する値を設定します。</td></tr>
+          <tr><td>Backlight</td><td>Target / Condition / Level</td><td>Backlight LogicとしてCFSへ出す条件と値を登録します。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="cfs" class="card">
+      <h2>CFSタブと表示設定</h2>
+      <figure class="shot-card">
+        <div class="shot">
+          <img src="assets/cfs_usage_common_20260807/14-cfs-tab.png" alt="CFSタブ">
+          <span class="pin" style="--x:2%;--y:31%;">1</span>
+          <span class="pin" style="--x:13%;--y:31%;">2</span>
+          <span class="pin" style="--x:76%;--y:31%;">3</span>
+          <span class="pin" style="--x:86%;--y:31%;">4</span>
+          <span class="pin" style="--x:93%;--y:31%;">5</span>
+          <span class="pin" style="--x:2%;--y:37%;">6</span>
+          <span class="pin" style="--x:3%;--y:46%;">7</span>
+        </div>
+        <figcaption>CFSタブはBase、Function、Device、Area、Display、Programming Name、Highlightsの順に設定ボタンを並べています。</figcaption>
+      </figure>
+      <table class="compact-table">
+        <thead><tr><th>No</th><th>名称</th><th>機能</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Base / Function / Device / Area / Display / Programming Name / Highlights</td><td>CFS表の列、並び、フィルター、名称生成、差分表示を設定します。</td></tr>
+          <tr><td>2</td><td>ハイライト凡例</td><td>Individual Override、Area Scene Value、FFE、Energy Savingなどの色意味を示します。</td></tr>
+          <tr><td>3</td><td>InspectionMode</td><td>CFS表上で値を確認・一時編集するモードに入ります。</td></tr>
+          <tr><td>4</td><td>Excel Export</td><td>現在表示中のCFSをExcel形式で出力します。</td></tr>
+          <tr><td>5</td><td>Maximize</td><td>CFS表を最大化表示します。</td></tr>
+          <tr><td>6</td><td>Base列ヘッダー</td><td>No、Device、Device#、Type、Zone/Address、Designer#、Area、Detailなどを表示します。</td></tr>
+          <tr><td>7</td><td>CFSマトリクス</td><td>Circuit、Device Assign、Scene、Switch、Command、Backlightから解決された値を表示します。</td></tr>
+        </tbody>
+      </table>
+
+      <div class="two-col">
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/15-cfs-base-menu.png" alt="CFS Baseメニュー">
+            <span class="pin" style="--x:3%;--y:31%;">1</span>
+            <span class="pin" style="--x:3%;--y:37%;">2</span>
+            <span class="pin" style="--x:5%;--y:45%;">3</span>
+            <span class="pin" style="--x:19%;--y:45%;">4</span>
+          </div>
+          <figcaption>Baseは1列表示のリストで、表示/非表示と上下順を管理します。</figcaption>
+        </figure>
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/16-cfs-function-menu.png" alt="CFS Functionメニュー">
+            <span class="pin" style="--x:8%;--y:31%;">1</span>
+            <span class="pin" style="--x:9%;--y:38%;">2</span>
+            <span class="pin" style="--x:14%;--y:47%;">3</span>
+          </div>
+          <figcaption>FunctionはScene、Switch、Command、Backlightなどの機能列を表示/非表示にします。</figcaption>
+        </figure>
+      </div>
+      <table class="compact-table">
+        <thead><tr><th>メニュー</th><th>ボタン/項目</th><th>機能</th></tr></thead>
+        <tbody>
+          <tr><td>Base</td><td>Show all / Hide all</td><td>Base列をまとめて表示/非表示にします。非表示にした列は表上部に小さく残さず、再表示はBaseメニューから行います。</td></tr>
+          <tr><td>Base</td><td>チェックボックス</td><td>列単位で表示/非表示を切り替えます。</td></tr>
+          <tr><td>Base</td><td>上下ボタン</td><td>列の表示順を移動します。</td></tr>
+          <tr><td>Function</td><td>Show all / Hide all</td><td>機能列をまとめて表示/非表示にします。</td></tr>
+          <tr><td>Function</td><td>グループ行</td><td>Scene、Command、Switchなどの列グループ単位で表示を管理します。</td></tr>
+        </tbody>
+      </table>
+
+      <div class="two-col">
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/17-cfs-device-menu.png" alt="CFS Deviceメニュー">
+            <span class="pin" style="--x:8%;--y:31%;">1</span>
+            <span class="pin" style="--x:9%;--y:38%;">2</span>
+            <span class="pin" style="--x:9%;--y:45%;">3</span>
+          </div>
+          <figcaption>Deviceは機器単位の表示とCCI表示を切り替えます。</figcaption>
+        </figure>
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/18-cfs-area-menu.png" alt="CFS Areaメニュー">
+            <span class="pin" style="--x:14%;--y:31%;">1</span>
+            <span class="pin" style="--x:15%;--y:38%;">2</span>
+            <span class="pin" style="--x:15%;--y:45%;">3</span>
+          </div>
+          <figcaption>AreaはArea順に基づく絞り込みを行います。並びはAreaタブの順番を使います。</figcaption>
+        </figure>
+      </div>
+      <table class="compact-table">
+        <thead><tr><th>メニュー</th><th>ボタン/項目</th><th>機能</th></tr></thead>
+        <tbody>
+          <tr><td>Device</td><td>Show all / Hide all / Show CCI</td><td>機器ごとの表示切替とCCI行の表示/非表示を行います。CCI表示時もCircuitとDetailを確認できます。</td></tr>
+          <tr><td>Device</td><td>機器チェック</td><td>QSN、QSE-IOなど機器単位でCFS行を絞り込みます。</td></tr>
+          <tr><td>Area</td><td>Show all / Hide all</td><td>Areaフィルターを一括操作します。</td></tr>
+          <tr><td>Area</td><td>Areaチェック</td><td>Areaごとに表示を絞ります。CCOなど非照明行は照明ソート範囲から外し、Device順のまま下に表示します。</td></tr>
+        </tbody>
+      </table>
+
+      <div class="two-col">
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/19-cfs-display-menu.png" alt="CFS Displayメニュー">
+            <span class="pin" style="--x:20%;--y:32%;">1</span>
+            <span class="pin" style="--x:28%;--y:38%;">2</span>
+            <span class="pin" style="--x:24%;--y:48%;">3</span>
+          </div>
+          <figcaption>Displayはソートと表示番号の基準を切り替えます。</figcaption>
+        </figure>
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/20-cfs-programming-name-menu.png" alt="CFS Programming Nameメニュー">
+            <span class="pin" style="--x:28%;--y:37%;">1</span>
+            <span class="pin" style="--x:60%;--y:42%;">2</span>
+            <span class="pin" style="--x:29%;--y:66%;">3</span>
+            <span class="pin" style="--x:29%;--y:70%;">4</span>
+          </div>
+          <figcaption>Programming NameはLocation Number、Designer Number、Area、Address、Deviceの組み合わせを設定します。</figcaption>
+        </figure>
+      </div>
+      <table class="compact-table">
+        <thead><tr><th>メニュー</th><th>ボタン/項目</th><th>機能</th></tr></thead>
+        <tbody>
+          <tr><td>Display</td><td>Device / Area / Internal# / Programming Name</td><td>CFS行のソート基準を選択します。Area選択時はAreaタブ順に並びます。</td></tr>
+          <tr><td>Display</td><td>Designer# / Internal#</td><td>CFSの番号表示基準を切り替えます。</td></tr>
+          <tr><td>Display</td><td>Hide Reserved / Area Scene Name</td><td>Reserved行、Area Scene名の表示を切り替えます。</td></tr>
+          <tr><td>Programming Name</td><td>Combination</td><td>Location Number、Designer Number、Area、Address、Deviceを縦一列で選び、上下ボタンで順番を変えます。</td></tr>
+          <tr><td>Programming Name</td><td>Bracket / Token separator / Detail separator</td><td>括弧種類、各要素の区切り、Detailとの区切りを選択します。</td></tr>
+          <tr><td>Programming Name</td><td>Preview</td><td>現在の設定で生成されるProgramming Nameを確認します。</td></tr>
+        </tbody>
+      </table>
+
+      <figure class="shot-card">
+        <div class="shot">
+          <img src="assets/cfs_usage_common_20260807/21-cfs-highlights-menu.png" alt="CFS Highlightsメニュー">
+          <span class="pin" style="--x:34%;--y:32%;">1</span>
+          <span class="pin" style="--x:35%;--y:39%;">2</span>
+          <span class="pin" style="--x:35%;--y:47%;">3</span>
+        </div>
+        <figcaption>HighlightsはCFS上の色表示のON/OFFを調整します。</figcaption>
+      </figure>
+      <table class="compact-table">
+        <thead><tr><th>No</th><th>項目</th><th>機能</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Individual Override</td><td>Area Scene参照ではなく個別上書きされた値を強調します。</td></tr>
+          <tr><td>2</td><td>Area Scene Value</td><td>Area Sceneから来ている値を強調します。</td></tr>
+          <tr><td>3</td><td>FFE / Energy Saving</td><td>FFE対象、Energy Saving対象のCircuitを強調します。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="inspection" class="card">
+      <h2>InspectionMode</h2>
+      <div class="two-col">
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/22-inspection-mode.png" alt="InspectionMode画面">
+            <span class="pin" style="--x:77%;--y:31%;">1</span>
+            <span class="pin" style="--x:75%;--y:39%;">2</span>
+            <span class="pin" style="--x:2%;--y:46%;">3</span>
+          </div>
+          <figcaption>InspectionModeはCFS表上で値を点検し、必要に応じてドラフト編集します。</figcaption>
+        </figure>
+        <figure class="shot-card">
+          <div class="shot">
+            <img src="assets/cfs_usage_common_20260807/23-inspection-cell-editor.png" alt="InspectionModeセル編集ポップオーバー">
+            <span class="pin" style="--x:69%;--y:41%;">1</span>
+            <span class="pin" style="--x:68%;--y:47%;">2</span>
+            <span class="pin" style="--x:69%;--y:55%;">3</span>
+            <span class="pin" style="--x:72%;--y:60%;">4</span>
+          </div>
+          <figcaption>セル編集ポップオーバーでは0%、100%、増減、Raise/Lower/Uneffectedを入力できます。</figcaption>
+        </figure>
+      </div>
+      <table class="compact-table">
+        <thead><tr><th>No</th><th>名称</th><th>機能</th><th>保存動作</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>InspectionModeボタン</td><td>点検モードの開始/終了を行います。</td><td>終了時に複数RoomTypeで編集がある場合は対象を一覧で選び、まとめて保存できます。</td></tr>
+          <tr><td>2</td><td>Linked / Unlink、Select / Copy / Paste / Clear / Revert</td><td>Area Scene連動を維持するか、個別上書きにするかを選び、範囲編集を行います。</td><td>LinkedはArea Sceneへ、Unlinkは直接値/上書きへ反映します。</td></tr>
+          <tr><td>3</td><td>CFSセル選択</td><td>セルまたは範囲を選んで値を編集します。</td><td>編集済みセルはInspectionのドラフトとして保持されます。</td></tr>
+          <tr><td>4</td><td>0% / 100% / -10 / -1 / +1 / +10 / Raise / Lower / Uneffected</td><td>調光値や標準動作を素早く入力します。</td><td>0%と100%は即座に値入力欄へ反映されます。</td></tr>
+        </tbody>
+      </table>
+      <div class="note">複数RoomTypeでInspection編集した場合は、終了時に編集されたRoomTypeを一覧表示し、チェックしたRoomTypeだけRevision保存する運用が推奨です。現在選択中のRoomTypeだけを無言で保存する形にはしません。</div>
+    </section>
+
+    <section id="trouble" class="card">
+      <h2>トラブル対応</h2>
+      <table>
+        <thead><tr><th>症状</th><th>確認する場所</th><th>対応</th></tr></thead>
+        <tbody>
+          <tr><td>起動しない、96%付近で止まる</td><td><code>artifacts\startup\latest-status.txt</code>、最新の <code>start-*.log</code>、<code>server-*.log</code></td><td>ポート使用中、ビルド失敗、依存関係取得失敗を確認します。必要に応じて別ポートで起動します。</td></tr>
+          <tr><td>新しいZipを入れたのに画面が古い</td><td>デスクトップ/スタートメニューの <code>CFS App</code> ショートカット、<code>/api/app-update/status</code> の <code>appDir</code></td><td>古いショートカットは以前の解凍フォルダを指し続けます。古いショートカットを削除し、新しい解凍フォルダの <code>CREATE_DESKTOP_SHORTCUT.vbs</code> で作り直します。</td></tr>
+          <tr><td>ログイン後にプロジェクトがない</td><td>Microsoftログイン状態、管理者登録、Database接続</td><td>ログインし直し、管理者にメール登録を確認します。ブラウザの認証トークンが古い場合は再ログインします。</td></tr>
+          <tr><td>Failed to save locallyと出る</td><td>ブラウザストレージ容量</td><td>Database版ではDB保存が主ですが、ブラウザバックアップの容量が不足している可能性があります。不要プロジェクトや古いRevisionを整理します。</td></tr>
+          <tr><td>Git was not foundが出る</td><td><code>.cfs-runtime\git</code>、<code>/api/app-update/status</code> の <code>gitPath</code></td><td>Git管理ZipではPortableGitを同梱します。古いZipや古いショートカットを使っていないか確認します。通常ZipはGit更新対象外です。</td></tr>
+          <tr><td>Update Blockedが出る</td><td>Git管理された既存アプリの差分</td><td>ローカルの追跡ファイル変更をコミットまたは破棄してから更新します。配布Zip版では通常Git更新の対象ではありません。</td></tr>
+          <tr><td>CFSに行が出ない</td><td>Circuit、Device Assign</td><td>CFSはCircuitとDevice Assignの連携からBase行を作ります。Circuit # / InputやDetailが不足していないか確認します。</td></tr>
+          <tr><td>CCOのArea/Detailが意図と違う</td><td>CircuitタブのDry Contact、Device AssignのCCO行</td><td>Dry ContactでArea、Circuit、Detailを登録し、Device Assignではリストから選択します。Detail空欄時はCFS上でCircuitを表示します。</td></tr>
+          <tr><td>ハイライトが広く出る</td><td>Highlight Updates、Revision履歴</td><td>差分表示はセル単位が基本です。行追加時のみ行単位で強調されます。最新Revisionを保存して比較元を整えます。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <p class="footer-note">この取説のスクショは、実データを含まないManual Demo Projectで取得しています。画面構成とボタン配置は2026年8月7日時点のアプリに基づきます。</p>
+  </main>
+</body>
+</html>
