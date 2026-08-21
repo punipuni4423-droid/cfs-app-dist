@@ -4891,6 +4891,21 @@ export default function CfsView({
                     row.locationColor && (!nextDisplayedRow || nextDisplayedRow.locationId !== row.locationId)
                       ? row.locationColor
                       : "transparent";
+                  // A rowSpan-merged cell belongs to the merge group's first
+                  // row, but its bottom edge sits at the last covered row.
+                  // Override the bottom stripe variable per merged cell so the
+                  // area boundary reaches the left merged columns too.
+                  const mergedBottomStyle = (rowSpan: number): Record<string, string> | undefined => {
+                    const lastIndex = Math.min(index + Math.max(rowSpan, 1) - 1, displayedRows.length - 1);
+                    if (lastIndex === index) return undefined;
+                    const lastRow = displayedRows[lastIndex];
+                    const afterLast = lastIndex + 1 < displayedRows.length ? displayedRows[lastIndex + 1] : null;
+                    const color =
+                      lastRow.locationColor && (!afterLast || afterLast.locationId !== lastRow.locationId)
+                        ? lastRow.locationColor
+                        : "transparent";
+                    return { ["--row-area-bottom-color"]: color };
+                  };
                   return (
                   <tr
                     key={row.id}
@@ -4946,7 +4961,7 @@ export default function CfsView({
                             className={`cfs-sticky-base cfs-merged-cell cfs-base-${col.key}${
                               isChangedBaseCell ? " revision-changed-cell" : ""
                             }`}
-                            style={{ minWidth: width, width, left: stickyOffsets.get(col.key) ?? 0 }}
+                            style={{ minWidth: width, width, left: stickyOffsets.get(col.key) ?? 0, ...mergedBottomStyle(mergeInfo.rowSpan) }}
                             colSpan={visibleBacklightKeys.length}
                             rowSpan={mergeInfo.rowSpan}
                           >
@@ -4963,7 +4978,7 @@ export default function CfsView({
                             className={`cfs-sticky-base cfs-merged-cell cfs-base-${col.key}${
                               isChangedBaseCell ? " revision-changed-cell" : ""
                             }`}
-                            style={{ left: stickyOffsets.get(col.key) ?? 0 }}
+                            style={{ left: stickyOffsets.get(col.key) ?? 0, ...mergedBottomStyle(info.rowSpan) }}
                             rowSpan={info.rowSpan}
                           >
                             {renderStack(baseValues(row, col.key))}
@@ -4979,7 +4994,7 @@ export default function CfsView({
                             className={`cfs-sticky-base cfs-merged-cell cfs-base-${col.key}${
                               isChangedBaseCell ? " revision-changed-cell" : ""
                             }`}
-                            style={{ left: stickyOffsets.get(col.key) ?? 0 }}
+                            style={{ left: stickyOffsets.get(col.key) ?? 0, ...mergedBottomStyle(info.rowSpan) }}
                             rowSpan={info.rowSpan}
                           >
                             {renderStack(baseValues(row, col.key))}
@@ -4995,7 +5010,7 @@ export default function CfsView({
                             className={`cfs-sticky-base cfs-merged-cell cfs-base-${col.key}${
                               isChangedBaseCell ? " revision-changed-cell" : ""
                             }`}
-                            style={{ left: stickyOffsets.get(col.key) ?? 0 }}
+                            style={{ left: stickyOffsets.get(col.key) ?? 0, ...mergedBottomStyle(info.rowSpan) }}
                             rowSpan={info.rowSpan}
                           >
                             {renderStack(baseValues(row, col.key))}
@@ -5012,7 +5027,7 @@ export default function CfsView({
                             className={`cfs-sticky-base cfs-base-${col.key}${
                               isChangedGroupZoneCell ? " revision-changed-cell" : ""
                             }`}
-                            style={{ left: stickyOffsets.get(col.key) ?? 0 }}
+                            style={{ left: stickyOffsets.get(col.key) ?? 0, ...mergedBottomStyle(info.rowSpan) }}
                             colSpan={2}
                             rowSpan={info.rowSpan}
                           >
@@ -5032,7 +5047,7 @@ export default function CfsView({
                             className={`cfs-sticky-base cfs-base-${col.key}${
                               isChangedBaseCell ? " revision-changed-cell" : ""
                             }`}
-                            style={{ left: stickyOffsets.get(col.key) ?? 0 }}
+                            style={{ left: stickyOffsets.get(col.key) ?? 0, ...mergedBottomStyle(info.rowSpan) }}
                             rowSpan={info.rowSpan}
                           >
                             {renderStack(baseValues(row, col.key))}
@@ -5048,7 +5063,7 @@ export default function CfsView({
                             className={`cfs-sticky-base cfs-base-${col.key}${
                               isChangedBaseCell ? " revision-changed-cell" : ""
                             }`}
-                            style={{ left: stickyOffsets.get(col.key) ?? 0 }}
+                            style={{ left: stickyOffsets.get(col.key) ?? 0, ...mergedBottomStyle(info.rowSpan) }}
                             rowSpan={info.rowSpan}
                           >
                             {renderStack(baseValues(row, col.key))}
