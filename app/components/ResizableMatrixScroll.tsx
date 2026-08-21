@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 
 interface ResizableMatrixScrollProps {
@@ -11,6 +11,8 @@ interface ResizableMatrixScrollProps {
 
 const MIN_WIDTH = 448;
 const MIN_HEIGHT = 192;
+// Bottom gap kept between the container and the viewport edge when auto-fitting.
+const FIT_BOTTOM_MARGIN = 14;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -23,6 +25,59 @@ export default function ResizableMatrixScroll({
 }: ResizableMatrixScrollProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ width?: number; height?: number }>({});
+  const manualHeightRef = useRef(false);
+  const [fitHeight, setFitHeight] = useState<number | undefined>(undefined);
+  const [endSpace, setEndSpace] = useState(0);
+
+  // Single-scroll layout: default the container height to "rest of the
+  // viewport" so the page itself does not need to scroll, and pad the end of
+  // the content so the last row can be scrolled up until it sits right under
+  // the sticky header row.
+  useLayoutEffect(() => {
+    function recompute(): void {
+      const element = scrollRef.current;
+      if (!element) return;
+      if (!manualHeightRef.current) {
+        const top = element.getBoundingClientRect().top;
+        const minHeight = variant === "compact" ? MIN_HEIGHT : variant === "large" ? 320 : 256;
+        const next = Math.max(minHeight, Math.floor(window.innerHeight - top - FIT_BOTTOM_MARGIN));
+        setFitHeight((prev) => (prev !== undefined && Math.abs(prev - next) < 2 ? prev : next));
+      }
+      const table = element.querySelector("table");
+      const head = table?.tHead;
+      const bodyRows = table?.tBodies?.[0]?.rows;
+      const lastRow = bodyRows && bodyRows.length > 0 ? bodyRows[bodyRows.length - 1] : null;
+      if (!head || !lastRow) {
+        setEndSpace(0);
+        return;
+      }
+      const spare = Math.floor(
+        element.clientHeight -
+          head.getBoundingClientRect().height -
+          lastRow.getBoundingClientRect().height,
+      );
+      const next = Math.max(0, spare);
+      setEndSpace((prev) => (Math.abs(prev - next) < 2 ? prev : next));
+    }
+
+    recompute();
+    const frame = requestAnimationFrame(recompute);
+    const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(recompute) : null;
+    if (resizeObserver) {
+      const element = scrollRef.current;
+      if (element) {
+        resizeObserver.observe(element);
+        const table = element.querySelector("table");
+        if (table) resizeObserver.observe(table);
+      }
+    }
+    window.addEventListener("resize", recompute);
+    return () => {
+      cancelAnimationFrame(frame);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", recompute);
+    };
+  }, [variant]);
 
   function startResize(event: ReactMouseEvent<HTMLButtonElement>): void {
     if (event.button !== 0) return;
@@ -38,7 +93,7 @@ export default function ResizableMatrixScroll({
     const parentWidth = element.parentElement?.clientWidth ?? window.innerWidth;
     const maxWidth = Math.max(280, parentWidth);
     const minWidth = Math.min(MIN_WIDTH, maxWidth);
-    const maxHeight = Math.max(MIN_HEIGHT, Math.floor(window.innerHeight * 0.78));
+    const maxHeight = Math.max(MIN_HEIGHT, Math.floor(window.innerHeight * 0.9));
 
     document.body.style.cursor = "nwse-resize";
     document.body.style.userSelect = "none";
@@ -46,6 +101,7 @@ export default function ResizableMatrixScroll({
     const onMouseMove = (moveEvent: MouseEvent): void => {
       const nextWidth = clamp(startWidth + moveEvent.clientX - startX, minWidth, maxWidth);
       const nextHeight = clamp(startHeight + moveEvent.clientY - startY, MIN_HEIGHT, maxHeight);
+      manualHeightRef.current = true;
       setSize({ width: nextWidth, height: nextHeight });
     };
 
@@ -62,7 +118,12 @@ export default function ResizableMatrixScroll({
 
   const style: CSSProperties = {
     ...(size.width ? { inlineSize: size.width } : null),
-    ...(size.height ? { blockSize: size.height } : null),
+    ...(size.height
+      ? { blockSize: size.height }
+      : fitHeight
+        ? { blockSize: fitHeight, maxBlockSize: "none" }
+        : null),
+    ...(endSpace > 0 ? { paddingBlockEnd: endSpace } : null),
   };
 
   return (

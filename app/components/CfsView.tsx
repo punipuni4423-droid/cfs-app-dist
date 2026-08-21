@@ -1879,6 +1879,16 @@ export default function CfsView({
       const scroller = cfsMatrixScrollRef.current;
       const table = tableRef.current;
       if (!scroller || !table) return;
+      // Single-scroll layout: fit the container to the rest of the viewport
+      // so the page itself does not need to scroll (maximized mode keeps its
+      // flex-driven size).
+      if (!isMaximized) {
+        const fit = Math.max(384, Math.floor(window.innerHeight - scroller.getBoundingClientRect().top - 14));
+        const current = Number.parseFloat(scroller.style.blockSize || "0");
+        if (Math.abs(current - fit) >= 2) scroller.style.blockSize = `${fit}px`;
+      } else if (scroller.style.blockSize) {
+        scroller.style.blockSize = "";
+      }
       const headerHeight = table.tHead?.getBoundingClientRect().height ?? 0;
       const bodyRows = Array.from(table.tBodies[0]?.rows ?? []).filter((row) => !row.classList.contains("cfs-scroll-end-row"));
       const lastBodyRow = bodyRows.at(-1);
