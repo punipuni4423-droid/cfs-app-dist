@@ -787,7 +787,10 @@ export default function SwitchView({
         if (mode === "scene") {
           return { ...sw, buttonSetting: JSON.parse(JSON.stringify(source.buttonSetting)) as SwitchEntry["buttonSetting"] };
         }
-        return { ...sw, backlightTarget: source.backlightTarget, backlightCondition: source.backlightCondition };
+        // Copy the CONDITION only. backlightTarget points at switch-specific
+        // circuit groups; bulk-copying it cross-wired or wiped targets on the
+        // other rows, breaking their CFS backlight display and settings.
+        return { ...sw, backlightCondition: source.backlightCondition };
       });
     });
     setBulkApplyMode(null);

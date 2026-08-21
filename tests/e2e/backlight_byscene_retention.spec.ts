@@ -172,8 +172,33 @@ test.describe("Backlight By-Scene retention", () => {
     await expect(overlay).toBeVisible({ timeout: 5000 });
     const panelSelect = overlay.locator("select").first();
     await panelSelect.selectOption({ index: 1 });
+    const rowValue = await panelSelect.inputValue();
     await overlay.locator("button").filter({ hasText: /^Close$/ }).click();
     await expect(overlay).toBeHidden({ timeout: 5000 });
+
+    // The INDIVIDUAL panel edit must stay scoped to its own row: the second
+    // row's condition and both rows' targets are untouched.
+    await page.waitForTimeout(1800);
+    const afterIndividual = await page.evaluate(() => {
+      try {
+        const drafts = JSON.parse(localStorage.getItem("cfs-project-drafts-v2") || "[]");
+        return (drafts?.[0]?.roomTypes?.[0]?.switches ?? [])
+          .filter((item: { kind?: string }) => item.kind === "lutronPd")
+          .map((item: { backlightCondition?: string; backlightTarget?: string }) => ({
+            condition: item.backlightCondition ?? "",
+            target: item.backlightTarget ?? "",
+          }));
+      } catch {
+        return [];
+      }
+    });
+    expect(afterIndividual.length).toBe(2);
+    const touched = afterIndividual.filter((row: { condition: string }) => row.condition === rowValue);
+    expect(touched.length).toBe(1);
+    const untouched = afterIndividual.filter((row: { condition: string }) => row.condition !== rowValue);
+    expect(untouched.length).toBe(1);
+    expect(untouched[0].condition).toBe("");
+    expect(afterIndividual.every((row: { target: string }) => row.target === "" || row.target.length > 0)).toBe(true);
 
     // The assignment dropdown must show (Mixed), not the first row's value.
     await subTab(page, /^Backlight$/);
