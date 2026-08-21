@@ -791,7 +791,7 @@ export default function ProjectScreen({
       if (beforeRow.kind !== "lutronPd") return;
       const afterRow = afterById.get(beforeRow.id);
       if (!afterRow || afterRow.kind !== "lutronPd") return;
-      if ((beforeRow.backlightCondition ?? "") !== (afterRow.backlightCondition ?? "")) {
+      if ((beforeRow.backlightAssignment ?? "") !== (afterRow.backlightAssignment ?? "")) {
         groups.add(switchGroupId(afterRow));
       }
     });
@@ -813,6 +813,7 @@ export default function ProjectScreen({
       "buttonSetting",
       "backlightTarget",
       "backlightCondition",
+      "backlightAssignment",
     ];
     const commandFields = [
       "switchNumber",
@@ -1163,7 +1164,7 @@ export default function ProjectScreen({
       const tab =
         row.kind === "command"
           ? "Command tab"
-          : fields.some((field) => field === "backlightTarget" || field === "backlightCondition" || field === "backlightLevels")
+          : fields.some((field) => field === "backlightTarget" || field === "backlightCondition" || field === "backlightAssignment" || field === "backlightLevels")
             ? "Backlight tab"
             : "Switch tab";
       const label =
@@ -1364,6 +1365,7 @@ export default function ProjectScreen({
       "buttonSetting",
       "backlightTarget",
       "backlightCondition",
+      "backlightAssignment",
     ];
     if (hasAnyFieldChange(revisionDiff.switchFields, contactSwitchIds, switchDataFields)) {
       highlighted.add("switch");
@@ -1375,7 +1377,7 @@ export default function ProjectScreen({
     }
     if (
       revisionDiff.backlightLogicChanged ||
-      hasAnyFieldChange(revisionDiff.switchFields, palladiomIds, ["backlightCondition"])
+      hasAnyFieldChange(revisionDiff.switchFields, palladiomIds, ["backlightCondition", "backlightAssignment"])
     ) {
       highlighted.add("backlight");
       highlighted.add("cfs");

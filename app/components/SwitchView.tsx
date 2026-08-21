@@ -99,7 +99,9 @@ const BY_SCENE_VALUE = "__byScene";
 type CciOption = CciAssignmentOption;
 
 function isByScenePalladiomBacklightTarget(sw: SwitchEntry): boolean {
-  return sw.kind === "lutronPd" && sw.backlightCondition.trim() === BY_SCENE_VALUE;
+  // Assignment "" = By Scene (documented default); the row-action condition
+  // no longer participates in the group's By-Scene membership.
+  return sw.kind === "lutronPd" && sw.backlightAssignment.trim() === "";
 }
 
 interface CciDeviceOption {
@@ -301,8 +303,6 @@ export default function SwitchView({
       const current = groups.get(key);
       if (!current) {
         groups.set(key, sw);
-      } else if (sw.backlightCondition === BY_SCENE_VALUE && current.backlightCondition !== BY_SCENE_VALUE) {
-        groups.set(key, { ...current, backlightCondition: BY_SCENE_VALUE });
       }
     }
     return Array.from(groups.values());

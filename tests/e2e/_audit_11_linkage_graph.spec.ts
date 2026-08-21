@@ -69,6 +69,7 @@ function switchRow(overrides: Partial<SwitchEntry>): SwitchEntry {
     buttonSetting: { sceneId: "", sceneIds: [], circuitSettings: [] },
     backlightTarget: "",
     backlightCondition: "",
+    backlightAssignment: "",
     backlightLevels: [],
     ...overrides,
   };
@@ -140,6 +141,7 @@ function roomTypeFixture(): RoomType {
         switchNumber: "SW1",
         switchName: "Bedside",
         backlightCondition: BY_SCENE_VALUE,
+        backlightAssignment: "",
       }),
       switchRow({
         id: "palladiom-base-target",
@@ -148,6 +150,7 @@ function roomTypeFixture(): RoomType {
         switchNumber: "SW1B",
         switchName: "Bedside Base",
         backlightCondition: "base",
+        backlightAssignment: "",
       }),
       switchRow({
         id: "palladiom-default-target",
@@ -156,6 +159,7 @@ function roomTypeFixture(): RoomType {
         switchNumber: "SW1C",
         switchName: "Bedside Default",
         backlightCondition: "",
+        backlightAssignment: "",
       }),
       switchRow({
         id: "backlight-good",
@@ -165,6 +169,7 @@ function roomTypeFixture(): RoomType {
         switchName: "Backlight Good",
         backlightTarget: "pd-group",
         backlightCondition: "base",
+        backlightAssignment: "",
       }),
       switchRow({
         id: "backlight-base-good",
@@ -174,6 +179,7 @@ function roomTypeFixture(): RoomType {
         switchName: "Backlight Base Good",
         backlightTarget: "pd-base-group",
         backlightCondition: "base",
+        backlightAssignment: "",
       }),
       switchRow({
         id: "backlight-default-target-good",
@@ -183,6 +189,7 @@ function roomTypeFixture(): RoomType {
         switchName: "Backlight Default Target Good",
         backlightTarget: "pd-default-group",
         backlightCondition: "base",
+        backlightAssignment: "",
       }),
       switchRow({
         id: "backlight-no-condition",
@@ -192,6 +199,7 @@ function roomTypeFixture(): RoomType {
         switchName: "Backlight No Condition",
         backlightTarget: "pd-group",
         backlightCondition: "",
+        backlightAssignment: "",
       }),
       switchRow({
         id: "backlight-missing-target",
@@ -201,6 +209,7 @@ function roomTypeFixture(): RoomType {
         switchName: "Backlight Missing",
         backlightTarget: "missing-pd-group",
         backlightCondition: "base",
+        backlightAssignment: "",
       }),
       switchRow({
         id: "blank-backlight-placeholder",
@@ -208,6 +217,7 @@ function roomTypeFixture(): RoomType {
         kind: "contact",
         backlightTarget: "pd-group",
         backlightCondition: "base",
+        backlightAssignment: "",
       }),
     ],
     pduDeviceCounts: [],

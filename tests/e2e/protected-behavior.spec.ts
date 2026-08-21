@@ -244,6 +244,7 @@ function makeSceneCfsLinkProject(name: string, roomName: string) {
         detail: "",
         triggerCondition: "Check-in/Day",
         backlightCondition: "",
+        backlightAssignment: "",
         areaSceneSelections: [{ areaId: location.id, sceneId: areaScene.id }],
         settings: [{ circuitId: circuits[1].id, percentage: "66" }],
       },
@@ -290,6 +291,7 @@ function makeCurtainCfsProject(name: string, roomName: string) {
     buttonFunction: "Scene",
     condition: "Press",
     backlightCondition: "",
+    backlightAssignment: "",
   };
   const sourceSwitch = {
     ...createEmptySwitchEntry("lutronPd"),
@@ -303,6 +305,7 @@ function makeCurtainCfsProject(name: string, roomName: string) {
     condition: "Press",
     backlightTarget: targetSwitch.switchGroupId,
     backlightCondition: "masterOn",
+    backlightAssignment: "",
   };
   const roomType = {
     ...createNewRoomType(roomName),
@@ -371,6 +374,7 @@ function makeCurtainCfsProject(name: string, roomName: string) {
         detail: "Curtain Close",
         triggerCondition: "Check In",
         backlightCondition: "",
+        backlightAssignment: "",
         areaSceneSelections: [],
         settings: [{ circuitId: "curtain:curtain-cfs-curtain-1", percentage: "Close" }],
       },
@@ -417,6 +421,7 @@ function makeCorridorPicoCfsProject(name: string, roomName: string) {
         detail: "Corridor Pico",
         triggerCondition: "Check In",
         backlightCondition: "",
+        backlightAssignment: "",
         areaSceneSelections: [{ areaId: OTHER_AREA_ID, sceneId: "corridor-pico-cfs-area-scene-1" }],
         settings: [],
       },
@@ -465,10 +470,12 @@ function makeBacklightLegacyProject(name: string, roomName: string) {
   roomType.roomScenes = roomType.roomScenes.map((scene) => ({
     ...scene,
     backlightCondition: "Light",
+    backlightAssignment: "",
   }));
   roomType.switches = roomType.switches.map((sw) => ({
     ...sw,
     backlightCondition: sw.backlightTarget ? "Light" : "",
+    backlightAssignment: "",
   }));
   roomType.switches.push({
     ...createEmptySwitchEntry("lutronPd"),
@@ -482,6 +489,7 @@ function makeBacklightLegacyProject(name: string, roomName: string) {
     condition: "Press",
     backlightTarget: "curtain-cfs-backlight-target-group",
     backlightCondition: "Master On",
+    backlightAssignment: "",
   });
   return project;
 }
@@ -523,10 +531,12 @@ function makeBacklightDeleteCascadeProject(name: string, roomName: string) {
     condition: "Press",
     backlightTarget: targetGroupId,
     backlightCondition: customLevel.key,
+    backlightAssignment: "",
   });
   roomType.roomScenes = roomType.roomScenes.map((scene, index) => ({
     ...scene,
     backlightCondition: index === 0 ? customLevel.key : scene.backlightCondition,
+    backlightAssignment: "",
   }));
   return project;
 }
@@ -744,6 +754,7 @@ function makeRevisionHighlightProject(name: string, roomName: string) {
     detail: "Day",
     triggerCondition: "Check In",
     backlightCondition: "",
+    backlightAssignment: "",
     areaSceneSelections: [{ areaId: location.id, sceneId: sceneBefore.id }],
     settings: [],
   };
@@ -1695,7 +1706,10 @@ test.describe("Protected CFS behaviors", () => {
         .map((button) => button.text),
     );
 
-    expect(visualLabels).toEqual(["Base", "Function", "Device", "Area", "Display", "Programming Name", "Highlights"]);
+    // "Rows" was added ahead of the visual menus by the CFS revision
+    // workflows update (row-level revision filter) and is part of the
+    // approved compact order.
+    expect(visualLabels).toEqual(["Rows", "Base", "Function", "Device", "Area", "Display", "Programming Name", "Highlights"]);
 
     await page.locator(".cfs-matrix-controls .cfs-filter-menu-trigger").filter({ hasText: /^Base$/ }).click();
     const basePanel = page.locator(".cfs-filter-list-portal").last();

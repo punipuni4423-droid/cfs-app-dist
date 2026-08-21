@@ -96,9 +96,10 @@ test.describe("Switch bulk setting", () => {
         const drafts = JSON.parse(localStorage.getItem("cfs-project-drafts-v2") || "[]");
         return (drafts?.[0]?.roomTypes?.[0]?.switches ?? [])
           .filter((item: { kind?: string }) => item.kind === "lutronPd")
-          .map((item: { backlightCondition?: string; backlightTarget?: string }) => ({
+          .map((item: { backlightCondition?: string; backlightTarget?: string; backlightAssignment?: string }) => ({
             condition: item.backlightCondition ?? "",
             target: item.backlightTarget ?? "",
+            assignment: item.backlightAssignment ?? "",
           }));
       } catch {
         return [];
@@ -111,6 +112,10 @@ test.describe("Switch bulk setting", () => {
     // by the template row's value as a side effect).
     expect(rows[0].target).toBe("");
     expect(rows[1].target).toBe("");
+    // Bulk ACTION application must never disturb the group ASSIGNMENT: both
+    // groups stay By Scene ("") even after their rows received a condition.
+    expect(rows[0].assignment).toBe("");
+    expect(rows[1].assignment).toBe("");
 
     // Selection resets after applying.
     await expect(page.locator(".muted-pill").filter({ hasText: /checked/ })).toHaveText(/0 checked/);

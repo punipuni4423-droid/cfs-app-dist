@@ -65,6 +65,7 @@ function switchRow(overrides: Partial<SwitchEntry> = {}): SwitchEntry {
     },
     backlightTarget: "switch-group-1",
     backlightCondition: "On",
+    backlightAssignment: "",
     backlightLevels: [],
     ...overrides,
   };
@@ -87,6 +88,7 @@ function switchTargetRow(): SwitchEntry {
     },
     backlightTarget: "",
     backlightCondition: "",
+    backlightAssignment: "",
   });
 }
 
@@ -592,6 +594,7 @@ test("shared circuit isolation remaps revision snapshot circuit references", () 
     detail: "Day",
     triggerCondition: "",
     backlightCondition: "",
+    backlightAssignment: "",
     areaSceneSelections: [],
     settings: [{ circuitId: "circuit-1", percentage: "75" }],
   };

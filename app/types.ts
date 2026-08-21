@@ -330,6 +330,11 @@ export interface SwitchEntry {
   buttonSetting: SwitchButtonSetting;
   backlightTarget: string;
   backlightCondition: string;
+  // Palladiom group assignment ("" = By Scene, level key = fixed level).
+  // Kept separate from backlightCondition, which is the per-row ACTION
+  // ("pressing this button sets targets' backlight to X") paired with
+  // backlightTarget. Meaningful for lutronPd entries only.
+  backlightAssignment: string;
   backlightLevels: BacklightLevelSetting[];
 }
 

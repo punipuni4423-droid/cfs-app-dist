@@ -57,7 +57,9 @@ function palladiomBacklightSceneValue(value: string): string {
 const MIXED_VALUE = "__mixed";
 
 function groupBacklightSceneValue(entries: SwitchEntry[]): string {
-  const values = new Set(entries.map((entry) => palladiomBacklightSceneValue(entry.backlightCondition)));
+  const values = new Set(
+    entries.map((entry) => palladiomBacklightSceneValue(entry.backlightAssignment || BY_SCENE_VALUE)),
+  );
   if (values.size === 1) return values.values().next().value ?? BY_SCENE_VALUE;
   return MIXED_VALUE;
 }
@@ -156,6 +158,7 @@ export default function BacklightView({
     commitSwitches((current) =>
       current.map((sw) => {
         const backlightCondition = matchesRemovedLevel(sw.backlightCondition) ? "" : sw.backlightCondition;
+        const backlightAssignment = matchesRemovedLevel(sw.backlightAssignment) ? "" : sw.backlightAssignment;
         if (sw.kind !== "lutronPd") {
           return backlightCondition === sw.backlightCondition ? sw : { ...sw, backlightCondition };
         }
@@ -163,6 +166,7 @@ export default function BacklightView({
           ...sw,
           backlightLevels: nextLevels,
           backlightCondition,
+          backlightAssignment,
         };
       }),
     );
@@ -178,9 +182,10 @@ export default function BacklightView({
   }
 
   function updatePalladiomAssignment(groupId: string, sceneKey: string): void {
+    const assignment = sceneKey === BY_SCENE_VALUE ? "" : sceneKey;
     commitSwitches((current) =>
       current.map((sw) =>
-        switchGroupId(sw) === groupId ? { ...sw, backlightCondition: sceneKey } : sw,
+        switchGroupId(sw) === groupId ? { ...sw, backlightAssignment: assignment } : sw,
       ),
     );
   }

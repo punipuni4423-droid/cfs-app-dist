@@ -314,6 +314,67 @@ function migrateBacklightCondition(value: unknown): string {
   return value;
 }
 
+function normalizePalladiomAssignmentValue(value: unknown): string {
+  const condition = migrateBacklightCondition(value);
+  if (!condition || condition === '__byScene') return '';
+  const defaults = createDefaultBacklightLevels();
+  const matched = defaults.find(
+    (level) => level.key === condition || level.name.toLowerCase() === condition.toLowerCase(),
+  );
+  return matched ? matched.key : condition;
+}
+
+interface PalladiomAssignmentMigrationEntry {
+  kind: string;
+  id: string;
+  switchGroupId?: string;
+  backlightTarget: string;
+  backlightCondition: string;
+  backlightAssignment?: string;
+}
+
+/**
+ * Splits the historically conflated lutronPd backlightCondition into the
+ * per-group assignment ("" = By Scene, level key = fixed level; see
+ * docs/CFS_STANDARD_GUIDELINES "Palladiom Backlight Assignment") and the
+ * per-row ACTION condition (paired with backlightTarget). Legacy rows without
+ * an action target carried the assignment in backlightCondition; that value
+ * moves to backlightAssignment and the row condition is cleared. Rows with a
+ * target keep their condition as the action. Divergent legacy values fall
+ * back to By Scene, the documented default.
+ */
+function migratePalladiomBacklightAssignments<T extends PalladiomAssignmentMigrationEntry>(
+  switches: T[],
+): Array<T & { backlightAssignment: string }> {
+  const assignmentByGroup = new Map<string, string>();
+  for (const sw of switches) {
+    if (sw.kind !== 'lutronPd') continue;
+    const group = sw.switchGroupId || sw.id;
+    if (typeof sw.backlightAssignment === 'string') {
+      if (!assignmentByGroup.has(group)) {
+        assignmentByGroup.set(group, normalizePalladiomAssignmentValue(sw.backlightAssignment));
+      }
+      continue;
+    }
+    if (sw.backlightTarget.trim() !== '') continue;
+    const candidate = normalizePalladiomAssignmentValue(sw.backlightCondition);
+    const existing = assignmentByGroup.get(group);
+    if (existing === undefined) assignmentByGroup.set(group, candidate);
+    else if (existing !== candidate) assignmentByGroup.set(group, '');
+  }
+  return switches.map((sw) => {
+    if (sw.kind !== 'lutronPd') {
+      return { ...sw, backlightAssignment: '' };
+    }
+    const group = sw.switchGroupId || sw.id;
+    const assignment = assignmentByGroup.get(group) ?? '';
+    const isLegacyEntry = typeof sw.backlightAssignment !== 'string';
+    const backlightCondition =
+      isLegacyEntry && sw.backlightTarget.trim() === '' ? '' : sw.backlightCondition;
+    return { ...sw, backlightAssignment: assignment, backlightCondition };
+  });
+}
+
 function isRoomType(value: unknown): value is RoomType {
   if (value === null || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
@@ -549,7 +610,7 @@ function migrateRoomType(value: unknown): RoomType | null {
           .filter((assignment): assignment is CurtainAssignment => assignment !== null)
       : [];
   const cfsRowDisplay = normalizeCfsRowDisplaySettings(v.cfsRowDisplay);
-  const normalizedSwitches: SwitchEntry[] =
+  const normalizedSwitches: Array<Omit<SwitchEntry, 'backlightAssignment'> & { backlightAssignment?: string }> =
     Array.isArray(v.switches) && v.switches.every(isSwitchEntry)
       ? (v.switches as SwitchEntry[]).map((sw) => ({
           ...sw,
@@ -591,13 +652,21 @@ function migrateRoomType(value: unknown): RoomType | null {
           backlightCondition: migrateBacklightCondition(
             (sw as unknown as Record<string, unknown>).backlightCondition,
           ),
+          backlightAssignment:
+            typeof (sw as unknown as Record<string, unknown>).backlightAssignment === 'string'
+              ? migrateBacklightCondition((sw as unknown as Record<string, unknown>).backlightAssignment)
+              : undefined,
           backlightLevels:
             Array.isArray((sw as unknown as Record<string, unknown>).backlightLevels)
               ? normalizeBacklightLevels(sw.backlightLevels)
               : createDefaultBacklightLevels(),
         }))
       : [];
-  const switches = normalizeSwitchPriorityFunctions(migrateCommandPirReferences(normalizedSwitches));
+  const switches = normalizeSwitchPriorityFunctions(
+    migrateCommandPirReferences(
+      migratePalladiomBacklightAssignments(normalizedSwitches),
+    ),
+  );
   const backlightLevels = Array.isArray(v.backlightLevels)
     ? normalizeBacklightLevels(v.backlightLevels)
     : backlightLevelsFromSwitches(switches);
@@ -828,6 +897,7 @@ function isSwitchEntry(value: unknown): value is SwitchEntry {
     (!('buttonCount' in v) || typeof v.buttonCount === 'string') &&
     (!('buttonLabel' in v) || typeof v.buttonLabel === 'string') &&
     (!('isPriorityFunction' in v) || typeof v.isPriorityFunction === 'boolean') &&
+    (!('backlightAssignment' in v) || typeof v.backlightAssignment === 'string') &&
     typeof v.allocation === 'string' &&
     typeof v.buttonFunction === 'string' &&
     typeof v.condition === 'string' &&
