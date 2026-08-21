@@ -2773,120 +2773,6 @@ export default function ProjectScreen({
           </svg>
         </button>
       ) : null}
-      <div className="project-top-toolbar" aria-label="Project top controls">
-        <nav className="breadcrumb project-top-breadcrumb fade-in">
-          <button className="breadcrumb-link" onClick={handleBackToProjectList}>Back to Project List</button>
-          <span className="breadcrumb-sep">/</span>
-          <span className="breadcrumb-current">{project.name}</span>
-        </nav>
-        <div className="project-top-action-groups">
-          <CollaborationBar collaboration={collaboration} compact />
-          <div className="history-controls" aria-label="History controls">
-            <button
-              type="button"
-              className="history-button history-icon-button"
-              onClick={handleUndo}
-              disabled={!canUndo || !canEdit}
-              title="Undo"
-              aria-label="Undo"
-            >
-              <ActionIcon name="undo" />
-            </button>
-            <button
-              type="button"
-              className="history-button history-icon-button"
-              onClick={handleRedo}
-              disabled={!canRedo || !canEdit}
-              title="Redo"
-              aria-label="Redo"
-            >
-              <ActionIcon name="redo" />
-            </button>
-            <div className="revision-top-controls">
-              {activeRoomType ? (
-                <span className="muted-pill">
-                  {activeRoomType.name || "Room Type"} Revision {activeRoomType.revision || "1.00"}
-                </span>
-              ) : null}
-              {activeRoomType ? (
-                <span
-                  className="muted-pill revision-save-status"
-                  aria-live="polite"
-                  aria-label={draftStatusAria}
-                  title={draftStatusTitle}
-                >
-                  <span className="revision-save-status-label">{draftStatusLabel}</span>
-                  {draftStatusTime ? <span className="revision-save-status-time">{draftStatusTime}</span> : null}
-                </span>
-              ) : null}
-              <button
-                type="button"
-                className="history-button history-icon-button save-current-button"
-                onClick={() => void handleSaveCurrentProject()}
-                disabled={!canEdit || saveInProgress}
-                title="Save current project without a new revision"
-                aria-label="Save current project without a new revision"
-              >
-                <ActionIcon name="save" />
-              </button>
-              <button
-                type="button"
-                className="history-button history-icon-button save-revision-button"
-                onClick={openBatchRevisionDialog}
-                disabled={project.roomTypes.length === 0 || !canEdit || saveInProgress}
-                title={project.roomTypes.length > 0 ? "Save all room types as new revisions" : "Create a room type to save a revision"}
-                aria-label={project.roomTypes.length > 0 ? "Save all room types as new revisions" : "Create a room type to save a revision"}
-              >
-                <ActionIcon name="save" />
-              </button>
-              <button
-                type="button"
-                className="history-button history-icon-button revision-management-button"
-                onClick={() => setShowRevisionManager((value) => !value)}
-                disabled={!activeRoomType}
-                title={activeRoomType ? "Open revision management" : "Select a room type to manage revisions"}
-                aria-label={activeRoomType ? "Open revision management" : "Select a room type to manage revisions"}
-              >
-                <ActionIcon name="history" />
-              </button>
-              <button
-                type="button"
-                className={`history-button history-icon-button update-highlights-button${showRevisionChanges ? " is-active" : ""}`}
-                onClick={() => setShowRevisionChanges((value) => !value)}
-                disabled={!activeRoomType || activeRoomTypeRevisionCount < 1}
-                aria-pressed={showRevisionChanges}
-                aria-label={showRevisionChanges ? "Turn off update highlights" : "Turn on update highlights"}
-                title={
-                  !activeRoomType
-                    ? "Select a room type to highlight updates"
-                    : activeRoomTypeRevisionCount < 1
-                      ? "Save a revision before highlighting updates"
-                      : showRevisionChanges
-                        ? "Turn off update highlights"
-                        : activeRoomTypeRevisionCount > 1
-                          ? "Highlight current draft changes, or the latest saved revision changes when the draft is unchanged"
-                          : "Highlight current draft changes from the saved revision"
-                }
-              >
-                <ActionIcon name="highlight" />
-              </button>
-            </div>
-            <button
-              type="button"
-              className="history-button history-icon-button top-ui-collapse-button"
-              onClick={() => setIsTopUiCollapsed(true)}
-              title="Hide top bar"
-              aria-label="Hide top bar"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="M4 6h16" />
-                <path d="M4 12h16" />
-                <path d="M8 16l4 4 4-4" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </div>
       {batchRevisionDialogOpen ? (
         <div className="modal-backdrop edit-finish-backdrop" role="presentation">
           <section
@@ -3082,6 +2968,120 @@ export default function ProjectScreen({
         </div>
       ) : null}
       <div className="project-tabs-sticky">
+        <div className="project-top-toolbar" aria-label="Project top controls">
+          <nav className="breadcrumb project-top-breadcrumb fade-in">
+            <button className="breadcrumb-link" onClick={handleBackToProjectList}>Back to Project List</button>
+            <span className="breadcrumb-sep">/</span>
+            <span className="breadcrumb-current">{project.name}</span>
+          </nav>
+          <div className="project-top-action-groups">
+            <CollaborationBar collaboration={collaboration} compact />
+            <div className="history-controls" aria-label="History controls">
+              <button
+                type="button"
+                className="history-button history-icon-button"
+                onClick={handleUndo}
+                disabled={!canUndo || !canEdit}
+                title="Undo"
+                aria-label="Undo"
+              >
+                <ActionIcon name="undo" />
+              </button>
+              <button
+                type="button"
+                className="history-button history-icon-button"
+                onClick={handleRedo}
+                disabled={!canRedo || !canEdit}
+                title="Redo"
+                aria-label="Redo"
+              >
+                <ActionIcon name="redo" />
+              </button>
+              <div className="revision-top-controls">
+                {activeRoomType ? (
+                  <span className="muted-pill">
+                    {activeRoomType.name || "Room Type"} Revision {activeRoomType.revision || "1.00"}
+                  </span>
+                ) : null}
+                {activeRoomType ? (
+                  <span
+                    className="muted-pill revision-save-status"
+                    aria-live="polite"
+                    aria-label={draftStatusAria}
+                    title={draftStatusTitle}
+                  >
+                    <span className="revision-save-status-label">{draftStatusLabel}</span>
+                    {draftStatusTime ? <span className="revision-save-status-time">{draftStatusTime}</span> : null}
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  className="history-button history-icon-button save-current-button"
+                  onClick={() => void handleSaveCurrentProject()}
+                  disabled={!canEdit || saveInProgress}
+                  title="Save current project without a new revision"
+                  aria-label="Save current project without a new revision"
+                >
+                  <ActionIcon name="save" />
+                </button>
+                <button
+                  type="button"
+                  className="history-button history-icon-button save-revision-button"
+                  onClick={openBatchRevisionDialog}
+                  disabled={project.roomTypes.length === 0 || !canEdit || saveInProgress}
+                  title={project.roomTypes.length > 0 ? "Save all room types as new revisions" : "Create a room type to save a revision"}
+                  aria-label={project.roomTypes.length > 0 ? "Save all room types as new revisions" : "Create a room type to save a revision"}
+                >
+                  <ActionIcon name="save" />
+                </button>
+                <button
+                  type="button"
+                  className="history-button history-icon-button revision-management-button"
+                  onClick={() => setShowRevisionManager((value) => !value)}
+                  disabled={!activeRoomType}
+                  title={activeRoomType ? "Open revision management" : "Select a room type to manage revisions"}
+                  aria-label={activeRoomType ? "Open revision management" : "Select a room type to manage revisions"}
+                >
+                  <ActionIcon name="history" />
+                </button>
+                <button
+                  type="button"
+                  className={`history-button history-icon-button update-highlights-button${showRevisionChanges ? " is-active" : ""}`}
+                  onClick={() => setShowRevisionChanges((value) => !value)}
+                  disabled={!activeRoomType || activeRoomTypeRevisionCount < 1}
+                  aria-pressed={showRevisionChanges}
+                  aria-label={showRevisionChanges ? "Turn off update highlights" : "Turn on update highlights"}
+                  title={
+                    !activeRoomType
+                      ? "Select a room type to highlight updates"
+                      : activeRoomTypeRevisionCount < 1
+                        ? "Save a revision before highlighting updates"
+                        : showRevisionChanges
+                          ? "Turn off update highlights"
+                          : activeRoomTypeRevisionCount > 1
+                            ? "Highlight current draft changes, or the latest saved revision changes when the draft is unchanged"
+                            : "Highlight current draft changes from the saved revision"
+                  }
+                >
+                  <ActionIcon name="highlight" />
+                </button>
+              </div>
+              <button
+                type="button"
+                className="history-button history-icon-button top-ui-collapse-button"
+                onClick={() => setIsTopUiCollapsed(true)}
+                title="Hide top bar"
+                aria-label="Hide top bar"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4 6h16" />
+                  <path d="M4 12h16" />
+                  <path d="M8 16l4 4 4-4" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
         <TabsBar
           tabs={parentTabs}
           activeId={activeTab}
