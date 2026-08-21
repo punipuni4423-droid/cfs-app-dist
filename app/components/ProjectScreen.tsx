@@ -2497,8 +2497,11 @@ export default function ProjectScreen({
   );
 
   const setBacklightLevels = useCallback(
-    (next: BacklightLevelSetting[]): void => {
-      updateActiveRoomType((rt) => ({ ...rt, backlightLevels: next }));
+    (next: BacklightLevelSetting[] | ((current: BacklightLevelSetting[]) => BacklightLevelSetting[])): void => {
+      updateActiveRoomType((rt) => ({
+        ...rt,
+        backlightLevels: typeof next === "function" ? next(rt.backlightLevels ?? []) : next,
+      }));
     },
     [updateActiveRoomType],
   );
@@ -2511,15 +2514,24 @@ export default function ProjectScreen({
   );
 
   const setRoomScenes = useCallback(
-    (next: RoomScene[]): void => {
-      updateActiveRoomType((rt) => ({ ...rt, roomScenes: next }));
+    (next: RoomScene[] | ((current: RoomScene[]) => RoomScene[])): void => {
+      updateActiveRoomType((rt) => ({
+        ...rt,
+        roomScenes: typeof next === "function" ? next(rt.roomScenes) : next,
+      }));
     },
     [updateActiveRoomType],
   );
 
   const setSwitches = useCallback(
-    (next: SwitchEntry[]): void => {
-      updateActiveRoomType((rt) => ({ ...rt, switches: next }));
+    // Accepts an updater so child views can apply changes against the CURRENT
+    // switches instead of a prop snapshot; array snapshots computed from stale
+    // props were overwriting just-made edits (e.g. Palladiom By-Scene).
+    (next: SwitchEntry[] | ((current: SwitchEntry[]) => SwitchEntry[])): void => {
+      updateActiveRoomType((rt) => ({
+        ...rt,
+        switches: typeof next === "function" ? next(rt.switches) : next,
+      }));
     },
     [updateActiveRoomType],
   );
