@@ -72,6 +72,72 @@ const STEP_PROGRESS: Record<string, number> = {
   launch: 2,
 };
 
+// Upper bound of each step's progress range (the next step's base value).
+const STEP_CEILING: Record<string, number> = {
+  queued: 5,
+  start: 10,
+  "git-check": 25,
+  "git-fetch": 40,
+  "git-pull": 58,
+  "npm-install": 78,
+  build: 94,
+  restart: 99,
+  launch: 5,
+};
+
+// Typical step durations in seconds, used to animate progress inside a step so
+// the bar keeps moving during the long offline install/build phases. Actual
+// durations from the previous update on this machine override these defaults.
+const STEP_EXPECTED_SECONDS: Record<string, number> = {
+  queued: 3,
+  start: 3,
+  "git-check": 5,
+  "git-fetch": 10,
+  "git-pull": 8,
+  "npm-install": 180,
+  build: 200,
+  restart: 20,
+  launch: 3,
+};
+
+const STEP_DURATIONS_KEY = "cfs-update-step-seconds-v1";
+
+function loadLearnedDurations(): Record<string, number> {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(STEP_DURATIONS_KEY) || "{}") as Record<string, unknown>;
+    const result: Record<string, number> = {};
+    for (const [step, value] of Object.entries(parsed)) {
+      const seconds = Number(value);
+      if (Number.isFinite(seconds) && seconds > 0 && seconds < 3600) result[step] = seconds;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function saveLearnedDuration(step: string, seconds: number): void {
+  if (!Number.isFinite(seconds) || seconds <= 0 || seconds >= 3600) return;
+  try {
+    const current = loadLearnedDurations();
+    current[step] = Math.round(seconds);
+    window.localStorage.setItem(STEP_DURATIONS_KEY, JSON.stringify(current));
+  } catch {
+    // Progress estimation is best-effort; storage failures are ignorable.
+  }
+}
+
+function expectedStepSeconds(step: string): number {
+  const learned = loadLearnedDurations()[step];
+  return learned ?? STEP_EXPECTED_SECONDS[step] ?? 30;
+}
+
+function formatElapsed(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function boundedProgress(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
@@ -171,10 +237,12 @@ export default function AppUpdateControl() {
   const [applyStarted, setApplyStarted] = useState(false);
   const [updateSessionActive, setUpdateSessionActive] = useState(false);
   const [stalled, setStalled] = useState(false);
+  const [progressTick, setProgressTick] = useState(0);
   const checkingRef = useRef(false);
   const statusRef = useRef<AppUpdateStatus | null>(null);
   const updateSessionActiveRef = useRef(false);
   const disconnectedSinceRef = useRef<number | null>(null);
+  const stepTimingRef = useRef<{ step: string | null; startedAt: number }>({ step: null, startedAt: Date.now() });
 
   const title = useMemo(() => {
     if (updateSessionActive || applyStarted) return "Update is running. The app will reload automatically.";
@@ -198,8 +266,26 @@ export default function AppUpdateControl() {
   }, [applyStarted, status, updateSessionActive]);
   const message = statusMessage(status, applyStarted);
   const overlayVisible = updateSessionActive || status?.lastRun?.state === "running";
-  const progress = runProgress(status, updateSessionActive);
   const stepLabel = runStepLabel(status, updateSessionActive);
+
+  // Animate progress inside long steps (install/build run with the server
+  // offline, so the server-side number cannot move). The bar approaches the
+  // step ceiling based on elapsed vs. the typical duration, and the typical
+  // duration is learned from this machine's previous update.
+  void progressTick;
+  const baseProgress = runProgress(status, updateSessionActive);
+  const runState = status?.lastRun?.state;
+  const animatedStep = stepTimingRef.current.step;
+  let progress = baseProgress;
+  let elapsedText: string | null = null;
+  if (overlayVisible && animatedStep && runState !== "completed" && runState !== "failed") {
+    const elapsedSeconds = (Date.now() - stepTimingRef.current.startedAt) / 1000;
+    const expectedSeconds = expectedStepSeconds(animatedStep);
+    const ceiling = STEP_CEILING[animatedStep] ?? Math.min(baseProgress + 5, 99);
+    const animated = baseProgress + (ceiling - baseProgress) * (1 - Math.exp(-(elapsedSeconds / expectedSeconds) * 1.6));
+    progress = boundedProgress(Math.max(baseProgress, Math.min(animated, ceiling - 1)));
+    elapsedText = `Elapsed ${formatElapsed(elapsedSeconds)} / typical ~${formatElapsed(expectedSeconds)}`;
+  }
 
   useEffect(() => {
     const active = window.sessionStorage.getItem(UPDATE_SESSION_KEY) === "1";
@@ -285,6 +371,26 @@ export default function AppUpdateControl() {
     }, 2000);
     return () => window.clearInterval(intervalId);
   }, [applyStarted, refreshStatus, status?.lastRun?.state, updateSessionActive]);
+
+  // Track when each update step starts, and record how long the finished step
+  // actually took so the next update's estimate matches this machine.
+  useEffect(() => {
+    const step = status?.lastRun?.currentStep ?? null;
+    const previous = stepTimingRef.current;
+    if (step === previous.step) return;
+    if (previous.step && STEP_EXPECTED_SECONDS[previous.step] !== undefined) {
+      saveLearnedDuration(previous.step, (Date.now() - previous.startedAt) / 1000);
+    }
+    stepTimingRef.current = { step, startedAt: Date.now() };
+  }, [status?.lastRun?.currentStep]);
+
+  // 1s ticker so the animated progress and elapsed time keep moving while the
+  // overlay is up (including the offline install/build window).
+  useEffect(() => {
+    if (!overlayVisible) return;
+    const tickId = window.setInterval(() => setProgressTick((value) => value + 1), 1000);
+    return () => window.clearInterval(tickId);
+  }, [overlayVisible]);
 
   useEffect(() => {
     if (!updateSessionActive || status?.lastRun?.state !== "completed") return;
@@ -401,6 +507,7 @@ export default function AppUpdateControl() {
               <span>{stepLabel}</span>
               <strong>{progress}%</strong>
             </div>
+            {elapsedText ? <p className="app-update-progress-elapsed">{elapsedText}</p> : null}
             <div
               className="app-update-progress-track"
               role="progressbar"

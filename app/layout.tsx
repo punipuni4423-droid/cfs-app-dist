@@ -6,7 +6,7 @@ import DisplayScaleController from "./components/DisplayScaleController";
 const cfsIconVersion = "20260817-hy08";
 
 export const metadata: Metadata = {
-  title: "CFS - Lighting Circuit Sheet",
+  title: "CFS - Control Function Sheet",
   description: "GRMS / CFS sheet editor with Excel export",
   icons: {
     icon: `/cfs-app-icon.ico?v=${cfsIconVersion}`,

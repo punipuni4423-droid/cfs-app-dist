@@ -2338,6 +2338,14 @@ body.cfs-top-ui-collapsed .project-screen-shell > .collaboration-bar {
   color: var(--color-accent);
 }
 
+.app-update-progress-elapsed {
+  margin: 0.2rem 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .app-update-progress-track {
   overflow: hidden;
   height: 0.65rem;
