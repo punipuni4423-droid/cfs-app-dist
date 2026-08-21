@@ -431,20 +431,35 @@ export function useCollaboration(projectId = ""): CollaborationController {
           : `Signed in. Shared edit status could not be read${statusError ? `: ${statusError}` : "."}`,
       }));
     } catch (error) {
-      setState((current) => ({
-        ...current,
-        enabled: true,
-        sharingMode: "supabase",
-        authReady: true,
-        projectId: projectIdRef.current,
-        accessToken: token,
-        user: null,
-        role: null,
-        mode: "view",
-        lock: null,
-        locks: [],
-        message: error instanceof Error ? error.message : "Could not verify this CFS account.",
-      }));
+      // Supabase fires an auth event on every token refresh, and this hydrate
+      // runs each time. A transient network failure here must not clear the
+      // signed-in user: that flips requiresSignIn, which reloads all projects
+      // and silently discards unsaved local edits. Only a real server-side
+      // rejection (4xx with a message) signs the user out.
+      const transient =
+        error instanceof TypeError ||
+        (error instanceof DOMException && error.name === "AbortError");
+      setState((current) => {
+        const keepSignedIn = transient && Boolean(current.user);
+        return {
+          ...current,
+          enabled: true,
+          sharingMode: "supabase",
+          authReady: true,
+          projectId: projectIdRef.current,
+          accessToken: token,
+          user: keepSignedIn ? current.user : null,
+          role: keepSignedIn ? current.role : null,
+          mode: keepSignedIn ? current.mode : "view",
+          lock: keepSignedIn ? current.lock : null,
+          locks: keepSignedIn ? current.locks : [],
+          message: keepSignedIn
+            ? "Connection hiccup while verifying the account. Retrying automatically."
+            : error instanceof Error
+              ? error.message
+              : "Could not verify this CFS account.",
+        };
+      });
     }
   }, [authHeaders]);
 
