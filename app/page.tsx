@@ -649,14 +649,18 @@ export default function Home() {
 
   const handleRenameProject = useCallback((id: string, newName: string): void => {
     if (!requireEditMode()) return;
-    setProjects((current) =>
-      current.map((p) =>
-        p.id === id
-          ? { ...p, name: newName, updatedAt: new Date().toISOString() }
-          : p,
-      ),
+    // Shared mode has no list autosave (the effect early-returns for
+    // supabase), so persist explicitly like delete/restore do; otherwise the
+    // rename only changes local state and reverts on reload.
+    const nextProjects = projects.map((p) =>
+      p.id === id
+        ? { ...p, name: newName, updatedAt: new Date().toISOString() }
+        : p,
     );
-  }, [requireEditMode]);
+    skipNextSave.current = true;
+    setProjects(nextProjects);
+    persistProjectListSnapshot(nextProjects);
+  }, [persistProjectListSnapshot, projects, requireEditMode]);
 
   const handleDeleteProject = useCallback(
     (id: string): void => {
