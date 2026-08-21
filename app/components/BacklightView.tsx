@@ -1,5 +1,6 @@
 ﻿"use client";
 
+import { useState } from "react";
 import type { BacklightLevelSetting, RevisionFieldChanges, RoomScene, SwitchEntry } from "../types";
 import { createDefaultBacklightLevels, normalizeBacklightLevels } from "../lib/constants";
 import { useDragReorder } from "../lib/useDragReorder";
@@ -81,6 +82,8 @@ export default function BacklightView({
     return [...items, sw];
   }, []);
   const canEditBacklightLevels = canEdit && (Boolean(onBacklightLevelsChange) || palladiomSwitches.length > 0);
+  const [bulkAssignIds, setBulkAssignIds] = useState<Set<string>>(new Set());
+  const [bulkAssignValue, setBulkAssignValue] = useState<string>(BY_SCENE_VALUE);
 
   const levels = normalizeBacklightLevels(backlightLevels);
   const drag = useDragReorder(levels, updateAllPalladiomLevels, (level) => level.key);
@@ -179,6 +182,20 @@ export default function BacklightView({
         ),
       );
     }
+  }
+
+  function applyBulkAssignment(): void {
+    const ids = new Set(bulkAssignIds);
+    if (ids.size === 0) return;
+    const assignment = bulkAssignValue === BY_SCENE_VALUE ? "" : bulkAssignValue;
+    commitSwitches((current) =>
+      current.map((sw) =>
+        sw.kind === "lutronPd" && ids.has(switchGroupId(sw))
+          ? { ...sw, backlightAssignment: assignment }
+          : sw,
+      ),
+    );
+    setBulkAssignIds(new Set());
   }
 
   function updatePalladiomAssignment(groupId: string, sceneKey: string): void {
@@ -322,12 +339,39 @@ export default function BacklightView({
       <div className="toolbar" style={{ marginTop: "1rem" }}>
         <strong>Palladiom Backlight Assignment</strong>
         <span className="toolbar-spacer" />
+        <span className="muted-pill" aria-live="polite">
+          {bulkAssignIds.size} checked
+        </span>
+        <select
+          className="cell-input backlight-bulk-assign-select"
+          value={bulkAssignValue}
+          onChange={(e) => setBulkAssignValue(e.target.value)}
+          disabled={!canEdit}
+          aria-label="Backlight scene for bulk assignment"
+        >
+          <option value={BY_SCENE_VALUE}>By Scene</option>
+          {levels.map((level) => (
+            <option key={level.key} value={level.key}>
+              {level.name}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          disabled={!canEdit || bulkAssignIds.size === 0}
+          onClick={applyBulkAssignment}
+          title="Set the selected backlight scene on every checked switch"
+        >
+          Apply
+        </button>
       </div>
       <div className="matrix-scroll">
         <table className="matrix-table master-table switch-table">
           <colgroup>
             <col className="table-col-drag" />
             <col className="table-col-no" />
+            <col className="switch-col-bulk-select" />
             <col />
             <col />
             <col />
@@ -336,6 +380,24 @@ export default function BacklightView({
             <tr>
               <th className="col-center" aria-label="Reorder" />
               <th className="col-center">No</th>
+              <th className="col-center switch-bulk-select-header">
+                <input
+                  type="checkbox"
+                  aria-label="Select all switches for bulk assignment"
+                  checked={
+                    palladiomSwitches.length > 0 &&
+                    palladiomSwitches.every((sw) => bulkAssignIds.has(switchGroupId(sw)))
+                  }
+                  disabled={!canEdit || palladiomSwitches.length === 0}
+                  onChange={(e) => {
+                    setBulkAssignIds(
+                      e.target.checked
+                        ? new Set(palladiomSwitches.map((sw) => switchGroupId(sw)))
+                        : new Set(),
+                    );
+                  }}
+                />
+              </th>
               <th>Switch #</th>
               <th>Switch Name</th>
               <th>Backlight Scene</th>
@@ -344,7 +406,7 @@ export default function BacklightView({
           <tbody>
             {palladiomSwitches.length === 0 ? (
               <tr>
-                <td colSpan={5} className="screen-empty">
+                <td colSpan={6} className="screen-empty">
                   Palladiom switches are not registered.
                 </td>
               </tr>
@@ -378,6 +440,22 @@ export default function BacklightView({
                     </span>
                   </td>
                   <td className="col-center">{index + 1}</td>
+                  <td className="col-center switch-bulk-select-cell">
+                    <input
+                      type="checkbox"
+                      aria-label="Select switch for bulk assignment"
+                      checked={bulkAssignIds.has(switchGroupId(sw))}
+                      disabled={!canEdit}
+                      onChange={(e) => {
+                        setBulkAssignIds((current) => {
+                          const next = new Set(current);
+                          if (e.target.checked) next.add(switchGroupId(sw));
+                          else next.delete(switchGroupId(sw));
+                          return next;
+                        });
+                      }}
+                    />
+                  </td>
                   <td><span className="cell-readonly">{sw.switchNumber || "-"}</span></td>
                   <td><span className="cell-readonly">{sw.switchName || "-"}</span></td>
                   <td className={revisionCellClass(sw.id, ["backlightCondition"])}>

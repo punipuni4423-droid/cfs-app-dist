@@ -25,6 +25,7 @@ import {
   normalizeBacklightLevels,
 } from "../lib/constants";
 import { useDragReorder } from "../lib/useDragReorder";
+import { backlightStrongColor } from "../lib/backlightColors";
 import ActionIconButton from "./ActionIconButton";
 import AutoGrowTextarea from "./AutoGrowTextarea";
 import Combobox from "./Combobox";
@@ -321,6 +322,13 @@ export default function SwitchView({
   const backlightConditions = useMemo(() => {
     return effectiveBacklightLevels;
   }, [effectiveBacklightLevels]);
+
+  function backlightConditionLabel(raw: string): string {
+    const value = raw.trim();
+    if (!value) return "";
+    const matched = backlightConditions.find((level) => level.key === value || level.name === value);
+    return matched ? matched.name : value;
+  }
 
   const cciOptions = useMemo(
     (): CciOption[] => buildCciAssignmentOptions(deviceAssignments),
@@ -1465,6 +1473,7 @@ export default function SwitchView({
         </span>
         {hasBulkColumn ? (
           <>
+            <span className="toolbar-spacer" />
             <span className="muted-pill" aria-live="polite">
               {bulkSelectedIds.size} checked
             </span>
@@ -1984,19 +1993,26 @@ export default function SwitchView({
                               </button>
                             </td>
                             <td className={`col-center ${revisionCellClass(sw.id, ["backlightTarget", "backlightCondition"])}`}>
-                              <button
-                                type="button"
-                                className={[
-                                  "btn",
-                                  "btn-primary",
-                                  "btn-sm",
-                                  "setting-status-button",
-                                  hasBacklightSettings(sw) ? "has-setting" : "",
-                                ].filter(Boolean).join(" ")}
-                                onClick={() => openBacklightSetting(sw)}
-                              >
-                                Setting
-                              </button>
+                              {(() => {
+                                const label = backlightConditionLabel(sw.backlightCondition);
+                                const strong = label ? backlightStrongColor(label) : null;
+                                return (
+                                  <button
+                                    type="button"
+                                    className={[
+                                      "btn",
+                                      "btn-primary",
+                                      "btn-sm",
+                                      "setting-status-button",
+                                      hasBacklightSettings(sw) ? "has-setting" : "",
+                                    ].filter(Boolean).join(" ")}
+                                    style={strong ? { backgroundColor: strong, borderColor: strong, color: "#fff" } : undefined}
+                                    onClick={() => openBacklightSetting(sw)}
+                                  >
+                                    {label || "Setting"}
+                                  </button>
+                                );
+                              })()}
                             </td>
                             <td className="col-center switch-row-operation-cell">
                               <div className="switch-row-operation-stack">

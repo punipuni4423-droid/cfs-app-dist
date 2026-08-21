@@ -68,8 +68,10 @@ async function subTab(page: Page, pattern: RegExp): Promise<void> {
 }
 
 function assignmentSelect(page: Page) {
-  // Only the Palladiom Backlight Assignment selects offer "By Scene".
-  return page.locator('select:has(option[value="__byScene"])').first();
+  // Scoped to tbody: the bulk-assign toolbar select (2026-08-21) also offers
+  // "By Scene", so a page-wide match would grab the toolbar control instead
+  // of the group's assignment dropdown.
+  return page.locator('tbody select:has(option[value="__byScene"])').first();
 }
 
 test.describe("Backlight By-Scene retention", () => {
