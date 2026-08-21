@@ -2207,6 +2207,18 @@ body.cfs-top-ui-collapsed .project-screen-shell > .collaboration-bar {
   max-width: 9.8rem;
 }
 
+.switch-col-bulk-select {
+  width: 2.2rem;
+}
+
+.switch-bulk-select-header input,
+.switch-bulk-select-cell input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+
 .app-update-control {
   display: inline-flex;
   align-items: center;
