@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { backlightPaleColor, backlightPaleHex } from "../lib/backlightColors";
+import { backlightPaleColor } from "../lib/backlightColors";
 import CfsLinkMapPanel from "./CfsLinkMapPanel";
 import type {
   CircuitEntry,
@@ -693,9 +693,8 @@ export default function CfsView({
   const [hideReservedRows, setHideReservedRows] = useState(false);
   const [showIndividualOverrideHighlight, setShowIndividualOverrideHighlight] = useState(true);
   const [showAreaColorHighlight, setShowAreaColorHighlight] = useState(true);
-  // Backlight Logic cell colors, keyed by lowercased level name. Missing keys
-  // fall back to the automatic pale palette.
-  const [backlightColorOverrides, setBacklightColorOverrides] = useState<Record<string, string>>({});
+  // Toggles the automatic pale per-value tint on Backlight Logic cells.
+  const [showBacklightColorHighlight, setShowBacklightColorHighlight] = useState(true);
   const [showAreaSceneNames, setShowAreaSceneNames] = useState(true);
   const [showAreaSceneHighlight, setShowAreaSceneHighlight] = useState(true);
   const [showInspectionMarkHighlight, setShowInspectionMarkHighlight] = useState(true);
@@ -1216,7 +1215,7 @@ export default function CfsView({
         baseColumnOrder?: BaseColumnKey[];
         functionColumnGroupOrder?: string[];
         viewerCfsRowDisplayByRoom?: Record<string, unknown>;
-        backlightColorOverrides?: Record<string, unknown>;
+        showBacklightColorHighlight?: boolean;
       };
       if (parsed.numberMode === "designer" || parsed.numberMode === "internal") {
         setNumberMode(parsed.numberMode);
@@ -1246,17 +1245,7 @@ export default function CfsView({
       if (Array.isArray(parsed.hiddenFunctionColumns)) setHiddenFunctionColumns(new Set(parsed.hiddenFunctionColumns));
       if (Array.isArray(parsed.baseColumnOrder)) setBaseColumnOrder(parsed.baseColumnOrder);
       if (Array.isArray(parsed.functionColumnGroupOrder)) setFunctionColumnGroupOrder(parsed.functionColumnGroupOrder);
-      if (
-        parsed.backlightColorOverrides &&
-        typeof parsed.backlightColorOverrides === "object" &&
-        !Array.isArray(parsed.backlightColorOverrides)
-      ) {
-        const nextColors: Record<string, string> = {};
-        for (const [key, value] of Object.entries(parsed.backlightColorOverrides)) {
-          if (typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value)) nextColors[key] = value;
-        }
-        setBacklightColorOverrides(nextColors);
-      }
+      setShowBacklightColorHighlight(parsed.showBacklightColorHighlight !== false);
       if (
         parsed.viewerCfsRowDisplayByRoom &&
         typeof parsed.viewerCfsRowDisplayByRoom === "object" &&
@@ -1299,14 +1288,14 @@ export default function CfsView({
           baseColumnOrder,
           functionColumnGroupOrder,
           viewerCfsRowDisplayByRoom,
-          backlightColorOverrides,
+          showBacklightColorHighlight,
         }),
       );
     } catch {
       // Non-critical UI preference save.
     }
   }, [
-    backlightColorOverrides,
+    showBacklightColorHighlight,
     baseColumnOrder,
     functionColumnGroupOrder,
     hiddenDeviceKeys,
@@ -4458,43 +4447,6 @@ export default function CfsView({
               </button>
             </div>
           </div>
-          <div className="cfs-menu-section">
-            <div className="cfs-menu-title">Backlight Logic Color</div>
-            <div className="cfs-backlight-color-list">
-              {normalizeBacklightLevels(roomType.backlightLevels).map((level) => {
-                const overrideKey = level.name.trim().toLowerCase();
-                const fallback = backlightPaleHex(level.name) ?? "#eeeeee";
-                return (
-                  <label className="cfs-backlight-color-row" key={level.key}>
-                    <input
-                      type="color"
-                      value={backlightColorOverrides[overrideKey] ?? fallback}
-                      onChange={(e) =>
-                        setBacklightColorOverrides((current) => ({ ...current, [overrideKey]: e.target.value }))
-                      }
-                      aria-label={`Backlight Logic color for ${level.name}`}
-                    />
-                    <span className="cfs-backlight-color-name">{level.name}</span>
-                    {backlightColorOverrides[overrideKey] ? (
-                      <button
-                        type="button"
-                        className="btn-clear-circuit"
-                        onClick={() =>
-                          setBacklightColorOverrides((current) => {
-                            const next = { ...current };
-                            delete next[overrideKey];
-                            return next;
-                          })
-                        }
-                      >
-                        Auto
-                      </button>
-                    ) : null}
-                  </label>
-                );
-              })}
-            </div>
-          </div>
           <label className="cfs-check">
             <input
               type="checkbox"
@@ -4583,6 +4535,15 @@ export default function CfsView({
               />
               <span className="cfs-highlight-swatch cfs-highlight-swatch-energy" aria-hidden="true" />
               Energy Saving
+            </label>
+            <label className="cfs-check">
+              <input
+                type="checkbox"
+                checked={showBacklightColorHighlight}
+                onChange={(e) => setShowBacklightColorHighlight(e.target.checked)}
+              />
+              <span className="cfs-highlight-swatch cfs-highlight-swatch-backlight" aria-hidden="true" />
+              Backlight Logic Color
             </label>
           </CfsFilterMenu>
           </div>
@@ -5239,10 +5200,10 @@ export default function CfsView({
                         !hasInspectionMark &&
                         !isLinkIssueCell
                       ) {
-                        const tintValue = values.find((value) => value.trim() !== "" && value.trim() !== "-");
-                        const pale = tintValue
-                          ? backlightColorOverrides[tintValue.trim().toLowerCase()] ?? backlightPaleColor(tintValue)
-                          : null;
+                        const tintValue = showBacklightColorHighlight
+                          ? values.find((value) => value.trim() !== "" && value.trim() !== "-")
+                          : undefined;
+                        const pale = tintValue ? backlightPaleColor(tintValue) : null;
                         if (pale) backlightTint = { backgroundColor: pale };
                       }
                       return (
