@@ -153,6 +153,21 @@ foreach ($file in $files) {
 
 $runtimeTarget = Join-Path $packageRoot "runtime"
 Copy-Item -LiteralPath $standaloneSource -Destination $runtimeTarget -Recurse -Force
+
+# Safety net: the Next file tracer has pulled package staging folders into the
+# standalone output before (deeply nested paths break Windows zip extraction).
+# Remove any such stray directories from the packaged runtime.
+foreach ($strayName in @("artifacts", ".next-share-package")) {
+  Get-ChildItem -LiteralPath $runtimeTarget -Recurse -Force -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -eq $strayName } |
+    Sort-Object { $_.FullName.Length } -Descending |
+    ForEach-Object {
+      if (Test-Path -LiteralPath $_.FullName) {
+        Write-Host "Pruned stray runtime directory: $($_.FullName)"
+        Remove-Item -LiteralPath $_.FullName -Recurse -Force
+      }
+    }
+}
 foreach ($runtimeBlockedPath in @("data", "artifacts", ".git", ".env.local", ".env.production", ".env.development")) {
   $blockedTarget = Join-Path $runtimeTarget $runtimeBlockedPath
   if (Test-Path -LiteralPath $blockedTarget) {

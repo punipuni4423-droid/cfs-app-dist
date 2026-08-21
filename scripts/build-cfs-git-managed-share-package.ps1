@@ -247,6 +247,15 @@ New-ZipArchiveIncludingHidden -SourceDirectory $packageRoot -ArchivePath $archiv
 $zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
 try {
   $hasGitHead = [bool]($zip.Entries | Where-Object { $_.FullName -eq ".git/HEAD" } | Select-Object -First 1)
+  # Recipients extract with Explorer under MAX_PATH (260 chars) rules. Keep
+  # ample headroom for the destination folder prefix; fail the build instead
+  # of shipping a zip that cannot be extracted from Downloads/OneDrive paths.
+  $longestEntry = $zip.Entries | Sort-Object { $_.FullName.Length } -Descending | Select-Object -First 1
+  $maxEntryLength = if ($longestEntry) { $longestEntry.FullName.Length } else { 0 }
+  Write-Host ("Longest zip entry: {0} chars ({1})" -f $maxEntryLength, $longestEntry.FullName)
+  if ($maxEntryLength -gt 180) {
+    throw "Zip contains a path of $maxEntryLength chars (> 180): $($longestEntry.FullName). Recipients could not extract it with Explorer."
+  }
 } finally {
   $zip.Dispose()
 }
