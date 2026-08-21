@@ -169,6 +169,15 @@ export default function SwitchView({
   const [expandedFunctionIds, setExpandedFunctionIds] = useState<Set<string>>(new Set());
   const [expandedBacklightIds, setExpandedBacklightIds] = useState<Set<string>>(new Set());
   const [expandedAreaKeys, setExpandedAreaKeys] = useState<Set<string>>(new Set());
+  // Bulk setting: checked row ids and which panel type is applying to them.
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkApplyMode, setBulkApplyMode] = useState<"scene" | "backlight" | null>(null);
+
+  useEffect(() => {
+    // Selections are per kind tab; keep stale ids from another tab out.
+    setBulkSelectedIds(new Set());
+    setBulkApplyMode(null);
+  }, [activeKind]);
   const [areaBulkValues, setAreaBulkValues] = useState<Record<string, string>>({});
   const drag = useDragReorder(switches, commitSwitches, (sw) => sw.id, (sw) => switchGroupId(sw));
 
@@ -346,13 +355,16 @@ export default function SwitchView({
   const isPir = activeKind === "pir";
   const isQsm = activeKind === "qsm";
   const hasPriorityColumn = !isCommand && !isPir && !isQsm;
-  const colCount = isCommand
+  // Bulk-select column (left of Function Setting). QSM has no setting columns.
+  const hasBulkColumn = !isQsm;
+  const colCount = (isCommand
     ? 10
     : isPir
       ? 9
       : isQsm
         ? 5
-    : 11 + (hasButtonCount ? 2 : 0) + (hasCciDeviceColumn ? 2 : 0) + (hasPriorityColumn ? 1 : 0);
+    : 11 + (hasButtonCount ? 2 : 0) + (hasCciDeviceColumn ? 2 : 0) + (hasPriorityColumn ? 1 : 0)) +
+    (hasBulkColumn ? 1 : 0);
 
   const priorityFunctionCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -752,6 +764,37 @@ export default function SwitchView({
     return area.some((target) => getPercent(sw, target.id).trim() !== "");
   }
 
+  function bulkTemplateRow(): SwitchEntry | null {
+    return filteredSwitches.find((sw) => bulkSelectedIds.has(sw.id)) ?? null;
+  }
+
+  function startBulkSetting(mode: "scene" | "backlight"): void {
+    const template = bulkTemplateRow();
+    if (!template) return;
+    setBulkApplyMode(mode);
+    if (mode === "scene") openFunctionSetting(template);
+    else openBacklightSetting(template);
+  }
+
+  function applyBulkSetting(active: SwitchEntry): void {
+    const mode = bulkApplyMode;
+    if (!mode) return;
+    const ids = new Set(bulkSelectedIds);
+    commitSwitches((current) => {
+      const source = current.find((sw) => sw.id === active.id) ?? active;
+      return current.map((sw) => {
+        if (!ids.has(sw.id) || sw.id === source.id) return sw;
+        if (mode === "scene") {
+          return { ...sw, buttonSetting: JSON.parse(JSON.stringify(source.buttonSetting)) as SwitchEntry["buttonSetting"] };
+        }
+        return { ...sw, backlightTarget: source.backlightTarget, backlightCondition: source.backlightCondition };
+      });
+    });
+    setBulkApplyMode(null);
+    setBulkSelectedIds(new Set());
+    closeSettingOverlay();
+  }
+
   function openFunctionSetting(sw: SwitchEntry): void {
     setExpandedBacklightIds(new Set());
     setExpandedFunctionIds(new Set([sw.id]));
@@ -772,6 +815,7 @@ export default function SwitchView({
   function closeSettingOverlay(): void {
     setExpandedFunctionIds(new Set());
     setExpandedBacklightIds(new Set());
+    setBulkApplyMode(null);
   }
 
   useEffect(() => {
@@ -1416,6 +1460,31 @@ export default function SwitchView({
         <span className="muted-pill" aria-live="polite">
           {filteredSwitches.length} items
         </span>
+        {hasBulkColumn ? (
+          <>
+            <span className="muted-pill" aria-live="polite">
+              {bulkSelectedIds.size} checked
+            </span>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={!canEdit || bulkSelectedIds.size === 0}
+              onClick={() => startBulkSetting("scene")}
+              title="Open the scene setting panel and apply it to every checked row"
+            >
+              Scene Setting
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={!canEdit || bulkSelectedIds.size === 0}
+              onClick={() => startBulkSetting("backlight")}
+              title="Open the backlight setting panel and apply it to every checked row"
+            >
+              Backlight Setting
+            </button>
+          </>
+        ) : null}
       </div>
 
       <ResizableMatrixScroll className="table-workspace-scroll" variant="large">
@@ -1450,6 +1519,7 @@ export default function SwitchView({
                 {!isPir ? <col className="switch-col-function" /> : null}
                 {hasPriorityColumn ? <col className="switch-col-priority" /> : null}
                 <col className="switch-col-condition" />
+                <col className="switch-col-bulk-select" />
                 <col className="switch-col-setting" />
                 <col className="switch-col-setting" />
                 <col className="switch-col-row-operation" />
@@ -1488,6 +1558,19 @@ export default function SwitchView({
                   {!isPir ? <th>{isCommand ? "Button" : "Function"}</th> : null}
                   {hasPriorityColumn ? <th className="col-center">Priority</th> : null}
                   <th>Trigger Condition</th>
+                  <th className="col-center switch-bulk-select-header">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all rows for bulk setting"
+                      checked={filteredSwitches.length > 0 && filteredSwitches.every((sw) => bulkSelectedIds.has(sw.id))}
+                      disabled={!canEdit || filteredSwitches.length === 0}
+                      onChange={(event) => {
+                        setBulkSelectedIds(
+                          event.target.checked ? new Set(filteredSwitches.map((sw) => sw.id)) : new Set(),
+                        );
+                      }}
+                    />
+                  </th>
                   <th className="col-center">Function Setting</th>
                   <th className="col-center">Backlight Setting</th>
                   <th className="col-center">Row</th>
@@ -1866,6 +1949,22 @@ export default function SwitchView({
                                 disabled={!canEdit}
                               />
                             </td>
+                            <td className="col-center switch-bulk-select-cell">
+                              <input
+                                type="checkbox"
+                                aria-label={`Select row for bulk setting`}
+                                checked={bulkSelectedIds.has(sw.id)}
+                                disabled={!canEdit}
+                                onChange={(event) => {
+                                  setBulkSelectedIds((current) => {
+                                    const next = new Set(current);
+                                    if (event.target.checked) next.add(sw.id);
+                                    else next.delete(sw.id);
+                                    return next;
+                                  });
+                                }}
+                              />
+                            </td>
                             <td className={`col-center ${revisionCellClass(sw.id, ["buttonSetting"])}`}>
                               <button
                                 type="button"
@@ -1987,6 +2086,16 @@ export default function SwitchView({
                   >
                     Backlight
                   </button>
+                  {bulkApplyMode ? (
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={() => applyBulkSetting(active)}
+                      title="Copy this panel's settings to every checked row"
+                    >
+                      Apply to {bulkSelectedIds.size} rows
+                    </button>
+                  ) : null}
                   <button type="button" className="btn btn-danger-ghost" onClick={closeSettingOverlay}>
                     Close
                   </button>
