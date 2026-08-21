@@ -8223,8 +8223,13 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   grid-template-columns: minmax(0, 1fr) minmax(220px, 0.6fr);
 }
 
+.backlight-col-mode {
+  width: 8.5rem;
+}
+
 .backlight-mode-select {
-  min-width: 7.5rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .switch-setting-section {
