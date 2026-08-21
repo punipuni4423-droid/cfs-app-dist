@@ -154,19 +154,32 @@ foreach ($file in $files) {
 $runtimeTarget = Join-Path $packageRoot "runtime"
 Copy-Item -LiteralPath $standaloneSource -Destination $runtimeTarget -Recurse -Force
 
-# Safety net: the Next file tracer has pulled package staging folders into the
-# standalone output before (deeply nested paths break Windows zip extraction).
-# Remove any such stray directories from the packaged runtime.
-foreach ($strayName in @("artifacts", ".next-share-package")) {
-  Get-ChildItem -LiteralPath $runtimeTarget -Recurse -Force -Directory -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -eq $strayName } |
-    Sort-Object { $_.FullName.Length } -Descending |
-    ForEach-Object {
-      if (Test-Path -LiteralPath $_.FullName) {
-        Write-Host "Pruned stray runtime directory: $($_.FullName)"
-        Remove-Item -LiteralPath $_.FullName -Recurse -Force
-      }
+# Safety net: the Next file tracer globs dynamic reads and copies stray project
+# folders (previous package stagings, dev dist dirs) into the standalone
+# output, producing deeply nested paths that break Windows zip extraction.
+# Remove them - but never the real dist dir the server boots from, which is
+# the DIRECT child runtime\<buildDistDir> (server.js loads it by name).
+$runtimeTargetFull = (Resolve-Path -LiteralPath $runtimeTarget).Path.TrimEnd('\')
+Get-ChildItem -LiteralPath $runtimeTarget -Recurse -Force -Directory -ErrorAction SilentlyContinue |
+  Where-Object {
+    $isDirectChild = ($_.Parent.FullName.TrimEnd('\') -eq $runtimeTargetFull)
+    switch ($_.Name) {
+      "artifacts" { $true }
+      "standalone" { $true }
+      ".next" { $true }
+      $buildDistDir { -not $isDirectChild }
+      default { $false }
     }
+  } |
+  Sort-Object { $_.FullName.Length } -Descending |
+  ForEach-Object {
+    if (Test-Path -LiteralPath $_.FullName) {
+      Write-Host "Pruned stray runtime directory: $($_.FullName)"
+      Remove-Item -LiteralPath $_.FullName -Recurse -Force
+    }
+  }
+if (-not (Test-Path -LiteralPath (Join-Path $runtimeTarget "$buildDistDir\BUILD_ID"))) {
+  throw "Packaged runtime is missing $buildDistDir\BUILD_ID after pruning. Aborting."
 }
 foreach ($runtimeBlockedPath in @("data", "artifacts", ".git", ".env.local", ".env.production", ".env.development")) {
   $blockedTarget = Join-Path $runtimeTarget $runtimeBlockedPath
