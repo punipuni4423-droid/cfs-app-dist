@@ -8,21 +8,13 @@ const nextConfig: NextConfig = {
   // another repo, which buries standalone/server.js under a nested path and
   // breaks the self-update restart.
   outputFileTracingRoot: __dirname,
-  // Dynamic reads like path.join(appDir, ".cfs-build-info.json") make the file
-  // tracer glob the whole project; without these excludes it copied previous
-  // package staging folders into .next/standalone, growing zip paths past the
-  // Windows 260-char extraction limit.
-  outputFileTracingExcludes: {
-    "*": [
-      "./artifacts/**",
-      "./.next-share-package/**",
-      "./data/**",
-      "./runtime/**",
-      "./Manual/**",
-      "./test-results/**",
-      "./playwright-report/**",
-    ],
-  },
+  // NOTE: do NOT add outputFileTracingExcludes here. Its patterns match
+  // loosely (e.g. "data/**" also hit next/dist/lib/metadata/**, "runtime/**"
+  // hit @edge-runtime/**) and stripped required Next server files, crashing
+  // the packaged runtime on boot. Stray traced folders (artifacts,
+  // .next-share-package) are pruned physically by
+  // scripts/build-cfs-share-package.ps1 instead, and the zip build fails on
+  // paths longer than 180 chars.
   webpack(config, { dev }) {
     if (dev) {
       config.watchOptions = {
