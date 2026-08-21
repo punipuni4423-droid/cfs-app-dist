@@ -49,6 +49,19 @@ function palladiomBacklightSceneValue(value: string): string {
   return backlightSceneValue(value) || BY_SCENE_VALUE;
 }
 
+// A group's rows can legitimately hold per-row conditions (set from the
+// Switch tab), so the assignment dropdown must never present one arbitrary
+// row's value as the group value: entry order changes would make the display
+// "flip" (e.g. By Scene apparently turning into a level), and re-saving the
+// flipped value would wipe the per-row settings.
+const MIXED_VALUE = "__mixed";
+
+function groupBacklightSceneValue(entries: SwitchEntry[]): string {
+  const values = new Set(entries.map((entry) => palladiomBacklightSceneValue(entry.backlightCondition)));
+  if (values.size === 1) return values.values().next().value ?? BY_SCENE_VALUE;
+  return MIXED_VALUE;
+}
+
 export default function BacklightView({
   switches,
   backlightLevels,
@@ -363,19 +376,40 @@ export default function BacklightView({
                   <td><span className="cell-readonly">{sw.switchNumber || "-"}</span></td>
                   <td><span className="cell-readonly">{sw.switchName || "-"}</span></td>
                   <td className={revisionCellClass(sw.id, ["backlightCondition"])}>
-                    <select
-                      className="cell-input"
-                      value={palladiomBacklightSceneValue(sw.backlightCondition)}
-                      onChange={(e) => updatePalladiomAssignment(switchGroupId(sw), e.target.value)}
-                      disabled={!canEdit}
-                    >
-                      <option value={BY_SCENE_VALUE}>By Scene</option>
-                      {levels.map((level) => (
-                        <option key={level.key} value={level.key}>
-                          {level.name}
-                        </option>
-                      ))}
-                    </select>
+                    {(() => {
+                      const groupEntries = switches.filter(
+                        (entry) => entry.kind === "lutronPd" && switchGroupId(entry) === switchGroupId(sw),
+                      );
+                      const groupValue = groupBacklightSceneValue(groupEntries);
+                      return (
+                        <select
+                          className="cell-input"
+                          value={groupValue}
+                          onChange={(e) => {
+                            if (e.target.value === MIXED_VALUE) return;
+                            updatePalladiomAssignment(switchGroupId(sw), e.target.value);
+                          }}
+                          disabled={!canEdit}
+                          title={
+                            groupValue === MIXED_VALUE
+                              ? "Rows in this switch have different backlight settings (set per row on the Switch tab). Selecting a value here overwrites every row."
+                              : undefined
+                          }
+                        >
+                          {groupValue === MIXED_VALUE ? (
+                            <option value={MIXED_VALUE} disabled>
+                              (Mixed)
+                            </option>
+                          ) : null}
+                          <option value={BY_SCENE_VALUE}>By Scene</option>
+                          {levels.map((level) => (
+                            <option key={level.key} value={level.key}>
+                              {level.name}
+                            </option>
+                          ))}
+                        </select>
+                      );
+                    })()}
                   </td>
                 </tr>
               ))
