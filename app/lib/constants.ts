@@ -601,6 +601,7 @@ export function createEmptySwitchEntry(kind: SwitchKind): SwitchEntry {
     buttonSetting: { sceneId: '', sceneIds: [], circuitSettings: [] },
     backlightTarget: '',
     backlightCondition: '',
+    backlightAssignment: '',
     backlightLevels: createDefaultBacklightLevels(),
   };
 }

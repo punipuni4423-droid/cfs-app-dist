@@ -56,6 +56,7 @@ function sampleRoomType(): RoomType {
         },
         backlightTarget: "",
         backlightCondition: "",
+        backlightAssignment: "",
         backlightLevels: [],
       },
     ],

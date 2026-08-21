@@ -121,18 +121,20 @@ test.describe("Backlight By-Scene retention", () => {
     // the layer that must survive reloads (server only receives explicit
     // saves by design).
     await page.waitForTimeout(1800);
-    const draftCondition = await page.evaluate(() => {
+    const draftAssignment = await page.evaluate(() => {
       try {
         const drafts = JSON.parse(localStorage.getItem("cfs-project-drafts-v2") || "[]");
         const sw = (drafts?.[0]?.roomTypes?.[0]?.switches ?? []).find(
           (item: { kind?: string }) => item.kind === "lutronPd",
         );
-        return sw?.backlightCondition ?? null;
+        if (!sw) return null;
+        // Field-split model: By Scene is backlightAssignment === "".
+        return typeof sw.backlightAssignment === "string" ? sw.backlightAssignment : null;
       } catch {
         return null;
       }
     });
-    expect(draftCondition).toBe(BY_SCENE);
+    expect(draftAssignment).toBe("");
 
     // Reload and re-open: the value must still be there.
     await page.reload({ waitUntil: "domcontentloaded" });
@@ -151,7 +153,7 @@ test.describe("Backlight By-Scene retention", () => {
     await expect(assignmentSelect(page)).toHaveValue(BY_SCENE);
   });
 
-  test("mixed per-row conditions show (Mixed) instead of an arbitrary row's value", async ({ page }) => {
+  test("per-row action edits never break the group's By-Scene assignment", async ({ page }) => {
     await isolate(page);
     await createAndOpenProject(page, `BL-MIX-${Date.now()}`);
     await createRoomTypeAndSelect(page, `BL-MixRoom-${Date.now()}`);
@@ -200,27 +202,57 @@ test.describe("Backlight By-Scene retention", () => {
     expect(untouched[0].condition).toBe("");
     expect(afterIndividual.every((row: { target: string }) => row.target === "" || row.target.length > 0)).toBe(true);
 
-    // The assignment dropdown must show (Mixed), not the first row's value.
+    // Field-split invariant (the 2026-08-21 field report: applying Sleep to
+    // Palladiom rows knocked their groups out of By Scene, emptied the
+    // target list, and hid their CFS backlight rows): the per-row ACTION
+    // never touches the group's ASSIGNMENT, so the dropdown still shows
+    // By Scene — NOT (Mixed), and not the edited row's value.
     await subTab(page, /^Backlight$/);
-    const select = page.locator('select:has(option[value="__mixed"])').first();
+    const select = assignmentSelect(page);
     await expect(select).toBeVisible({ timeout: 8000 });
-    await expect(select).toHaveValue("__mixed");
+    await expect(select).toHaveValue(BY_SCENE);
 
-    // Explicitly selecting By Scene unifies every row.
-    await select.selectOption(BY_SCENE);
+    const readRows = () =>
+      page.evaluate(() => {
+        try {
+          const drafts = JSON.parse(localStorage.getItem("cfs-project-drafts-v2") || "[]");
+          return (drafts?.[0]?.roomTypes?.[0]?.switches ?? [])
+            .filter((item: { kind?: string }) => item.kind === "lutronPd")
+            .map((item: { backlightCondition?: string; backlightAssignment?: string }) => ({
+              condition: item.backlightCondition ?? "",
+              assignment: item.backlightAssignment ?? "",
+            }));
+        } catch {
+          return null;
+        }
+      });
+
+    const afterAction = await readRows();
+    expect(afterAction).not.toBeNull();
+    expect((afterAction as Array<{ assignment: string }>).every((row) => row.assignment === "")).toBe(true);
+
+    // Assigning a fixed level writes the ASSIGNMENT for the whole group and
+    // leaves each row's ACTION condition untouched.
+    const levelKey = await select.evaluate((el: HTMLSelectElement) =>
+      Array.from(el.options)
+        .map((option) => option.value)
+        .find((value) => value !== "__byScene" && value !== "__mixed") ?? "",
+    );
+    expect(levelKey).not.toBe("");
+    await select.selectOption(levelKey);
     await page.waitForTimeout(1800);
-    const conditions = await page.evaluate(() => {
-      try {
-        const drafts = JSON.parse(localStorage.getItem("cfs-project-drafts-v2") || "[]");
-        return (drafts?.[0]?.roomTypes?.[0]?.switches ?? [])
-          .filter((item: { kind?: string }) => item.kind === "lutronPd")
-          .map((item: { backlightCondition?: string }) => item.backlightCondition ?? "");
-      } catch {
-        return [];
-      }
-    });
-    expect(conditions.length).toBe(2);
-    expect(conditions.every((value: string) => value === BY_SCENE)).toBe(true);
+    const afterLevel = (await readRows()) as Array<{ condition: string; assignment: string }>;
+    expect(afterLevel.length).toBe(2);
+    expect(afterLevel.every((row) => row.assignment === levelKey)).toBe(true);
+    expect(afterLevel.filter((row) => row.condition === rowValue).length).toBe(1);
+    expect(afterLevel.filter((row) => row.condition === "").length).toBe(1);
+
+    // Returning to By Scene restores assignment "" — actions still intact.
+    await assignmentSelect(page).selectOption(BY_SCENE);
+    await page.waitForTimeout(1800);
+    const afterByScene = (await readRows()) as Array<{ condition: string; assignment: string }>;
+    expect(afterByScene.every((row) => row.assignment === "")).toBe(true);
+    expect(afterByScene.filter((row) => row.condition === rowValue).length).toBe(1);
     await expect(assignmentSelect(page)).toHaveValue(BY_SCENE);
   });
 });

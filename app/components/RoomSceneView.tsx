@@ -189,8 +189,6 @@ export default function RoomSceneView({
         const current = groups.get(groupId);
         if (!current) {
           groups.set(groupId, sw);
-        } else if (sw.backlightCondition === BY_SCENE_VALUE && current.backlightCondition !== BY_SCENE_VALUE) {
-          groups.set(groupId, { ...current, backlightCondition: BY_SCENE_VALUE });
         }
       }
       return Array.from(groups.values());
@@ -207,10 +205,14 @@ export default function RoomSceneView({
 
   function updatePalladiomByScene(groupId: string, checked: boolean): void {
     if (!canEdit || !onSwitchesChange) return;
+    // Assignment "" = By Scene. Unchecking pins the group to the first
+    // backlight level (a concrete fixed assignment, adjustable on the
+    // Backlight tab) instead of leaving an ambiguous empty value.
+    const fallbackLevel = backlightConditions[0]?.key ?? "";
     onSwitchesChange(
       switches.map((sw) =>
         switchGroupId(sw) === groupId
-          ? { ...sw, backlightCondition: checked ? BY_SCENE_VALUE : "" }
+          ? { ...sw, backlightAssignment: checked ? "" : fallbackLevel }
           : sw,
       ),
     );
@@ -618,7 +620,7 @@ export default function RoomSceneView({
                     <label className="switch-target-option" key={groupId}>
                       <input
                         type="checkbox"
-                        checked={sw.backlightCondition === BY_SCENE_VALUE}
+                        checked={sw.backlightAssignment.trim() === ""}
                         onChange={(event) => updatePalladiomByScene(groupId, event.target.checked)}
                         disabled={!canEdit || !onSwitchesChange}
                       />

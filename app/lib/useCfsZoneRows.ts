@@ -351,8 +351,11 @@ export function isBacklightTargetCondition(value: string): boolean {
 
 export function isPalladiomBacklightTarget(sw: SwitchEntry): boolean {
   if (sw.kind !== "lutronPd" || !hasSwitchOperationalIdentity(sw)) return false;
-  const condition = sw.backlightCondition.trim();
-  return !condition || isBacklightTargetCondition(condition);
+  // Group assignment decides target eligibility ("" = By Scene, or a
+  // target-eligible fixed level such as Base). Row-action conditions no
+  // longer affect membership.
+  const assignment = sw.backlightAssignment.trim();
+  return !assignment || isBacklightTargetCondition(assignment);
 }
 
 function isDaliControlDevice(device: string): boolean {
