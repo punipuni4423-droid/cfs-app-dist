@@ -1817,21 +1817,23 @@ textarea:disabled {
 
 .project-screen-shell {
   position: relative;
-  padding-top: 4.75rem;
+  padding-top: var(--app-shell-inline-padding);
+  /* Single-scroll layout: the huge app-shell bottom padding (32vh) kept the
+     page scrollable even when the tables fit the viewport. */
+  padding-bottom: 1rem;
 }
 
+/* In-flow first row of the sticky tabs card so the account tile, revision
+   controls, and the tab rows always scroll/stick as ONE unit. The right
+   padding clears the fixed settings gear at the viewport's top-right. */
 .project-top-toolbar {
-  position: fixed;
-  top: 0.85rem;
-  left: var(--app-shell-inline-padding);
-  right: 4.65rem;
-  z-index: 240;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
   min-height: 42px;
   min-width: 0;
+  padding: 0.15rem 3.6rem 0.3rem 0.45rem;
 }
 
 .project-top-breadcrumb {
@@ -3183,9 +3185,9 @@ body.cfs-top-ui-collapsed .project-screen-shell > .collaboration-bar {
   min-height: 0;
 }
 
-.cfs-matrix-card:not(.is-maximized) {
-  min-block-size: max(34rem, calc(100dvh - 8.5rem));
-}
+/* No viewport-based min height here: the scroll container now sizes itself
+   to the viewport remainder (single-scroll layout), and a card min-height
+   would only reopen page scrolling with empty space below the table. */
 
 .cfs-error-card {
   border: 1px solid #fecaca;
@@ -3560,14 +3562,9 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 }
 
 @media (max-width: 760px) {
-  .project-screen-shell {
-    padding-top: 9.1rem;
-  }
-
   .project-top-toolbar {
     align-items: stretch;
     flex-direction: column;
-    right: 4.75rem;
     gap: 0.45rem;
   }
 

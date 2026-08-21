@@ -1883,11 +1883,24 @@ export default function CfsView({
       // so the page itself does not need to scroll (maximized mode keeps its
       // flex-driven size).
       if (!isMaximized) {
-        const fit = Math.max(384, Math.floor(window.innerHeight - scroller.getBoundingClientRect().top - 14));
+        const rect = scroller.getBoundingClientRect();
+        // Chrome below the container (card padding, shell padding) also has
+        // to fit into the viewport for the page to stop scrolling. Measure it
+        // from the shell's content bottom - documentElement.scrollHeight is
+        // floored at the viewport height and would ratchet the fit down.
+        const shellBottom = scroller.closest("main")?.getBoundingClientRect().bottom ?? rect.bottom;
+        const belowGap = Math.max(0, shellBottom - rect.bottom);
+        const fit = Math.max(384, Math.floor(window.innerHeight - rect.top - belowGap));
         const current = Number.parseFloat(scroller.style.blockSize || "0");
-        if (Math.abs(current - fit) >= 2) scroller.style.blockSize = `${fit}px`;
+        if (Math.abs(current - fit) >= 2) {
+          scroller.style.blockSize = `${fit}px`;
+          // The container is a flex item (flex: 1 1 auto): without a max the
+          // flex-grow stretches it past the inline height.
+          scroller.style.maxBlockSize = `${fit}px`;
+        }
       } else if (scroller.style.blockSize) {
         scroller.style.blockSize = "";
+        scroller.style.maxBlockSize = "";
       }
       const headerHeight = table.tHead?.getBoundingClientRect().height ?? 0;
       const bodyRows = Array.from(table.tBodies[0]?.rows ?? []).filter((row) => !row.classList.contains("cfs-scroll-end-row"));
@@ -1911,6 +1924,9 @@ export default function CfsView({
       if (cfsMatrixScrollRef.current) resizeObserver.observe(cfsMatrixScrollRef.current);
       if (tableRef.current) resizeObserver.observe(tableRef.current);
       if (tableRef.current?.tHead) resizeObserver.observe(tableRef.current.tHead);
+      // Content above the matrix (toolbar rows wrapping, banners) moves the
+      // container's top edge; body size tracks those layout shifts.
+      resizeObserver.observe(document.body);
     }
     window.addEventListener("resize", recomputeScrollEndSpace);
     return () => {

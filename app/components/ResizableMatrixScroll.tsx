@@ -38,9 +38,18 @@ export default function ResizableMatrixScroll({
       const element = scrollRef.current;
       if (!element) return;
       if (!manualHeightRef.current) {
-        const top = element.getBoundingClientRect().top;
+        const rect = element.getBoundingClientRect();
+        // Chrome below the container also has to fit into the viewport for
+        // the page to stop scrolling. Measured from the shell's content
+        // bottom - documentElement.scrollHeight is floored at the viewport
+        // height and would drift the fit.
+        const shellBottom = element.closest("main")?.getBoundingClientRect().bottom ?? rect.bottom;
+        const belowGap = Math.max(0, shellBottom - rect.bottom);
         const minHeight = variant === "compact" ? MIN_HEIGHT : variant === "large" ? 320 : 256;
-        const next = Math.max(minHeight, Math.floor(window.innerHeight - top - FIT_BOTTOM_MARGIN));
+        const next = Math.max(
+          minHeight,
+          Math.floor(window.innerHeight - rect.top - Math.max(belowGap, FIT_BOTTOM_MARGIN)),
+        );
         setFitHeight((prev) => (prev !== undefined && Math.abs(prev - next) < 2 ? prev : next));
       }
       const table = element.querySelector("table");
@@ -70,6 +79,9 @@ export default function ResizableMatrixScroll({
         const table = element.querySelector("table");
         if (table) resizeObserver.observe(table);
       }
+      // Track layout shifts above the container (banners, wrapping toolbars)
+      // that move its top edge.
+      resizeObserver.observe(document.body);
     }
     window.addEventListener("resize", recompute);
     return () => {
