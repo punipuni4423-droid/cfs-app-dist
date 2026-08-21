@@ -3,6 +3,11 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
   distDir: process.env.NEXT_DIST_DIR?.trim() || ".next",
+  // Pin the tracing root to this app folder. Without it, Next infers the
+  // workspace root from outer lockfiles when the app is extracted inside
+  // another repo, which buries standalone/server.js under a nested path and
+  // breaks the self-update restart.
+  outputFileTracingRoot: __dirname,
   webpack(config, { dev }) {
     if (dev) {
       config.watchOptions = {
