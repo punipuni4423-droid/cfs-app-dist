@@ -12,10 +12,14 @@ const BY_SCENE_VALUE = "__byScene";
 interface BacklightViewProps {
   switches: SwitchEntry[];
   backlightLevels?: BacklightLevelSetting[];
-  onChange: (next: SwitchEntry[]) => void;
-  onBacklightLevelsChange?: (next: BacklightLevelSetting[]) => void;
+  // Updater form applies against the CURRENT state; array snapshots built from
+  // the props could overwrite edits made moments earlier (By-Scene un-setting).
+  onChange: (next: SwitchEntry[] | ((current: SwitchEntry[]) => SwitchEntry[])) => void;
+  onBacklightLevelsChange?: (
+    next: BacklightLevelSetting[] | ((current: BacklightLevelSetting[]) => BacklightLevelSetting[]),
+  ) => void;
   roomScenes?: RoomScene[];
-  onRoomScenesChange?: (next: RoomScene[]) => void;
+  onRoomScenesChange?: (next: RoomScene[] | ((current: RoomScene[]) => RoomScene[])) => void;
   revisionChanges?: RevisionFieldChanges;
   backlightLogicChanged?: boolean;
   canEdit?: boolean;
@@ -67,7 +71,7 @@ export default function BacklightView({
   const drag = useDragReorder(levels, updateAllPalladiomLevels, (level) => level.key);
   const assignmentDrag = useDragReorder(switches, commitSwitches, (sw) => sw.id, (sw) => switchGroupId(sw));
 
-  function commitSwitches(next: SwitchEntry[]): void {
+  function commitSwitches(next: SwitchEntry[] | ((current: SwitchEntry[]) => SwitchEntry[])): void {
     if (!canEdit) return;
     onChange(next);
   }
@@ -76,8 +80,8 @@ export default function BacklightView({
     if (!canEditBacklightLevels) return;
     onBacklightLevelsChange?.(nextLevels);
     if (palladiomSwitches.length > 0) {
-      commitSwitches(
-        switches.map((sw) =>
+      commitSwitches((current) =>
+        current.map((sw) =>
           sw.kind === "lutronPd" ? { ...sw, backlightLevels: nextLevels } : sw,
         ),
       );
@@ -136,8 +140,8 @@ export default function BacklightView({
       return Boolean(removed?.name && condition.toLowerCase() === removed.name.toLowerCase());
     };
     onBacklightLevelsChange?.(nextLevels);
-    commitSwitches(
-      switches.map((sw) => {
+    commitSwitches((current) =>
+      current.map((sw) => {
         const backlightCondition = matchesRemovedLevel(sw.backlightCondition) ? "" : sw.backlightCondition;
         if (sw.kind !== "lutronPd") {
           return backlightCondition === sw.backlightCondition ? sw : { ...sw, backlightCondition };
@@ -150,8 +154,8 @@ export default function BacklightView({
       }),
     );
     if (onRoomScenesChange) {
-      onRoomScenesChange(
-        roomScenes.map((scene) =>
+      onRoomScenesChange((current) =>
+        current.map((scene) =>
           matchesRemovedLevel(scene.backlightCondition)
             ? { ...scene, backlightCondition: "" }
             : scene,
@@ -161,8 +165,8 @@ export default function BacklightView({
   }
 
   function updatePalladiomAssignment(groupId: string, sceneKey: string): void {
-    commitSwitches(
-      switches.map((sw) =>
+    commitSwitches((current) =>
+      current.map((sw) =>
         switchGroupId(sw) === groupId ? { ...sw, backlightCondition: sceneKey } : sw,
       ),
     );

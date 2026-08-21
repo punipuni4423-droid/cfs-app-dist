@@ -80,7 +80,7 @@ interface SwitchViewProps {
   circuits: CircuitEntry[];
   activeKind: SwitchKind;
   onActiveKindChange: (next: SwitchKind) => void;
-  onChange: (next: SwitchEntry[]) => void;
+  onChange: (next: SwitchEntry[] | ((current: SwitchEntry[]) => SwitchEntry[])) => void;
   deviceAssignments?: DeviceAssignment[];
   cfsRows?: CfsCircuit[];
   curtainAssignments?: CurtainAssignment[];
@@ -183,14 +183,16 @@ export default function SwitchView({
     return hasRevisionChange(id, fields) ? "revision-changed-cell" : "";
   }
 
-  function commitSwitches(next: SwitchEntry[]): void {
+  function commitSwitches(next: SwitchEntry[] | ((current: SwitchEntry[]) => SwitchEntry[])): void {
     if (!canEdit) return;
-    onChange(normalizeSwitchPriorityFunctions(next));
+    // Resolve against the current state so a commit can never overwrite an
+    // edit that landed after this component's props were captured.
+    onChange((current) => normalizeSwitchPriorityFunctions(typeof next === "function" ? next(current) : next));
   }
 
   useEffect(() => {
     const next = dedupeSwitchIds(switches);
-    if (next !== switches && canEdit) onChange(next);
+    if (next !== switches && canEdit) onChange((current) => dedupeSwitchIds(current));
   }, [switches, onChange, canEdit]);
 
   const filteredSwitches = useMemo(
@@ -333,7 +335,9 @@ export default function SwitchView({
 
   useEffect(() => {
     const next = syncContactSwitchesWithCciOptions(switches, cciOptions);
-    if (next !== switches && canEdit) onChange(next);
+    if (next !== switches && canEdit) {
+      onChange((current) => syncContactSwitchesWithCciOptions(current, cciOptions));
+    }
   }, [cciOptions, switches, onChange, canEdit]);
 
   const hasButtonCount = activeKind === "lutronPd" || activeKind === "lutronPico";
@@ -421,7 +425,7 @@ export default function SwitchView({
         ? "[]"
         : JSON.stringify(pirRegisteredOptions.map((option) => option.value));
     }
-    commitSwitches(normalizeQsmAssignments([...switches, next]));
+    commitSwitches((current) => normalizeQsmAssignments([...current, next]));
   }
 
   function addFunctionRow(groupRows: SwitchEntry[], buttonLabel?: string): void {
@@ -634,7 +638,7 @@ export default function SwitchView({
   }
 
   function updateSwitch(id: string, fields: Partial<SwitchEntry>): void {
-    commitSwitches(switches.map((sw) => (sw.id === id ? { ...sw, ...fields } : sw)));
+    commitSwitches((current) => current.map((sw) => (sw.id === id ? { ...sw, ...fields } : sw)));
   }
 
   function hasPriorityFunctionChoice(sw: SwitchEntry): boolean {
@@ -823,7 +827,7 @@ export default function SwitchView({
     const groupId = switchGroupId(groupRows[0]);
     setExpandedFunctionIds(new Set());
     setExpandedBacklightIds(new Set());
-    commitSwitches(normalizeQsmAssignments(switches.filter((row) => switchGroupId(row) !== groupId)));
+    commitSwitches((current) => normalizeQsmAssignments(current.filter((row) => switchGroupId(row) !== groupId)));
   }
 
   function removeFunctionRow(row: SwitchEntry, groupRows: SwitchEntry[]): void {
@@ -840,7 +844,7 @@ export default function SwitchView({
       next.delete(row.id);
       return next;
     });
-    commitSwitches(normalizeQsmAssignments(switches.filter((item) => item.id !== row.id)));
+    commitSwitches((current) => normalizeQsmAssignments(current.filter((item) => item.id !== row.id)));
   }
 
   function backlightConditionValue(value: string): string {
