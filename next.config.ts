@@ -8,6 +8,21 @@ const nextConfig: NextConfig = {
   // another repo, which buries standalone/server.js under a nested path and
   // breaks the self-update restart.
   outputFileTracingRoot: __dirname,
+  // Dynamic reads like path.join(appDir, ".cfs-build-info.json") make the file
+  // tracer glob the whole project; without these excludes it copied previous
+  // package staging folders into .next/standalone, growing zip paths past the
+  // Windows 260-char extraction limit.
+  outputFileTracingExcludes: {
+    "*": [
+      "./artifacts/**",
+      "./.next-share-package/**",
+      "./data/**",
+      "./runtime/**",
+      "./Manual/**",
+      "./test-results/**",
+      "./playwright-report/**",
+    ],
+  },
   webpack(config, { dev }) {
     if (dev) {
       config.watchOptions = {
