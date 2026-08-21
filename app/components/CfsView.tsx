@@ -1382,7 +1382,16 @@ export default function CfsView({
     function closeOnEscape(event: KeyboardEvent): void {
       if (event.key === "Escape") setInspectionPopover(null);
     }
-    function closeOnScroll(): void {
+    const openedAt = Date.now();
+    function closeOnScroll(event: Event): void {
+      // Layout settling right after the popover opens (selected-cell class,
+      // sticky offsets) can emit scroll events on the matrix container;
+      // closing on those made the popover appear to never open. Only user
+      // scrolling after the settle window should dismiss it, and scrolls
+      // inside the popover itself (its own body) never should.
+      if (Date.now() - openedAt < 400) return;
+      const target = event.target;
+      if (target instanceof Node && inspectionPopoverRef.current?.contains(target)) return;
       setInspectionPopover(null);
     }
     document.addEventListener("pointerdown", closeOnOutsideClick);

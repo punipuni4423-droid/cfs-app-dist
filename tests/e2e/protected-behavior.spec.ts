@@ -49,6 +49,30 @@ function revisionManagementTopButton(page: Page) {
   return page.getByRole("button", { name: /Open revision management|Revision Management/ }).first();
 }
 
+// Opens the InspectionMode cell popover with retries. A blind second click
+// (the old fallback) TOGGLED a slow-but-opening popover closed again, which
+// was the source of the intermittent "popover never visible" failures right
+// after InspectionMode starts. Escape closes any half-open state, then the
+// next attempt clicks fresh.
+async function openInspectionPopover(page: Page) {
+  const popover = page.locator(".cfs-inspection-popover");
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const editableCell = page.locator('button[aria-label^="Edit Inspection value"]').first();
+    try {
+      await expect(editableCell).toBeVisible({ timeout: 5000 });
+      await editableCell.scrollIntoViewIfNeeded();
+      await editableCell.click();
+      await expect(popover).toBeVisible({ timeout: 2000 });
+      return popover;
+    } catch (error) {
+      if (attempt === 4) throw error;
+      await page.keyboard.press("Escape").catch(() => undefined);
+      await page.waitForTimeout(150);
+    }
+  }
+  return popover;
+}
+
 async function addCircuitRowWithDesigner(page: Page, designerNumber: string): Promise<void> {
   await page.getByRole("tab", { name: "Circuit", exact: true }).click();
   await page.locator(".btn-add-row").filter({ hasText: /Add Row/ }).first().click();
@@ -1869,14 +1893,7 @@ test.describe("Protected CFS behaviors", () => {
     await page.locator(".cfs-matrix-scroll").evaluate((element) => {
       element.scrollLeft = element.scrollWidth;
     });
-    const editableCell = page.locator('button[aria-label^="Edit Inspection value"]').first();
-    await expect(editableCell).toBeVisible();
-    await editableCell.click();
-    const popover = page.locator(".cfs-inspection-popover");
-    if (!(await popover.isVisible().catch(() => false))) {
-      await editableCell.click();
-    }
-    await expect(popover).toBeVisible();
+    const popover = await openInspectionPopover(page);
 
     const presetTop = await popover.locator(".cfs-inspection-percent-preset-grid").evaluate((element) =>
       element.getBoundingClientRect().top,
@@ -1911,14 +1928,7 @@ test.describe("Protected CFS behaviors", () => {
       element.scrollLeft = element.scrollWidth;
     });
     const editableCell = page.locator('button[aria-label^="Edit Inspection value"]').first();
-    await expect(editableCell).toBeVisible();
-    await editableCell.scrollIntoViewIfNeeded();
-    await editableCell.click();
-    const popover = page.locator(".cfs-inspection-popover");
-    if (!(await popover.isVisible().catch(() => false))) {
-      await editableCell.click();
-    }
-    await expect(popover).toBeVisible();
+    const popover = await openInspectionPopover(page);
     await popover.locator(".cfs-inspection-popover-input").fill("37");
     await popover.getByRole("button", { name: "OK", exact: true }).click();
 
@@ -1964,9 +1974,6 @@ test.describe("Protected CFS behaviors", () => {
           await expect(editableCell).toBeVisible({ timeout: 5000 });
           await editableCell.scrollIntoViewIfNeeded();
           await editableCell.click();
-          if (!(await popover.isVisible().catch(() => false))) {
-            await editableCell.click();
-          }
           await expect(input).toBeVisible({ timeout: 5000 });
           await input.fill(value, { timeout: 5000 });
           const okButton = popover.getByRole("button", { name: "OK", exact: true });
