@@ -125,7 +125,14 @@ function Start-CfsAppServer {
   if (Test-Path -LiteralPath $standaloneServer) {
     $serverEntry = $standaloneServer
     Write-Log "Using Next standalone runtime for restart."
+  } elseif (Test-NpmDependenciesReady -WorkingDirectory $appPath) {
+    # Prefer `npm start` (serves the freshly built .next) over the shipped
+    # runtime\server.js, which is frozen at package build time and would keep
+    # serving the old version after a successful update.
+    $serverEntry = $null
   } elseif (Test-Path -LiteralPath $bundledRuntimeServer) {
+    # Last resort (e.g. failed dependency install): bring the packaged runtime
+    # back so the app is reachable and the failure is visible.
     $serverEntry = $bundledRuntimeServer
     Write-Log "Using bundled runtime\server.js for restart."
   }
