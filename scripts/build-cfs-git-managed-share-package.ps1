@@ -234,6 +234,20 @@ if (-not [string]::IsNullOrWhiteSpace($trackedStatus)) {
 }
 $packageGitCommit = (& git -C $packageRoot rev-parse HEAD).Trim()
 
+# The runtime was built in the app repo, so its build info carries the app
+# repo SHA. The package tracks the distribution repo, whose SHAs differ;
+# without this rewrite every fresh extraction shows a bogus "Rebuild
+# Required". Stamp the package commit into the shipped build info.
+foreach ($buildInfoRelative in @(".cfs-build-info.json", "runtime\.cfs-build-info.json")) {
+  $buildInfoPath = Join-Path $packageRoot $buildInfoRelative
+  if (Test-Path -LiteralPath $buildInfoPath) {
+    $buildInfo = Get-Content -LiteralPath $buildInfoPath -Raw | ConvertFrom-Json
+    $buildInfo.gitSha = $packageGitCommit
+    $buildInfo | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $buildInfoPath -Encoding UTF8
+    Write-Host "Stamped package commit into $buildInfoRelative"
+  }
+}
+
 $manifest = Get-Content -LiteralPath (Join-Path $runtimeSource "RELEASE_PACKAGE_MANIFEST.json") -Raw | ConvertFrom-Json
 $manifest.GitCommit = $packageGitCommit
 $manifest | Add-Member -MemberType NoteProperty -Name IncludesGitMetadata -Value $true -Force
