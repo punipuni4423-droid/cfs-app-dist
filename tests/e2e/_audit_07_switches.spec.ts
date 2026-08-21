@@ -20,7 +20,7 @@ import { installLocalEditingMocks } from './support/secure-sharing-mock';
 const SHOT_DIR = 'test-results/audit-07';
 const PROJECT_NAME = 'AUDIT-07-Sw';
 const ROOM_NAME = 'AUDIT-07-Room';
-const PROJECT_DRAFT_STORAGE_KEY = 'cfs-project-drafts-v1';
+const PROJECT_DRAFT_STORAGE_KEY = 'cfs-project-drafts-v2';
 const PLAYWRIGHT_BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:3014';
 
 // 型定義 app/types.ts SwitchKind に存在する全種別
