@@ -150,4 +150,52 @@ test.describe("Backlight By-Scene retention", () => {
     await subTab(page, /^Backlight$/);
     await expect(assignmentSelect(page)).toHaveValue(BY_SCENE);
   });
+
+  test("mixed per-row conditions show (Mixed) instead of an arbitrary row's value", async ({ page }) => {
+    await isolate(page);
+    await createAndOpenProject(page, `BL-MIX-${Date.now()}`);
+    await createRoomTypeAndSelect(page, `BL-MixRoom-${Date.now()}`);
+
+    // One Palladiom switch with 2 button rows (two entries in the same group).
+    await subTab(page, /^Switch$/);
+    await page.locator('.scene-area-chip:has-text("Palladiom")').first().click();
+    await page.waitForTimeout(200);
+    await page.locator(".btn-add-row").first().click();
+    await page.waitForTimeout(300);
+    const buttonCountSelect = page.locator("tbody select").first();
+    await buttonCountSelect.selectOption("2");
+    await page.waitForTimeout(400);
+
+    // Give only the FIRST row a per-row backlight condition via its panel.
+    await page.locator("tbody .setting-status-button").nth(1).click();
+    const overlay = page.locator(".setting-overlay-panel");
+    await expect(overlay).toBeVisible({ timeout: 5000 });
+    const panelSelect = overlay.locator("select").first();
+    await panelSelect.selectOption({ index: 1 });
+    await overlay.locator("button").filter({ hasText: /^Close$/ }).click();
+    await expect(overlay).toBeHidden({ timeout: 5000 });
+
+    // The assignment dropdown must show (Mixed), not the first row's value.
+    await subTab(page, /^Backlight$/);
+    const select = page.locator('select:has(option[value="__mixed"])').first();
+    await expect(select).toBeVisible({ timeout: 8000 });
+    await expect(select).toHaveValue("__mixed");
+
+    // Explicitly selecting By Scene unifies every row.
+    await select.selectOption(BY_SCENE);
+    await page.waitForTimeout(1800);
+    const conditions = await page.evaluate(() => {
+      try {
+        const drafts = JSON.parse(localStorage.getItem("cfs-project-drafts-v2") || "[]");
+        return (drafts?.[0]?.roomTypes?.[0]?.switches ?? [])
+          .filter((item: { kind?: string }) => item.kind === "lutronPd")
+          .map((item: { backlightCondition?: string }) => item.backlightCondition ?? "");
+      } catch {
+        return [];
+      }
+    });
+    expect(conditions.length).toBe(2);
+    expect(conditions.every((value: string) => value === BY_SCENE)).toBe(true);
+    await expect(assignmentSelect(page)).toHaveValue(BY_SCENE);
+  });
 });
