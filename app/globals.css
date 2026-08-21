@@ -2211,6 +2211,13 @@ body.cfs-top-ui-collapsed .project-screen-shell > .collaboration-bar {
   width: 2.2rem;
 }
 
+/* Strong vertical rule at the start of each switch block in the CFS matrix:
+   faint default cell borders made adjacent switches (and their colored
+   header blocks) hard to tell apart. */
+.cfs-switch-group-start {
+  border-left: 2px solid rgba(51, 65, 85, 0.6) !important;
+}
+
 .switch-bulk-select-header input,
 .switch-bulk-select-cell input {
   width: 1rem;

@@ -1693,9 +1693,24 @@ export default function CfsView({
     }
     return groups;
   }, [visibleFunctionColumns]);
-  const buttonHeaderGroups = useMemo(() => {
-    const groups: Array<{ key: string; colSpan: number; button: string }> = [];
+  // First column of each switch block: used to draw a strong vertical rule so
+  // adjacent switches (and their colored header blocks) are clearly separated.
+  const switchGroupStartColIds = useMemo(() => {
+    const ids = new Set<string>();
+    let previousSwitchKey: string | null = null;
     for (const col of visibleFunctionColumns) {
+      if (col.switchGroupKey !== previousSwitchKey) ids.add(col.id);
+      previousSwitchKey = col.switchGroupKey;
+    }
+    return ids;
+  }, [visibleFunctionColumns]);
+
+  const buttonHeaderGroups = useMemo(() => {
+    const groups: Array<{ key: string; colSpan: number; button: string; startsSwitchGroup: boolean }> = [];
+    let previousSwitchKey: string | null = null;
+    for (const col of visibleFunctionColumns) {
+      const startsSwitchGroup = col.switchGroupKey !== previousSwitchKey;
+      previousSwitchKey = col.switchGroupKey;
       const current = groups.at(-1);
       if (current && current.key === col.buttonKey) {
         current.colSpan += 1;
@@ -1704,6 +1719,7 @@ export default function CfsView({
           key: col.buttonKey,
           colSpan: 1,
           button: col.button,
+          startsSwitchGroup,
         });
       }
     }
@@ -1716,8 +1732,12 @@ export default function CfsView({
       functionName: string;
       kind: FunctionColumn["kind"];
       pirLabels?: string[];
+      startsSwitchGroup?: boolean;
     }> = [];
+    let previousSwitchKey: string | null = null;
     for (const col of visibleFunctionColumns) {
+      const startsSwitchGroup = col.switchGroupKey !== previousSwitchKey;
+      previousSwitchKey = col.switchGroupKey;
       const key = `${col.buttonKey}\u0000${col.functionName.trim() || "-"}`;
       const current = groups.at(-1);
       if (current && current.key === key) {
@@ -1726,6 +1746,7 @@ export default function CfsView({
         groups.push({
           key,
           colSpan: 1,
+          startsSwitchGroup,
           functionName: col.functionName,
           kind: col.kind,
           pirLabels: col.pirLabels,
@@ -4768,7 +4789,7 @@ export default function CfsView({
               {switchHeaderGroups.map((group, index) => (
                 <th
                   key={`${group.key}-${index}`}
-                  className={`cfs-function-head cfs-switch-head cfs-switch-kind-${group.kind}${
+                  className={`cfs-function-head cfs-switch-head cfs-switch-group-start cfs-switch-kind-${group.kind}${
                     hasChangedGroupedFunctionFields(group.key, (col) => col.switchGroupKey, [
                       "switchNumber",
                       "switchName",
@@ -4791,7 +4812,7 @@ export default function CfsView({
               {buttonHeaderGroups.map((group, index) => (
                 <th
                   key={`${group.key}-${index}`}
-                  className={`cfs-function-head cfs-button-head${
+                  className={`cfs-function-head cfs-button-head${group.startsSwitchGroup ? " cfs-switch-group-start" : ""}${
                     hasChangedGroupedFunctionFields(group.key, (col) => col.buttonKey, [
                       "buttonLabel",
                       "allocation",
@@ -4812,7 +4833,7 @@ export default function CfsView({
               {functionNameHeaderGroups.map((group, index) => (
                 <th
                   key={`${group.key}-${index}`}
-                  className={`cfs-function-head cfs-function-name-head${
+                  className={`cfs-function-head cfs-function-name-head${group.startsSwitchGroup ? " cfs-switch-group-start" : ""}${
                     hasChangedGroupedFunctionFields(group.key, (col) => `${col.buttonKey}\u0000${col.functionName.trim() || "-"}`, [
                       "buttonFunction",
                       "kind",
@@ -4848,7 +4869,7 @@ export default function CfsView({
               {visibleFunctionColumns.map((col) => (
                 <th
                   key={`${col.id}-condition`}
-                  className={`cfs-function-head cfs-condition-head${
+                  className={`cfs-function-head cfs-condition-head${switchGroupStartColIds.has(col.id) ? " cfs-switch-group-start" : ""}${
                     isPriorityTriggerColumn(col) ? " cfs-priority-trigger-cell" : ""
                   }${
                     hasLinkIssueFunctionColumn(col) ? " cfs-link-error-cell" : ""
@@ -5100,7 +5121,7 @@ export default function CfsView({
                       return (
                         <td
                           key={col.id}
-                          className={`cfs-function-cell${hasChangedFunctionCell(row, col) ? " revision-changed-cell" : ""}${
+                          className={`cfs-function-cell${switchGroupStartColIds.has(col.id) ? " cfs-switch-group-start" : ""}${hasChangedFunctionCell(row, col) ? " revision-changed-cell" : ""}${
                             isAreaSceneValue ? " cfs-area-scene-value-cell" : ""
                           }${
                             isLinkedValue ? " cfs-linked-value-cell" : ""
