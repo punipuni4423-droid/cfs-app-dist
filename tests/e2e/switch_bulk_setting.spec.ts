@@ -88,21 +88,29 @@ test.describe("Switch bulk setting", () => {
     await applyButton.click();
     await expect(overlay).toBeHidden({ timeout: 5000 });
 
-    // Both rows carry the same condition in the persisted draft.
+    // Both rows carry the same condition in the persisted draft, and their
+    // switch-specific backlight targets are untouched by the bulk copy.
     await page.waitForTimeout(1800);
-    const conditions = await page.evaluate(() => {
+    const rows = await page.evaluate(() => {
       try {
         const drafts = JSON.parse(localStorage.getItem("cfs-project-drafts-v2") || "[]");
         return (drafts?.[0]?.roomTypes?.[0]?.switches ?? [])
           .filter((item: { kind?: string }) => item.kind === "lutronPd")
-          .map((item: { backlightCondition?: string }) => item.backlightCondition ?? "");
+          .map((item: { backlightCondition?: string; backlightTarget?: string }) => ({
+            condition: item.backlightCondition ?? "",
+            target: item.backlightTarget ?? "",
+          }));
       } catch {
         return [];
       }
     });
-    expect(conditions.length).toBe(2);
-    expect(conditions[0]).toBe(chosen);
-    expect(conditions[1]).toBe(chosen);
+    expect(rows.length).toBe(2);
+    expect(rows[0].condition).toBe(chosen);
+    expect(rows[1].condition).toBe(chosen);
+    // Targets were empty on creation and must remain per-row (not overwritten
+    // by the template row's value as a side effect).
+    expect(rows[0].target).toBe("");
+    expect(rows[1].target).toBe("");
 
     // Selection resets after applying.
     await expect(page.locator(".muted-pill").filter({ hasText: /checked/ })).toHaveText(/0 checked/);
