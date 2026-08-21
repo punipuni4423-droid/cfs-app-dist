@@ -5501,58 +5501,58 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 
 .cfs-area-color-row > td {
   box-shadow:
-    inset 0 0.28rem 0 var(--row-location-color, transparent),
-    inset 0 -0.28rem 0 var(--row-location-color, transparent);
+    inset 0 0.28rem 0 var(--row-area-top-color, transparent),
+    inset 0 -0.28rem 0 var(--row-area-bottom-color, transparent);
 }
 
 .cfs-area-color-row .cfs-individual-override-cell {
   box-shadow:
-    inset 0 0.28rem 0 var(--row-location-color, transparent),
-    inset 0 -0.28rem 0 var(--row-location-color, transparent),
+    inset 0 0.28rem 0 var(--row-area-top-color, transparent),
+    inset 0 -0.28rem 0 var(--row-area-bottom-color, transparent),
     inset 0 0 0 1px #ca8a04;
 }
 
 .cfs-area-color-row .cfs-linked-value-cell {
   box-shadow:
-    inset 0 0.28rem 0 var(--row-location-color, transparent),
-    inset 0 -0.28rem 0 var(--row-location-color, transparent),
+    inset 0 0.28rem 0 var(--row-area-top-color, transparent),
+    inset 0 -0.28rem 0 var(--row-area-bottom-color, transparent),
     inset 0 0 0 1px #0891b2;
 }
 
 .cfs-area-color-row .cfs-repaired-link-cell {
   box-shadow:
-    inset 0 0.28rem 0 var(--row-location-color, transparent),
-    inset 0 -0.28rem 0 var(--row-location-color, transparent),
+    inset 0 0.28rem 0 var(--row-area-top-color, transparent),
+    inset 0 -0.28rem 0 var(--row-area-bottom-color, transparent),
     inset 0 0 0 2px #f59e0b;
 }
 
 .cfs-area-color-row .revision-changed-cell {
   box-shadow:
-    inset 0 0.28rem 0 var(--row-location-color, transparent),
-    inset 0 -0.28rem 0 var(--row-location-color, transparent),
+    inset 0 0.28rem 0 var(--row-area-top-color, transparent),
+    inset 0 -0.28rem 0 var(--row-area-bottom-color, transparent),
     inset 0 0 0 1px #e7c84f;
 }
 
 .cfs-area-color-row .cfs-individual-override-cell.revision-changed-cell {
   box-shadow:
-    inset 0 0.28rem 0 var(--row-location-color, transparent),
-    inset 0 -0.28rem 0 var(--row-location-color, transparent),
+    inset 0 0.28rem 0 var(--row-area-top-color, transparent),
+    inset 0 -0.28rem 0 var(--row-area-bottom-color, transparent),
     inset 0 0 0 1px #ca8a04,
     inset 0 0 0 2px #e7c84f;
 }
 
 .cfs-area-color-row .cfs-linked-value-cell.cfs-individual-override-cell {
   box-shadow:
-    inset 0 0.28rem 0 var(--row-location-color, transparent),
-    inset 0 -0.28rem 0 var(--row-location-color, transparent),
+    inset 0 0.28rem 0 var(--row-area-top-color, transparent),
+    inset 0 -0.28rem 0 var(--row-area-bottom-color, transparent),
     inset 0 0 0 1px #ca8a04,
     inset 0 0 0 2px #0891b2;
 }
 
 .cfs-area-color-row .cfs-linked-value-cell.cfs-repaired-link-cell {
   box-shadow:
-    inset 0 0.28rem 0 var(--row-location-color, transparent),
-    inset 0 -0.28rem 0 var(--row-location-color, transparent),
+    inset 0 0.28rem 0 var(--row-area-top-color, transparent),
+    inset 0 -0.28rem 0 var(--row-area-bottom-color, transparent),
     inset 0 0 0 1px #0891b2,
     inset 0 0 0 3px #f59e0b;
 }
