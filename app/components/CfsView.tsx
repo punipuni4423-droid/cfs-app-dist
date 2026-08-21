@@ -4874,7 +4874,24 @@ export default function CfsView({
               </tr>
             ) : (
               <>
-                {displayedRows.map((row, index) => (
+                {displayedRows.map((row, index) => {
+                  // Area Auto Color paints only the boundaries of contiguous
+                  // area blocks in DISPLAY order (so sorting/filtering keeps
+                  // the rule visually consistent): the top edge where the
+                  // previous displayed row belongs to a different area, and
+                  // the bottom edge where the next one does. A single-row
+                  // block gets both edges.
+                  const previousDisplayedRow = index > 0 ? displayedRows[index - 1] : null;
+                  const nextDisplayedRow = index < displayedRows.length - 1 ? displayedRows[index + 1] : null;
+                  const areaTopColor =
+                    row.locationColor && (!previousDisplayedRow || previousDisplayedRow.locationId !== row.locationId)
+                      ? row.locationColor
+                      : "transparent";
+                  const areaBottomColor =
+                    row.locationColor && (!nextDisplayedRow || nextDisplayedRow.locationId !== row.locationId)
+                      ? row.locationColor
+                      : "transparent";
+                  return (
                   <tr
                     key={row.id}
                     className={[
@@ -4890,7 +4907,15 @@ export default function CfsView({
                     ]
                       .filter(Boolean)
                       .join(" ")}
-                    style={row.locationColor ? { ["--row-location-color" as string]: row.locationColor } : undefined}
+                    style={
+                      row.locationColor
+                        ? {
+                            ["--row-location-color" as string]: row.locationColor,
+                            ["--row-area-top-color" as string]: areaTopColor,
+                            ["--row-area-bottom-color" as string]: areaBottomColor,
+                          }
+                        : undefined
+                    }
                   >
                     {visibleBaseColumns.map((col, colIndex) => {
                     const isChangedBaseCell = hasChangedBaseCell(row, col.key);
@@ -5096,7 +5121,8 @@ export default function CfsView({
                     })}
                     <td className="cfs-scroll-end-inline-cell" aria-hidden="true" />
                   </tr>
-                ))}
+                  );
+                })}
                 <tr className="cfs-scroll-end-row" aria-hidden="true">
                   <td colSpan={visibleBaseColumns.length + visibleFunctionColumns.length + 1}>
                     <div className="cfs-scroll-end-spacer" style={{ blockSize: cfsScrollEndSpace.block }} />
