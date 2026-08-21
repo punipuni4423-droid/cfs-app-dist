@@ -39,7 +39,12 @@ import { createAppId } from './id';
 import { normalizeSwitchPriorityFunctions } from './switchSync';
 import { normalizeProjectRoomTypeCircuitIds } from './roomTypeSync';
 
-const PROJECT_DRAFT_STORAGE_KEY = 'cfs-project-drafts-v1';
+// v2 (2026-08-21): invalidates drafts written by builds that had the
+// stale-snapshot clobber bug. Those drafts contain silently reverted values
+// (e.g. Palladiom By-Scene dropped), and the newer-draft-wins reload merge
+// would resurrect them over good server data. New-format drafts are only
+// written by fixed builds, so the merge can trust them again.
+const PROJECT_DRAFT_STORAGE_KEY = 'cfs-project-drafts-v2';
 const VALID_SWITCH_KINDS = new Set(['contact', 'lutronPd', 'lutronPico', 'command', 'tstat', 'pir', 'qsm']);
 const VALID_BUTTON_TYPES = new Set(['single', 'toggle', 'scene']);
 const VALID_HVAC_PROTOCOLS = new Set(['Modbus', 'FCU', 'BACnet']);

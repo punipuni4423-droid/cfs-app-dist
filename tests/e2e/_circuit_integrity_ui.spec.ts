@@ -3,7 +3,7 @@ import { STORAGE_KEY, createDefaultLocations, createNewRoomType } from "../../ap
 import type { CircuitEntry, ProjectData } from "../../app/types";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
-const PROJECT_DRAFT_STORAGE_KEY = "cfs-project-drafts-v1";
+const PROJECT_DRAFT_STORAGE_KEY = "cfs-project-drafts-v2";
 
 type PersistedSceneSnapshot = {
   settings?: Array<{ circuitId?: string; percentage?: string }>;

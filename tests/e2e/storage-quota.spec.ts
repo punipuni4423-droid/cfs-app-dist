@@ -33,7 +33,7 @@ test("project cache quota failures do not block database-backed editing", async 
     );
     const originalSetItem = Storage.prototype.setItem;
     Storage.prototype.setItem = function patchedSetItem(key: string, value: string): void {
-      if (key === "cfs-projects-v14" || key === "cfs-project-drafts-v1") {
+      if (key === "cfs-projects-v14" || key === "cfs-project-drafts-v2") {
         throw new DOMException("Quota exceeded for test", "QuotaExceededError");
       }
       originalSetItem.call(this, key, value);
@@ -118,7 +118,7 @@ test("project cache quota failures do not block database-backed editing", async 
     .poll(async () =>
       page.evaluate(() => ({
         projectCache: window.localStorage.getItem("cfs-projects-v14"),
-        draftCache: window.localStorage.getItem("cfs-project-drafts-v1"),
+        draftCache: window.localStorage.getItem("cfs-project-drafts-v2"),
       })),
     )
     .toEqual({ projectCache: null, draftCache: null });
@@ -131,7 +131,7 @@ test("empty project response is authoritative over stale local project cache", a
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem("cfs-projects-v14", JSON.stringify([project]));
-    window.localStorage.setItem("cfs-project-drafts-v1", JSON.stringify([project]));
+    window.localStorage.setItem("cfs-project-drafts-v2", JSON.stringify([project]));
   }, staleProject);
 
   await page.route("**/api/sharing/config", async (route) => {
@@ -180,7 +180,7 @@ test("empty project response is authoritative over stale local project cache", a
     .poll(async () =>
       page.evaluate(() => ({
         projectCache: window.localStorage.getItem("cfs-projects-v14"),
-        draftCache: window.localStorage.getItem("cfs-project-drafts-v1"),
+        draftCache: window.localStorage.getItem("cfs-project-drafts-v2"),
       })),
     )
     .toEqual({ projectCache: null, draftCache: null });
