@@ -308,9 +308,15 @@ export default function CollaborationBar({ collaboration, compact = false }: Col
             </div>
             <div className="collaboration-members-list" role="list" aria-label="CFS sharing users">
               {collaboration.members.map((member) => (
-                <div key={member.id} className={`collaboration-member-row${editingMemberId === member.id ? " is-editing" : ""}`} role="listitem">
+                <div
+                  key={member.id}
+                  className={`collaboration-member-row${editingMemberId === member.id ? " is-editing" : ""}`}
+                  role="listitem"
+                  onClick={() => { if (!collaboration.busy) editMember(member); }}
+                  title="Click to edit this user"
+                >
                   <span>{member.displayName}</span><span>{member.email}</span><span>{roleLabel(member.role)}</span><span>{member.active ? "Active" : "Disabled"}</span>
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => editMember(member)} disabled={collaboration.busy}>Edit</button>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={(event) => { event.stopPropagation(); editMember(member); }} disabled={collaboration.busy}>Edit</button>
                 </div>
               ))}
             </div>

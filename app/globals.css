@@ -344,19 +344,32 @@ body {
 .collaboration-members-list {
   display: grid;
   max-height: 13rem;
-  overflow: auto;
+  overflow-y: auto;
+  /* Never allow horizontal scrolling: it pushed the per-row Edit button out
+     of view, making existing members appear uneditable. */
+  overflow-x: hidden;
   border-top: 1px solid var(--color-border);
 }
 
 .collaboration-member-row {
   display: grid;
-  grid-template-columns: minmax(5rem, 0.8fr) minmax(9rem, 1.4fr) 4.5rem 4.5rem auto;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.6fr) auto auto auto;
   gap: 0.5rem;
   align-items: center;
   padding: 0.5rem 0;
   border-bottom: 1px solid var(--color-border);
   color: var(--color-text-secondary);
   font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.collaboration-member-row:hover {
+  background: var(--color-surface-hover);
+}
+
+.collaboration-member-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .collaboration-member-row span:first-child {
