@@ -606,6 +606,7 @@ textarea:disabled {
   max-block-size: 82vh;
   max-inline-size: 100%;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .resizable-matrix-scroll-large {
