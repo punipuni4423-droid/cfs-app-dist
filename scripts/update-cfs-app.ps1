@@ -365,6 +365,30 @@ try {
     $dependencyChanges = @(& $gitExe -C $repoRoot diff --name-only $beforeSha $afterSha -- package.json package-lock.json npm-shrinkwrap.json)
   }
   $dependenciesChanged = @($dependencyChanges | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0
+
+  # Fast path: when every pulled change is documentation-only, the existing
+  # build stays valid. Skip install/build/restart and just stamp the new SHA
+  # into the shipped build info so the status check reports "current".
+  if ($beforeSha -ne $afterSha -and -not $dependenciesChanged) {
+    $changedFiles = @(& $gitExe -C $repoRoot diff --name-only $beforeSha $afterSha) |
+      Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+    $docsOnlyPattern = '^(docs/|Manual/)|^[^/]+\.md$'
+    $nonDocChanges = @($changedFiles | Where-Object { [string]$_ -notmatch $docsOnlyPattern })
+    if ($changedFiles.Count -gt 0 -and $nonDocChanges.Count -eq 0) {
+      Write-Log ("Docs-only update ({0} file(s)); skipping install, build, and restart." -f $changedFiles.Count)
+      foreach ($buildInfoRelative in @(".cfs-build-info.json", "runtime\.cfs-build-info.json")) {
+        $buildInfoPath = Join-Path $appPath $buildInfoRelative
+        if (Test-Path -LiteralPath $buildInfoPath) {
+          $buildInfo = Get-Content -LiteralPath $buildInfoPath -Raw | ConvertFrom-Json
+          $buildInfo.gitSha = $afterSha
+          $buildInfo | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $buildInfoPath -Encoding UTF8
+        }
+      }
+      Write-UpdateStatus -State "completed" -Step "done" -Message "Docs-only update applied. No rebuild was needed." -Progress 100 -BackupPath $backupPath
+      Write-Log "CFS self update completed (docs-only fast path)."
+      exit 0
+    }
+  }
   $dependenciesReady = Test-NpmDependenciesReady -WorkingDirectory $appPath
   $needsNpmInstall = $dependenciesChanged -or -not $dependenciesReady
 
