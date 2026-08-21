@@ -1708,12 +1708,13 @@ export default function ProjectScreen({
           id: createAppId(),
           revision,
           savedAt: new Date().toISOString(),
+          savedBy: collaboration.user?.displayName?.trim() || "",
           snapshot: JSON.stringify(snapshot),
           note: userNote || autoNote,
         },
       ],
     };
-  }, [revisionChangeNote]);
+  }, [revisionChangeNote, collaboration.user]);
 
   const roomTypeHasRevisionDraftInProject = useCallback((sourceProject: ProjectData, rt: RoomType): boolean => {
     const latest = rt.revisions?.at(-1);
@@ -1789,7 +1790,7 @@ export default function ProjectScreen({
 
   const handleUpdateRevisionMetadata = useCallback((
     revisionIndex: number,
-    patch: Partial<Pick<RoomTypeRevision, "revision" | "savedAt" | "note">>,
+    patch: Partial<Pick<RoomTypeRevision, "revision" | "savedAt" | "savedBy" | "note">>,
   ): void => {
     if (!canEdit) {
       onReadOnlyAction?.();
@@ -3120,6 +3121,7 @@ export default function ProjectScreen({
                 <tr>
                   <th>Revision</th>
                   <th>Saved At</th>
+                  <th>Saved By</th>
                   <th>Update Memo</th>
                   <th>Operation</th>
                 </tr>
@@ -3156,6 +3158,16 @@ export default function ProjectScreen({
                             })
                           }
                           aria-label={`Saved date for revision ${revision.revision || "saved revision"}`}
+                          disabled={!canEdit}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          className="revision-metadata-input"
+                          value={revision.savedBy ?? ""}
+                          placeholder="-"
+                          onChange={(event) => handleUpdateRevisionMetadata(index, { savedBy: event.target.value })}
+                          aria-label={`Saved by for revision ${revision.revision || "saved revision"}`}
                           disabled={!canEdit}
                         />
                       </td>

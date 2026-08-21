@@ -2231,6 +2231,33 @@ body.cfs-top-ui-collapsed .project-screen-shell > .collaboration-bar {
   min-width: 9rem;
 }
 
+.cfs-backlight-color-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.cfs-backlight-color-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+}
+
+.cfs-backlight-color-row input[type="color"] {
+  width: 2rem;
+  height: 1.4rem;
+  padding: 0;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.cfs-backlight-color-name {
+  min-width: 6rem;
+}
+
 /* Read-only CFS sub-window (/cfs-window) */
 .cfs-window-main {
   padding: 0.75rem 1rem 1.5rem;
