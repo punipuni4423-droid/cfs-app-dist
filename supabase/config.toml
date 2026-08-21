@@ -163,7 +163,20 @@ site_url = "http://127.0.0.1:3000"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000", "http://localhost:3014", "http://127.0.0.1:3014"]
+# Keep in sync with the hosted dashboard (Auth > URL Configuration).
+# LAN URLs let tablets on the same network complete Microsoft sign-in;
+# without them Supabase falls back to the Site URL, which dead-ends on
+# the tablet's own 127.0.0.1. Updated 2026-08-21.
+additional_redirect_urls = [
+  "https://127.0.0.1:3000",
+  "http://localhost:4177/**",
+  "http://127.0.0.1:4177/**",
+  "http://192.168.3.2:3014/**",
+  "http://192.168.3.2:3015/**",
+  "http://192.168.3.2:3016/**",
+  "http://localhost:3014/**",
+  "http://127.0.0.1:3014/**",
+]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.
