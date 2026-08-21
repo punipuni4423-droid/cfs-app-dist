@@ -63,6 +63,25 @@ function writeStoredActiveProjectId(projectId: string): void {
   }
 }
 
+function mergeNewerLocalDrafts(serverProjects: ProjectData[]): ProjectData[] {
+  try {
+    const drafts = loadProjectDrafts();
+    if (drafts.length === 0) return serverProjects;
+    const draftById = new Map(drafts.map((draft) => [draft.id, draft]));
+    return serverProjects.map((project) => {
+      const draft = draftById.get(project.id);
+      if (!draft) return project;
+      const serverTime = Date.parse(project.updatedAt ?? "");
+      const draftTime = Date.parse(draft.updatedAt ?? "");
+      const draftIsNewer =
+        Number.isFinite(draftTime) && (!Number.isFinite(serverTime) || draftTime > serverTime);
+      return draftIsNewer ? draft : project;
+    });
+  } catch {
+    return serverProjects;
+  }
+}
+
 function cloneData<T>(source: T): T {
   if (typeof structuredClone === "function") {
     return structuredClone(source);
@@ -358,7 +377,11 @@ export default function Home() {
         skipNextSave.current = true;
         skipNextTrashSave.current = true;
         rememberPersistedProjects(loaded);
-        setProjects(loaded);
+        // Keep browser-draft copies that are newer than the server snapshot:
+        // an auth-churn reload must not silently discard unsaved edits. The
+        // conflict token still tracks the server updatedAt above, so a later
+        // explicit save runs the normal conflict flow.
+        setProjects(mergeNewerLocalDrafts(loaded));
         setTrash(loadedTrash);
         if (timedOut) {
           setLoadError(
@@ -420,12 +443,25 @@ export default function Home() {
       return;
     }
     if (collaboration.sharingMode === "supabase") {
-      if (saveTimer.current) {
-        clearTimeout(saveTimer.current);
+      // Shared mode never auto-uploads drafts to the shared DB (see
+      // docs/SUPABASE_REVISION_SYNC.md), but the draft must still survive a
+      // project reload triggered by transient auth churn. Persist it to the
+      // browser silently; the save-status UI stays driven by explicit saves.
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(() => {
+        try {
+          saveProjectsDraftLocally(projects);
+        } catch {
+          // Browser draft persistence is best-effort.
+        }
         saveTimer.current = null;
-      }
-      setSaveStatus("idle");
-      return;
+      }, 1200);
+      return () => {
+        if (saveTimer.current) {
+          clearTimeout(saveTimer.current);
+          saveTimer.current = null;
+        }
+      };
     }
     if (saveTimer.current) clearTimeout(saveTimer.current);
     setSaveStatus("savingDraft");
