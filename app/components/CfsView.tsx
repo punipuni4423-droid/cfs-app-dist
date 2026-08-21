@@ -95,6 +95,8 @@ interface CfsViewProps {
   programmingNameSettings?: ProgrammingNameSettings;
   onProgrammingNameSettingsChange?: (next: ProgrammingNameSettings) => void;
   onCfsRowDisplayChange?: (next: CfsRowDisplaySettings) => void;
+  // Opens the read-only linked CFS sub-window (button hidden when absent).
+  onOpenExternalWindow?: () => void;
   canEdit?: boolean;
   hasRevisionDraft?: boolean;
   onBeforeInspectionStart?: (choice: InspectionRevisionChoice) => boolean;
@@ -672,6 +674,7 @@ export default function CfsView({
   programmingNameSettings,
   onProgrammingNameSettingsChange,
   onCfsRowDisplayChange,
+  onOpenExternalWindow,
   canEdit = true,
   hasRevisionDraft = false,
   onBeforeInspectionStart,
@@ -3693,14 +3696,26 @@ export default function CfsView({
   function functionValues(row: CfsZoneRow, col: FunctionColumn): string[] {
     const values = rawFunctionValues(row, col);
     if (row.isBacklight) return values;
-    return values.some((value) => value.trim() !== "") ? values : ["-"];
+    if (values.some((value) => value.trim() !== "")) return values;
+    return isPmsUneffectedCell(row, col) ? ["Uneffected"] : ["-"];
+  }
+
+  // From PMS scenes leave zones untouched when no value is entered, so the CFS
+  // cell shows "Uneffected" instead of "-" for rows that could hold a value.
+  function isPmsUneffectedCell(row: CfsZoneRow, col: FunctionColumn): boolean {
+    if (!col.roomScene || !isPmsScene(col.roomScene)) return false;
+    if (row.isCci) return false;
+    if (row.isHvac) return Boolean(row.hvacSettingId);
+    if (row.circuits.length > 0) return true;
+    const targets = rowTargetIds(row);
+    return targets.length > 0 && targets.every(isCcoInspectionTarget);
   }
 
   function hasLinkedValueCell(row: CfsZoneRow, col: FunctionColumn, values: string[]): boolean {
     if (!col.roomScene && !col.source) return false;
     const visibleValue = values.some((value) => {
       const trimmed = value.trim();
-      return trimmed !== "" && trimmed !== "-";
+      return trimmed !== "" && trimmed !== "-" && trimmed !== "Uneffected";
     });
     if (!visibleValue) return false;
     if (row.isBacklight) return Boolean(col.roomScene || col.source);
@@ -3711,7 +3726,7 @@ export default function CfsView({
     if (repairedLinkTargetIds.size === 0) return false;
     const visibleValue = values.some((value) => {
       const trimmed = value.trim();
-      return trimmed !== "" && trimmed !== "-";
+      return trimmed !== "" && trimmed !== "-" && trimmed !== "Uneffected";
     });
     if (!visibleValue) return false;
     return rowTargetIds(row).some((target) => repairedLinkTargetIds.has(target.targetId));
@@ -4506,6 +4521,16 @@ export default function CfsView({
                 title="Open CFS linkage map and diagnostics"
               >
                 Link Map
+              </button>
+            ) : null}
+            {onOpenExternalWindow ? (
+              <button
+                type="button"
+                className="btn btn-secondary cfs-sub-window-trigger"
+                onClick={onOpenExternalWindow}
+                title="Open a read-only linked CFS view in a separate window"
+              >
+                Sub Window
               </button>
             ) : null}
             <button

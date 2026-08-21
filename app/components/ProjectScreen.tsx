@@ -38,6 +38,7 @@ import { useAppSettings } from "../lib/appSettings";
 import { useGridArrowNavigation } from "../lib/useGridArrowNavigation";
 import { buildProjectCircuitSuggestions } from "../lib/projectCircuitSuggestions";
 import { duplicateRoomType } from "../lib/roomTypeCopy";
+import { cfsWindowChannelName, type CfsWindowMessage, type CfsWindowSnapshot } from "../lib/cfsWindowSync";
 import { circuitsForRoomType, inferRoomTypeCircuitIds, normalizeProjectRoomTypeCircuitIds, syncProjectRoomTypeLinks } from "../lib/roomTypeSync";
 import TabsBar, { type TabDef } from "./TabsBar";
 import LocationsView from "./LocationsView";
@@ -580,6 +581,72 @@ export default function ProjectScreen({
     () => project.roomTypes.find((rt) => rt.id === lutronExportRoomTypeId),
     [project.roomTypes, lutronExportRoomTypeId],
   );
+
+  // ---- CFS sub-window sync: broadcast the active room type to the
+  // read-only /cfs-window view (same browser, BroadcastChannel). ----
+  const cfsWindowChannelRef = useRef<BroadcastChannel | null>(null);
+  const cfsWindowSnapshotRef = useRef<CfsWindowSnapshot | null>(null);
+  const programmingNameSettings = project.settings?.programmingName;
+  const cfsWindowSnapshot = useMemo<CfsWindowSnapshot | null>(() => {
+    if (!activeRoomType) return null;
+    return {
+      projectName: project.name,
+      roomType: activeRoomType,
+      circuits: activeRoomTypeCircuits,
+      devices,
+      locations: project.locations,
+      programmingNameSettings,
+      sentAt: Date.now(),
+    };
+  }, [project.name, activeRoomType, activeRoomTypeCircuits, devices, project.locations, programmingNameSettings]);
+
+  useEffect(() => {
+    if (typeof BroadcastChannel === "undefined") return;
+    const channel = new BroadcastChannel(cfsWindowChannelName(project.id));
+    cfsWindowChannelRef.current = channel;
+    channel.onmessage = (event) => {
+      const message = event.data as CfsWindowMessage | undefined;
+      if (message?.type !== "request") return;
+      const snapshot = cfsWindowSnapshotRef.current;
+      if (snapshot) {
+        channel.postMessage({
+          type: "snapshot",
+          snapshot: { ...snapshot, sentAt: Date.now() },
+        } satisfies CfsWindowMessage);
+      }
+    };
+    const ping = window.setInterval(() => {
+      channel.postMessage({ type: "ping" } satisfies CfsWindowMessage);
+    }, 5000);
+    return () => {
+      window.clearInterval(ping);
+      try {
+        channel.postMessage({ type: "closed" } satisfies CfsWindowMessage);
+      } catch {
+        // Channel already torn down by the browser.
+      }
+      channel.close();
+      cfsWindowChannelRef.current = null;
+    };
+  }, [project.id]);
+
+  useEffect(() => {
+    cfsWindowSnapshotRef.current = cfsWindowSnapshot;
+    const channel = cfsWindowChannelRef.current;
+    if (!channel || !cfsWindowSnapshot) return;
+    const timer = window.setTimeout(() => {
+      channel.postMessage({ type: "snapshot", snapshot: cfsWindowSnapshot } satisfies CfsWindowMessage);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [cfsWindowSnapshot]);
+
+  const handleOpenCfsWindow = useCallback(() => {
+    window.open(
+      `/cfs-window?project=${encodeURIComponent(project.id)}`,
+      `cfs-window-${project.id}`,
+      "width=1500,height=900",
+    );
+  }, [project.id]);
 
   useEffect(() => {
     if (!canEdit) return;
@@ -3279,6 +3346,7 @@ export default function ProjectScreen({
               curtainAssignments={activeRoomType.curtainAssignments ?? []}
               hvacAssignments={activeRoomType.hvacAssignments}
               hvacSeasons={activeRoomType.hvacSeasons}
+              backlightLevels={activeRoomType.backlightLevels}
               triggerMasters={triggerMasters}
               onChange={setSwitches}
               revisionChanges={revisionDiff?.switchFields}
@@ -3317,6 +3385,7 @@ export default function ProjectScreen({
                 programmingNameSettings={project.settings?.programmingName}
                 onProgrammingNameSettingsChange={setProgrammingNameSettings}
                 onCfsRowDisplayChange={setCfsRowDisplay}
+                onOpenExternalWindow={handleOpenCfsWindow}
                 canEdit={canEdit}
                 hasRevisionDraft={roomTypeHasRevisionDraft(activeRoomType)}
                 onBeforeInspectionStart={handlePrepareInspectionStart}

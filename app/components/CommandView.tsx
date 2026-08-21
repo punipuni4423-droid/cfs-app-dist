@@ -2,6 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import type {
+  BacklightLevelSetting,
   CircuitEntry,
   CfsCircuit,
   CurtainAssignment,
@@ -15,7 +16,9 @@ import type {
   TriggerMaster,
   RevisionFieldChanges,
 } from "../types";
-import { createEmptySwitchEntry } from "../lib/constants";
+import { createEmptySwitchEntry, normalizeBacklightLevels } from "../lib/constants";
+import { backlightStrongColor } from "../lib/backlightColors";
+import { isPalladiomBacklightTarget } from "../lib/useCfsZoneRows";
 import { useDragReorder } from "../lib/useDragReorder";
 import { selectedSceneIdsForSwitch as selectedSceneIds } from "../lib/cfsValueResolver";
 import AutoGrowTextarea from "./AutoGrowTextarea";
@@ -36,6 +39,7 @@ interface CommandViewProps {
   curtainAssignments?: CurtainAssignment[];
   hvacAssignments?: HvacAssignment[];
   hvacSeasons?: HvacSeason[];
+  backlightLevels?: BacklightLevelSetting[];
   triggerMasters: TriggerMaster[];
   onChange: (next: SwitchEntry[]) => void;
   revisionChanges?: RevisionFieldChanges;
@@ -106,13 +110,17 @@ export default function CommandView({
   curtainAssignments = [],
   hvacAssignments = [],
   hvacSeasons = [],
+  backlightLevels,
   triggerMasters,
   onChange,
   revisionChanges = {},
   canEdit = true,
 }: CommandViewProps) {
   const [expandedCommandIds, setExpandedCommandIds] = useState<Set<string>>(new Set());
+  const [expandedBacklightIds, setExpandedBacklightIds] = useState<Set<string>>(new Set());
   const [expandedAreaKeys, setExpandedAreaKeys] = useState<Set<string>>(new Set());
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkApplyMode, setBulkApplyMode] = useState<"scene" | "backlight" | null>(null);
   const drag = useDragReorder(switches, commitCommands, (sw) => sw.id);
 
   const commands = useMemo(
@@ -195,6 +203,19 @@ export default function CommandView({
     () => buildHvacSettingTargets(hvacAssignments, locations),
     [hvacAssignments, locations],
   );
+  const backlightConditions = useMemo(
+    () => normalizeBacklightLevels(backlightLevels),
+    [backlightLevels],
+  );
+  const byScenePalladiomSwitches = useMemo(() => {
+    const groups = new Map<string, SwitchEntry>();
+    for (const sw of switches) {
+      if (sw.kind !== "lutronPd") continue;
+      const gid = switchGroupId(sw);
+      if (!groups.has(gid)) groups.set(gid, sw);
+    }
+    return Array.from(groups.values()).filter((sw) => isPalladiomBacklightTarget(sw));
+  }, [switches]);
 
   function addCommand(): void {
     commitCommands([...switches, createEmptySwitchEntry("command")]);
@@ -283,6 +304,166 @@ export default function CommandView({
     });
   }
 
+  function toggleBacklight(id: string): void {
+    setExpandedBacklightIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function backlightConditionValue(value: string): string {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed === "-") return "";
+    if (/^light$/i.test(trimmed)) return "";
+    if (/^master\s*on$/i.test(trimmed)) return "masterOn";
+    return backlightConditions.find((level) => level.key === trimmed || level.name === trimmed)?.key ?? trimmed;
+  }
+
+  function backlightConditionLabel(raw: string): string {
+    const key = backlightConditionValue(raw);
+    if (!key) return "";
+    return backlightConditions.find((level) => level.key === key)?.name ?? raw.trim();
+  }
+
+  function startBulkSetting(mode: "scene" | "backlight"): void {
+    const template = commands.find((command) => bulkSelectedIds.has(command.id));
+    if (!template) return;
+    setBulkApplyMode(mode);
+    if (mode === "scene") {
+      setExpandedBacklightIds(new Set());
+      setExpandedCommandIds(new Set([template.id]));
+    } else {
+      setExpandedCommandIds(new Set());
+      setExpandedBacklightIds(new Set([template.id]));
+    }
+  }
+
+  function applyBulkSetting(active: SwitchEntry): void {
+    const mode = bulkApplyMode;
+    if (!mode) return;
+    const ids = new Set(bulkSelectedIds);
+    commitCommands(
+      switches.map((sw) => {
+        if (sw.kind !== "command" || !ids.has(sw.id) || sw.id === active.id) return sw;
+        if (mode === "scene") {
+          return {
+            ...sw,
+            buttonSetting: JSON.parse(JSON.stringify(active.buttonSetting)) as SwitchEntry["buttonSetting"],
+          };
+        }
+        // Condition only: backlightTarget stays per-command (bulk-copying it
+        // would cross-wire target groups, the exact bug fixed on the Switch
+        // tab's bulk apply).
+        return { ...sw, backlightCondition: active.backlightCondition };
+      }),
+    );
+    setBulkApplyMode(null);
+    setBulkSelectedIds(new Set());
+    setExpandedCommandIds(new Set());
+    setExpandedBacklightIds(new Set());
+  }
+
+  function renderBulkApplyBar(mode: "scene" | "backlight", sw: SwitchEntry) {
+    if (bulkApplyMode !== mode) return null;
+    return (
+      <div className="toolbar" style={{ margin: "0.5rem 0.75rem 0" }}>
+        <span className="toolbar-spacer" />
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          disabled={!canEdit}
+          onClick={() => applyBulkSetting(sw)}
+        >
+          Apply to {bulkSelectedIds.size} rows
+        </button>
+      </div>
+    );
+  }
+
+  function renderBacklightPanel(sw: SwitchEntry) {
+    const selectedTargets = new Set(
+      sw.backlightTarget.split(",").map((value) => value.trim()).filter(Boolean),
+    );
+    const updateTargets = (targetId: string, checked: boolean): void => {
+      const next = new Set(selectedTargets);
+      if (checked) next.add(targetId);
+      else next.delete(targetId);
+      update(sw.id, { backlightTarget: Array.from(next).join(",") });
+    };
+    return (
+      <div className="scene-card switch-setting-card">
+        {renderBulkApplyBar("backlight", sw)}
+        <div className="switch-setting-layout switch-backlight-setting-layout">
+          <div className="switch-setting-section">
+            <div className="switch-setting-title">Target</div>
+            <div className="switch-target-list">
+              {byScenePalladiomSwitches.length === 0 ? (
+                <span className="cell-readonly">No By Scene Palladiom switches.</span>
+              ) : (
+                byScenePalladiomSwitches.map((target) => {
+                  const targetId = switchGroupId(target);
+                  return (
+                    <label className="switch-target-option" key={targetId}>
+                      <input
+                        type="checkbox"
+                        checked={selectedTargets.has(targetId)}
+                        onChange={(e) => updateTargets(targetId, e.target.checked)}
+                        disabled={!canEdit}
+                      />
+                      <span>
+                        {[target.switchNumber, target.switchName].filter(Boolean).join(" - ") || "(No switch #)"}
+                      </span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+            {selectedTargets.size > 0 ? (
+              <button
+                type="button"
+                className="btn-clear-circuit"
+                style={{ marginTop: "0.5rem" }}
+                onClick={() => update(sw.id, { backlightTarget: "" })}
+                disabled={!canEdit}
+              >
+                Clear Target
+              </button>
+            ) : null}
+          </div>
+          <div className="switch-setting-section">
+            <div className="switch-setting-title">Condition</div>
+            <select
+              className="cell-input"
+              value={backlightConditionValue(sw.backlightCondition)}
+              onChange={(e) => update(sw.id, { backlightCondition: e.target.value })}
+              disabled={!canEdit}
+            >
+              <option value="" disabled>Uneffected</option>
+              {backlightConditions.map((condition) => (
+                <option key={condition.key} value={condition.key}>
+                  {condition.name}
+                </option>
+              ))}
+            </select>
+            {backlightConditionValue(sw.backlightCondition) ? (
+              <button
+                type="button"
+                className="btn-clear-circuit"
+                style={{ marginTop: "0.5rem" }}
+                onClick={() => update(sw.id, { backlightCondition: "" })}
+                disabled={!canEdit}
+              >
+                Uneffected
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function areaKey(commandId: string, areaId: string): string {
     return `${commandId}:${areaId}`;
   }
@@ -300,6 +481,7 @@ export default function CommandView({
   function renderSettingPanel(sw: SwitchEntry) {
     return (
       <div className="scene-card switch-setting-card">
+        {renderBulkApplyBar("scene", sw)}
         <div className="switch-setting-layout">
           <div className="switch-setting-section switch-setting-scene-section">
             <div className="switch-setting-title">Area Scene</div>
@@ -511,6 +693,30 @@ export default function CommandView({
 
   return (
     <section className="card card-padded fade-in">
+      <div className="toolbar">
+        <span className="toolbar-spacer" />
+        <span className="muted-pill" aria-live="polite">
+          {bulkSelectedIds.size} checked
+        </span>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          disabled={!canEdit || bulkSelectedIds.size === 0}
+          onClick={() => startBulkSetting("scene")}
+          title="Open the setting panel and apply it to every checked row"
+        >
+          Scene Setting
+        </button>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          disabled={!canEdit || bulkSelectedIds.size === 0}
+          onClick={() => startBulkSetting("backlight")}
+          title="Open the backlight setting panel and apply it to every checked row"
+        >
+          Backlight Setting
+        </button>
+      </div>
       <div className="matrix-scroll">
         <table className="matrix-table master-table switch-table">
           <colgroup>
@@ -521,6 +727,8 @@ export default function CommandView({
             <col className="switch-col-name" />
             <col className="switch-col-button-label" />
             <col className="switch-col-condition" />
+            <col className="switch-col-bulk-select" />
+            <col className="switch-col-setting" />
             <col className="switch-col-setting" />
             <col className="switch-col-operation" />
           </colgroup>
@@ -533,14 +741,28 @@ export default function CommandView({
               <th>Switch Name</th>
               <th>Button</th>
               <th>Trigger Condition</th>
+              <th className="col-center switch-bulk-select-header">
+                <input
+                  type="checkbox"
+                  aria-label="Select all rows for bulk setting"
+                  checked={commands.length > 0 && commands.every((command) => bulkSelectedIds.has(command.id))}
+                  disabled={!canEdit || commands.length === 0}
+                  onChange={(event) => {
+                    setBulkSelectedIds(
+                      event.target.checked ? new Set(commands.map((command) => command.id)) : new Set(),
+                    );
+                  }}
+                />
+              </th>
               <th className="col-center">Setting</th>
+              <th className="col-center">Backlight Setting</th>
               <th className="col-center">Operation</th>
             </tr>
           </thead>
           <tbody>
             {commands.length === 0 ? (
               <tr>
-                <td colSpan={9} className="screen-empty">
+                <td colSpan={11} className="screen-empty">
                   No commands are registered. Add a row below.
                 </td>
               </tr>
@@ -637,6 +859,22 @@ export default function CommandView({
                           disabled={!canEdit}
                         />
                       </td>
+                      <td className="col-center switch-bulk-select-cell">
+                        <input
+                          type="checkbox"
+                          aria-label="Select row for bulk setting"
+                          checked={bulkSelectedIds.has(command.id)}
+                          disabled={!canEdit}
+                          onChange={(event) => {
+                            setBulkSelectedIds((current) => {
+                              const next = new Set(current);
+                              if (event.target.checked) next.add(command.id);
+                              else next.delete(command.id);
+                              return next;
+                            });
+                          }}
+                        />
+                      </td>
                       <td className={`col-center ${revisionCellClass(command.id, ["buttonSetting"])}`}>
                         <button
                           type="button"
@@ -645,6 +883,29 @@ export default function CommandView({
                         >
                           {expanded ? "Close" : "Setting"}
                         </button>
+                      </td>
+                      <td className={`col-center ${revisionCellClass(command.id, ["backlightTarget", "backlightCondition"])}`}>
+                        {(() => {
+                          const label = backlightConditionLabel(command.backlightCondition);
+                          const strong = label ? backlightStrongColor(label) : null;
+                          const blExpanded = expandedBacklightIds.has(command.id);
+                          return (
+                            <button
+                              type="button"
+                              className={[
+                                "btn",
+                                "btn-primary",
+                                "btn-sm",
+                                "setting-status-button",
+                                label || command.backlightTarget.trim() ? "has-setting" : "",
+                              ].filter(Boolean).join(" ")}
+                              style={strong ? { backgroundColor: strong, borderColor: strong, color: "#fff" } : undefined}
+                              onClick={() => toggleBacklight(command.id)}
+                            >
+                              {blExpanded ? "Close" : label || "Setting"}
+                            </button>
+                          );
+                        })()}
                       </td>
                       <td className="col-center">
                         <ActionIconButton
@@ -665,8 +926,15 @@ export default function CommandView({
                     </tr>
                     {expanded ? (
                       <tr className="switch-setting-row">
-                        <td colSpan={9} style={{ padding: 0 }}>
+                        <td colSpan={11} style={{ padding: 0 }}>
                           {renderSettingPanel(command)}
+                        </td>
+                      </tr>
+                    ) : null}
+                    {expandedBacklightIds.has(command.id) ? (
+                      <tr className="switch-setting-row">
+                        <td colSpan={11} style={{ padding: 0 }}>
+                          {renderBacklightPanel(command)}
                         </td>
                       </tr>
                     ) : null}
@@ -677,7 +945,7 @@ export default function CommandView({
           </tbody>
           <tfoot>
             <tr className="add-row-tr">
-              <td colSpan={9}>
+              <td colSpan={11}>
                 <button className="btn-add-row" onClick={addCommand} disabled={!canEdit}>
                   + Add Row
                 </button>
