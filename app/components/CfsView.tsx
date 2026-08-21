@@ -1709,21 +1709,30 @@ export default function CfsView({
     return ids;
   }, [visibleFunctionColumns]);
 
+  // Header rows 2-4 merge ADJACENT cells with the same displayed text inside
+  // the same switch block, so shared labels render once and only the level
+  // where values diverge splits into separate cells (e.g. two From PMS scenes
+  // share one "From PMS" cell and one scene-name cell, branching only at the
+  // trigger-condition row). Merging is display-based on purpose: distinct
+  // scenes/switches with identical labels read as one shared branch.
   const buttonHeaderGroups = useMemo(() => {
-    const groups: Array<{ key: string; colSpan: number; button: string; startsSwitchGroup: boolean }> = [];
+    const groups: Array<{ key: string; colSpan: number; button: string; startsSwitchGroup: boolean; cols: FunctionColumn[] }> = [];
     let previousSwitchKey: string | null = null;
     for (const col of visibleFunctionColumns) {
       const startsSwitchGroup = col.switchGroupKey !== previousSwitchKey;
       previousSwitchKey = col.switchGroupKey;
+      const key = `${col.switchGroupKey}\u0000${col.button.trim() || "-"}`;
       const current = groups.at(-1);
-      if (current && current.key === col.buttonKey) {
+      if (current && current.key === key) {
         current.colSpan += 1;
+        current.cols.push(col);
       } else {
         groups.push({
-          key: col.buttonKey,
+          key,
           colSpan: 1,
           button: col.button,
           startsSwitchGroup,
+          cols: [col],
         });
       }
     }
@@ -1737,15 +1746,17 @@ export default function CfsView({
       kind: FunctionColumn["kind"];
       pirLabels?: string[];
       startsSwitchGroup?: boolean;
+      cols: FunctionColumn[];
     }> = [];
     let previousSwitchKey: string | null = null;
     for (const col of visibleFunctionColumns) {
       const startsSwitchGroup = col.switchGroupKey !== previousSwitchKey;
       previousSwitchKey = col.switchGroupKey;
-      const key = `${col.buttonKey}\u0000${col.functionName.trim() || "-"}`;
+      const key = `${col.switchGroupKey}\u0000${col.button.trim() || "-"}\u0000${col.functionName.trim() || "-"}\u0000${(col.pirLabels ?? []).join("|")}`;
       const current = groups.at(-1);
       if (current && current.key === key) {
         current.colSpan += 1;
+        current.cols.push(col);
       } else {
         groups.push({
           key,
@@ -1754,6 +1765,30 @@ export default function CfsView({
           functionName: col.functionName,
           kind: col.kind,
           pirLabels: col.pirLabels,
+          cols: [col],
+        });
+      }
+    }
+    return groups;
+  }, [visibleFunctionColumns]);
+  const conditionHeaderGroups = useMemo(() => {
+    const groups: Array<{ key: string; colSpan: number; condition: string; startsSwitchGroup: boolean; cols: FunctionColumn[] }> = [];
+    let previousSwitchKey: string | null = null;
+    for (const col of visibleFunctionColumns) {
+      const startsSwitchGroup = col.switchGroupKey !== previousSwitchKey;
+      previousSwitchKey = col.switchGroupKey;
+      const key = `${col.switchGroupKey}\u0000${col.button.trim() || "-"}\u0000${col.functionName.trim() || "-"}\u0000${(col.pirLabels ?? []).join("|")}\u0000${col.condition.trim() || "-"}`;
+      const current = groups.at(-1);
+      if (current && current.key === key) {
+        current.colSpan += 1;
+        current.cols.push(col);
+      } else {
+        groups.push({
+          key,
+          colSpan: 1,
+          condition: col.condition,
+          startsSwitchGroup,
+          cols: [col],
         });
       }
     }
@@ -2388,18 +2423,21 @@ export default function CfsView({
       });
       headerCol += group.colSpan;
     }
-    visibleFunctionColumns.forEach((col, index) => {
+    headerCol = visibleBaseColumns.length + 1;
+    for (const group of conditionHeaderGroups) {
       cells.push({
         row: 4,
-        col: visibleBaseColumns.length + index + 1,
-        value: splitHeaderText(col.condition || "-"),
-        fill: isPriorityTriggerColumn(col)
+        col: headerCol,
+        value: splitHeaderText(group.condition || "-"),
+        colSpan: group.colSpan,
+        fill: group.cols.some(isPriorityTriggerColumn)
           ? { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFE08A" } }
           : headerFill,
         bold: true,
         horizontal: "center",
       });
-    });
+      headerCol += group.colSpan;
+    }
 
     if (displayedRows.length === 0) {
       cells.push({
@@ -4830,12 +4868,9 @@ export default function CfsView({
                 <th
                   key={`${group.key}-${index}`}
                   className={`cfs-function-head cfs-button-head${group.startsSwitchGroup ? " cfs-switch-group-start" : ""}${
-                    hasChangedGroupedFunctionFields(group.key, (col) => col.buttonKey, [
-                      "buttonLabel",
-                      "allocation",
-                      "buttonCount",
-                      "phase",
-                    ])
+                    group.cols.some((col) =>
+                      hasChangedFunctionColumnFields(col, ["buttonLabel", "allocation", "buttonCount", "phase"]),
+                    )
                       ? " revision-changed-cell"
                       : ""
                   }`}
@@ -4851,12 +4886,9 @@ export default function CfsView({
                 <th
                   key={`${group.key}-${index}`}
                   className={`cfs-function-head cfs-function-name-head${group.startsSwitchGroup ? " cfs-switch-group-start" : ""}${
-                    hasChangedGroupedFunctionFields(group.key, (col) => `${col.buttonKey}\u0000${col.functionName.trim() || "-"}`, [
-                      "buttonFunction",
-                      "kind",
-                      "sceneType",
-                      "detail",
-                    ])
+                    group.cols.some((col) =>
+                      hasChangedFunctionColumnFields(col, ["buttonFunction", "kind", "sceneType", "detail"]),
+                    )
                       ? " revision-changed-cell"
                       : ""
                   }`}
@@ -4883,23 +4915,29 @@ export default function CfsView({
               <th className="cfs-scroll-end-inline-cell" aria-hidden="true" />
             </tr>
             <tr>
-              {visibleFunctionColumns.map((col) => (
-                <th
-                  key={`${col.id}-condition`}
-                  className={`cfs-function-head cfs-condition-head${switchGroupStartColIds.has(col.id) ? " cfs-switch-group-start" : ""}${
-                    isPriorityTriggerColumn(col) ? " cfs-priority-trigger-cell" : ""
-                  }${
-                    hasLinkIssueFunctionColumn(col) ? " cfs-link-error-cell" : ""
-                  }${
-                    hasChangedFunctionColumnFields(col, ["condition", "isPriorityFunction", "triggerCondition"])
-                      ? " revision-changed-cell"
-                      : ""
-                  }`}
-                  title={isPriorityTriggerColumn(col) ? "Priority function trigger" : undefined}
-                >
-                  <HeaderSplitText value={col.condition || "-"} />
-                </th>
-              ))}
+              {conditionHeaderGroups.map((group, index) => {
+                const isPriority = group.cols.some(isPriorityTriggerColumn);
+                return (
+                  <th
+                    key={`${group.key}-${index}`}
+                    colSpan={group.colSpan}
+                    className={`cfs-function-head cfs-condition-head${group.startsSwitchGroup ? " cfs-switch-group-start" : ""}${
+                      isPriority ? " cfs-priority-trigger-cell" : ""
+                    }${
+                      group.cols.some(hasLinkIssueFunctionColumn) ? " cfs-link-error-cell" : ""
+                    }${
+                      group.cols.some((col) =>
+                        hasChangedFunctionColumnFields(col, ["condition", "isPriorityFunction", "triggerCondition"]),
+                      )
+                        ? " revision-changed-cell"
+                        : ""
+                    }`}
+                    title={isPriority ? "Priority function trigger" : undefined}
+                  >
+                    <HeaderSplitText value={group.condition || "-"} />
+                  </th>
+                );
+              })}
               <th className="cfs-scroll-end-inline-cell" aria-hidden="true" />
             </tr>
           </thead>
