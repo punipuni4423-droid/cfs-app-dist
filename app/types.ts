@@ -47,6 +47,8 @@ export interface RoomTypeRevision {
   id: string;
   revision: string;
   savedAt: string;
+  // Display name of the user who saved the revision ("" for legacy entries).
+  savedBy?: string;
   snapshot: string;
   note: string;
 }
