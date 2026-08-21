@@ -208,11 +208,13 @@ export default function BacklightView({
       <div className="matrix-scroll">
         <table className="matrix-table master-table switch-table">
           <colgroup>
+            {/* Exactly one col per column: an extra col here shifted every
+                width by one, squeezing Mode into the Operation width and
+                pushing its select over the Active % field. */}
             <col className="table-col-drag" />
             <col className="table-col-no" />
             <col />
-            <col className="switch-col-operation" />
-            <col />
+            <col className="backlight-col-mode" />
             <col />
             <col />
             <col className="switch-col-operation" />
