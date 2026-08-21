@@ -103,3 +103,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-cfs-git-manage
 ```
 
 distの履歴は線形(fast-forward)を維持すること。ZIP内の`.git`はdistのクリーン履歴のみを含み、cfs-appのprivate履歴を含まないことをリリース前に確認する。
+
+更新経路の動作確認: 2026-08-21 配布リポジトリ経由のアップデート配信テスト。
