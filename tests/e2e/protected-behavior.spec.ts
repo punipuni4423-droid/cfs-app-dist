@@ -1148,9 +1148,9 @@ test.describe("Protected CFS behaviors", () => {
     await expect(firstCircuitCell).toContainText("Arrival");
     await expect(firstCircuitCell).toContainText("55%");
     await expect(cfsRows.filter({ hasText: "Scene Link DL 2" }).first().locator("td.cfs-function-cell").first()).toContainText("66%");
-    // From PMS scenes leave untouched zones as "Uneffected" (2026-08-21
-    // display change), not "-".
-    await expect(cfsRows.filter({ hasText: "Scene Link DL 3" }).first().locator("td.cfs-function-cell").first()).toHaveText("Uneffected");
+    // Unset cells stay "-" even when the scene has a name: the dash means
+    // "nothing operates here" (2026-08-22 decision, Uneffected label rejected).
+    await expect(cfsRows.filter({ hasText: "Scene Link DL 3" }).first().locator("td.cfs-function-cell").first()).toHaveText("-");
 
     const functionCellTexts = await cfsRows.locator("td.cfs-function-cell").evaluateAll((cells) =>
       cells.map((cell) => cell.textContent?.trim() ?? ""),

@@ -3693,29 +3693,20 @@ export default function CfsView({
     return row.circuits.flatMap((item) => cellValues(col.source!, item.circuit, scenesById, showAreaSceneNames));
   }
 
+  // Cells a scene names but does not set stay "-": the dash means "nothing
+  // operates here" (2026-08-22 decision — an "Uneffected" label was tried and
+  // rejected).
   function functionValues(row: CfsZoneRow, col: FunctionColumn): string[] {
     const values = rawFunctionValues(row, col);
     if (row.isBacklight) return values;
-    if (values.some((value) => value.trim() !== "")) return values;
-    return isPmsUneffectedCell(row, col) ? ["Uneffected"] : ["-"];
-  }
-
-  // From PMS scenes leave zones untouched when no value is entered, so the CFS
-  // cell shows "Uneffected" instead of "-" for rows that could hold a value.
-  function isPmsUneffectedCell(row: CfsZoneRow, col: FunctionColumn): boolean {
-    if (!col.roomScene || !isPmsScene(col.roomScene)) return false;
-    if (row.isCci) return false;
-    if (row.isHvac) return Boolean(row.hvacSettingId);
-    if (row.circuits.length > 0) return true;
-    const targets = rowTargetIds(row);
-    return targets.length > 0 && targets.every(isCcoInspectionTarget);
+    return values.some((value) => value.trim() !== "") ? values : ["-"];
   }
 
   function hasLinkedValueCell(row: CfsZoneRow, col: FunctionColumn, values: string[]): boolean {
     if (!col.roomScene && !col.source) return false;
     const visibleValue = values.some((value) => {
       const trimmed = value.trim();
-      return trimmed !== "" && trimmed !== "-" && trimmed !== "Uneffected";
+      return trimmed !== "" && trimmed !== "-";
     });
     if (!visibleValue) return false;
     if (row.isBacklight) return Boolean(col.roomScene || col.source);
@@ -3726,7 +3717,7 @@ export default function CfsView({
     if (repairedLinkTargetIds.size === 0) return false;
     const visibleValue = values.some((value) => {
       const trimmed = value.trim();
-      return trimmed !== "" && trimmed !== "-" && trimmed !== "Uneffected";
+      return trimmed !== "" && trimmed !== "-";
     });
     if (!visibleValue) return false;
     return rowTargetIds(row).some((target) => repairedLinkTargetIds.has(target.targetId));
