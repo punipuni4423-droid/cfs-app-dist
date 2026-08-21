@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { backlightPaleColor } from "../lib/backlightColors";
 import CfsLinkMapPanel from "./CfsLinkMapPanel";
 import type {
   CircuitEntry,
@@ -5118,9 +5119,26 @@ export default function CfsView({
                         inspectionMode &&
                         inspectionPasteTarget?.rowId === row.id &&
                         inspectionPasteTarget.colId === col.id;
+                      // Pale per-value tint for Backlight Logic cells. Inline
+                      // style would mask highlight classes, so skip it when a
+                      // highlight state owns the cell background.
+                      let backlightTint: CSSProperties | undefined;
+                      if (
+                        row.isBacklight &&
+                        !inspectionMode &&
+                        !hasChangedFunctionCell(row, col) &&
+                        !isAreaSceneValue &&
+                        !hasInspectionMark &&
+                        !isLinkIssueCell
+                      ) {
+                        const tintValue = values.find((value) => value.trim() !== "" && value.trim() !== "-");
+                        const pale = tintValue ? backlightPaleColor(tintValue) : null;
+                        if (pale) backlightTint = { backgroundColor: pale };
+                      }
                       return (
                         <td
                           key={col.id}
+                          style={backlightTint}
                           className={`cfs-function-cell${switchGroupStartColIds.has(col.id) ? " cfs-switch-group-start" : ""}${hasChangedFunctionCell(row, col) ? " revision-changed-cell" : ""}${
                             isAreaSceneValue ? " cfs-area-scene-value-cell" : ""
                           }${

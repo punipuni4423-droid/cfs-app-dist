@@ -38,6 +38,7 @@ import {
 import HvacSettingPanel from "./HvacSettingPanel";
 import CurtainActionButtons from "./CurtainActionButtons";
 import { createAppId } from '../lib/id';
+import { backlightStrongColor } from "../lib/backlightColors";
 
 interface RoomSceneViewProps {
   roomScenes: RoomScene[];
@@ -129,6 +130,8 @@ export default function RoomSceneView({
   const [expandedBacklightId, setExpandedBacklightId] = useState<string>("");
   const [expandedAreaKeys, setExpandedAreaKeys] = useState<Set<string>>(new Set());
   const [areaBulkValues, setAreaBulkValues] = useState<Record<string, string>>({});
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkApplyMode, setBulkApplyMode] = useState<"scene" | "backlight" | null>(null);
 
   useEffect(() => {
     const next = ensureRoomScenes(roomScenes);
@@ -314,6 +317,115 @@ export default function RoomSceneView({
   function closeSettingOverlay(): void {
     setExpandedId("");
     setExpandedBacklightId("");
+    setBulkApplyMode(null);
+  }
+
+  function startBulkSetting(mode: "scene" | "backlight"): void {
+    const template = effectiveRoomScenes.find((scene) => bulkSelectedIds.has(scene.id));
+    if (!template) return;
+    setBulkApplyMode(mode);
+    if (mode === "scene") openSceneSetting(template);
+    else openBacklightSetting(template);
+  }
+
+  function applyBulkSetting(active: RoomScene): void {
+    const mode = bulkApplyMode;
+    if (!mode) return;
+    const ids = new Set(bulkSelectedIds);
+    commitRoomScenes(
+      effectiveRoomScenes.map((scene) => {
+        if (!ids.has(scene.id) || scene.id === active.id) return scene;
+        if (mode === "scene") {
+          return {
+            ...scene,
+            settings: active.settings.map((setting) => ({ ...setting })),
+            areaSceneSelections: (active.areaSceneSelections ?? []).map((selection) => ({ ...selection })),
+          };
+        }
+        // Backlight bulk copies the per-scene condition only; the Palladiom
+        // group assignment (backlightAssignment) is never touched here.
+        return { ...scene, backlightCondition: active.backlightCondition };
+      }),
+    );
+    setBulkApplyMode(null);
+    setBulkSelectedIds(new Set());
+    closeSettingOverlay();
+  }
+
+  function toggleBulkSelected(sceneId: string, checked: boolean): void {
+    setBulkSelectedIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(sceneId);
+      else next.delete(sceneId);
+      return next;
+    });
+  }
+
+  function toggleBulkSelectAll(tableScenes: RoomScene[], checked: boolean): void {
+    setBulkSelectedIds((current) => {
+      const next = new Set(current);
+      for (const scene of tableScenes) {
+        if (checked) next.add(scene.id);
+        else next.delete(scene.id);
+      }
+      return next;
+    });
+  }
+
+  function backlightConditionLabel(raw: string): string {
+    const value = raw.trim();
+    if (!value) return "";
+    const matched = backlightConditions.find((condition) => condition.key === value || condition.name === value);
+    return matched ? matched.name : value;
+  }
+
+  function renderBacklightStatusButton(scene: RoomScene): ReactNode {
+    const label = backlightConditionLabel(scene.backlightCondition);
+    const strong = label ? backlightStrongColor(label) : null;
+    return (
+      <button
+        type="button"
+        className={[
+          "btn",
+          "btn-primary",
+          "btn-sm",
+          "setting-status-button",
+          sceneHasBacklight(scene) ? "has-setting" : "",
+        ].filter(Boolean).join(" ")}
+        style={strong ? { backgroundColor: strong, borderColor: strong, color: "#fff" } : undefined}
+        onClick={() => openBacklightSetting(scene)}
+      >
+        {label || "Setting"}
+      </button>
+    );
+  }
+
+  function renderBulkSelectHeader(tableScenes: RoomScene[]): ReactNode {
+    return (
+      <th className="col-center switch-bulk-select-header">
+        <input
+          type="checkbox"
+          aria-label="Select all rows for bulk setting"
+          checked={tableScenes.length > 0 && tableScenes.every((scene) => bulkSelectedIds.has(scene.id))}
+          disabled={!canEdit || tableScenes.length === 0}
+          onChange={(event) => toggleBulkSelectAll(tableScenes, event.target.checked)}
+        />
+      </th>
+    );
+  }
+
+  function renderBulkSelectCell(scene: RoomScene): ReactNode {
+    return (
+      <td className="col-center switch-bulk-select-cell">
+        <input
+          type="checkbox"
+          aria-label="Select row for bulk setting"
+          checked={bulkSelectedIds.has(scene.id)}
+          disabled={!canEdit}
+          onChange={(event) => toggleBulkSelected(scene.id, event.target.checked)}
+        />
+      </td>
+    );
   }
 
   useEffect(() => {
@@ -642,6 +754,30 @@ export default function RoomSceneView({
 
   return (
     <section className="card card-padded fade-in">
+      <div className="toolbar room-scene-bulk-toolbar">
+        <span className="toolbar-spacer" />
+        <span className="muted-pill" aria-live="polite">
+          {bulkSelectedIds.size} checked
+        </span>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          disabled={!canEdit || bulkSelectedIds.size === 0}
+          onClick={() => startBulkSetting("scene")}
+          title="Open the scene setting panel and apply it to every checked row"
+        >
+          Scene Setting
+        </button>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          disabled={!canEdit || bulkSelectedIds.size === 0}
+          onClick={() => startBulkSetting("backlight")}
+          title="Open the backlight setting panel and apply it to every checked row"
+        >
+          Backlight Setting
+        </button>
+      </div>
       <div className="scene-section-title">From PMS Scene</div>
       <div className="table-shell">
         <table className="matrix-table switch-table room-scene-table room-scene-pms-table">
@@ -655,6 +791,7 @@ export default function RoomSceneView({
               <th>No</th>
               <th>PMS Scene</th>
               <th>Trigger Condition</th>
+              {renderBulkSelectHeader(pmsScenes)}
               <th>Setting</th>
               <th>Backlight Setting</th>
               <th>Operation</th>
@@ -663,7 +800,7 @@ export default function RoomSceneView({
           <tbody>
             {pmsScenes.length === 0 ? (
               <tr>
-                <td colSpan={7} className="screen-empty">No From PMS scenes are registered.</td>
+                <td colSpan={8} className="screen-empty">No From PMS scenes are registered.</td>
               </tr>
             ) : (
               pmsScenes.map((scene, rowIndex) => {
@@ -706,6 +843,7 @@ export default function RoomSceneView({
                           disabled={!canEdit}
                         />
                       </td>
+                      {renderBulkSelectCell(scene)}
                       <td className={`col-center ${revisionCellClass(scene.id, ["settings"])}`}>
                         <button
                           type="button"
@@ -722,19 +860,7 @@ export default function RoomSceneView({
                         </button>
                       </td>
                       <td className={`col-center ${revisionCellClass(scene.id, ["backlightCondition"])}`}>
-                        <button
-                          type="button"
-                          className={[
-                            "btn",
-                            "btn-primary",
-                            "btn-sm",
-                            "setting-status-button",
-                            sceneHasBacklight(scene) ? "has-setting" : "",
-                          ].filter(Boolean).join(" ")}
-                          onClick={() => openBacklightSetting(scene)}
-                        >
-                          Setting
-                        </button>
+                        {renderBacklightStatusButton(scene)}
                       </td>
                       <td className="col-center">
                         <ActionIconButton
@@ -760,7 +886,7 @@ export default function RoomSceneView({
           </tbody>
           <tfoot>
             <tr className="add-row-tr">
-              <td colSpan={7}>
+              <td colSpan={8}>
                 <button className="btn-add-row" onClick={addPmsScene} title="Add PMS row" disabled={!canEdit}>
                   + Add PMS Row
                 </button>
@@ -783,6 +909,7 @@ export default function RoomSceneView({
               <th>Room Status</th>
               <th>Scene Name</th>
               <th>Trigger Condition</th>
+              {renderBulkSelectHeader(standardScenes)}
               <th>Setting</th>
               <th>Backlight Setting</th>
               <th>Operation</th>
@@ -842,6 +969,7 @@ export default function RoomSceneView({
                         disabled={!canEdit}
                       />
                     </td>
+                    {renderBulkSelectCell(scene)}
                     <td className={`col-center ${revisionCellClass(scene.id, ["settings"])}`}>
                       <button
                         type="button"
@@ -858,19 +986,7 @@ export default function RoomSceneView({
                       </button>
                     </td>
                     <td className={`col-center ${revisionCellClass(scene.id, ["backlightCondition"])}`}>
-                      <button
-                        type="button"
-                        className={[
-                          "btn",
-                          "btn-primary",
-                          "btn-sm",
-                          "setting-status-button",
-                          sceneHasBacklight(scene) ? "has-setting" : "",
-                        ].filter(Boolean).join(" ")}
-                        onClick={() => openBacklightSetting(scene)}
-                      >
-                        Setting
-                      </button>
+                      {renderBacklightStatusButton(scene)}
                     </td>
                     <td className="col-center">
                       <ActionIconButton
@@ -895,7 +1011,7 @@ export default function RoomSceneView({
           </tbody>
           <tfoot>
             <tr className="add-row-tr">
-              <td colSpan={8}>
+              <td colSpan={9}>
                 <button className="btn-add-row" onClick={addScene} title="Add row" disabled={!canEdit}>
                   + Add Row
                 </button>
@@ -935,6 +1051,16 @@ export default function RoomSceneView({
                   >
                     Backlight
                   </button>
+                  {bulkApplyMode ? (
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      disabled={!canEdit}
+                      onClick={() => applyBulkSetting(active)}
+                    >
+                      Apply to {bulkSelectedIds.size} rows
+                    </button>
+                  ) : null}
                   <button type="button" className="btn btn-danger-ghost" onClick={closeSettingOverlay}>
                     Close
                   </button>
