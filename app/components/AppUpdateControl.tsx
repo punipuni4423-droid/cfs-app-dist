@@ -56,6 +56,7 @@ const STEP_LABELS: Record<string, string> = {
   done: "Completed",
   failed: "Failed",
   launch: "Launching updater",
+  "offline-install-build": "Installing / building",
 };
 
 const STEP_PROGRESS: Record<string, number> = {
@@ -83,6 +84,7 @@ const STEP_CEILING: Record<string, number> = {
   build: 94,
   restart: 99,
   launch: 5,
+  "offline-install-build": 94,
 };
 
 // Typical step durations in seconds, used to animate progress inside a step so
@@ -101,6 +103,12 @@ const STEP_EXPECTED_SECONDS: Record<string, number> = {
 };
 
 const STEP_DURATIONS_KEY = "cfs-update-step-seconds-v1";
+
+// Synthetic step shown while the server is unreachable mid-update. The server
+// only goes offline from the install step onward, so when the connection drops
+// with an earlier (or unknown) last step, the truthful display is "somewhere
+// in install/build", not the stale pre-offline step.
+const OFFLINE_STEP = "offline-install-build";
 
 function loadLearnedDurations(): Record<string, number> {
   try {
@@ -128,6 +136,9 @@ function saveLearnedDuration(step: string, seconds: number): void {
 }
 
 function expectedStepSeconds(step: string): number {
+  if (step === OFFLINE_STEP) {
+    return expectedStepSeconds("npm-install") + expectedStepSeconds("build");
+  }
   const learned = loadLearnedDurations()[step];
   return learned ?? STEP_EXPECTED_SECONDS[step] ?? 30;
 }
@@ -328,7 +339,22 @@ export default function AppUpdateControl() {
         gitPath: statusRef.current?.gitPath,
         // Keep the last progress the server reported before it went offline so
         // the overlay shows the real step instead of a fake near-complete bar.
-        lastRun: statusRef.current?.lastRun,
+        // The server only goes offline from the install step onward, so when
+        // the last known step is earlier (the 2s poll can miss the quick
+        // pull->install transition), upgrade the display to the offline
+        // install/build phase instead of showing a stale early step.
+        lastRun: (() => {
+          const carried = statusRef.current?.lastRun;
+          if (!updateSessionActiveRef.current) return carried;
+          if (carried && (carried.progress ?? 0) >= STEP_PROGRESS["npm-install"]) return carried;
+          return {
+            state: "running",
+            currentStep: OFFLINE_STEP,
+            progress: STEP_PROGRESS["npm-install"],
+            message: carried?.message,
+            updatedAt: carried?.updatedAt,
+          };
+        })(),
       };
       if (updateSessionActiveRef.current && disconnectedSinceRef.current !== null) {
         setStalled(Date.now() - disconnectedSinceRef.current > STALL_THRESHOLD_MS);
