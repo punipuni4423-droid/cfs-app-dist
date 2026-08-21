@@ -370,11 +370,13 @@ try {
   # build stays valid. Skip install/build/restart and just stamp the new SHA
   # into the shipped build info so the status check reports "current".
   if ($beforeSha -ne $afterSha -and -not $dependenciesChanged) {
-    $changedFiles = @(& $gitExe -C $repoRoot diff --name-only $beforeSha $afterSha) |
-      Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+    # Wrap the whole pipeline in @(): a single-item pipeline result is a scalar
+    # whose .Count access fails under StrictMode.
+    $changedFiles = @(@(& $gitExe -C $repoRoot diff --name-only $beforeSha $afterSha) |
+      Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
     $docsOnlyPattern = '^(docs/|Manual/)|^[^/]+\.md$'
     $nonDocChanges = @($changedFiles | Where-Object { [string]$_ -notmatch $docsOnlyPattern })
-    if ($changedFiles.Count -gt 0 -and $nonDocChanges.Count -eq 0) {
+    if (@($changedFiles).Count -gt 0 -and @($nonDocChanges).Count -eq 0) {
       Write-Log ("Docs-only update ({0} file(s)); skipping install, build, and restart." -f $changedFiles.Count)
       foreach ($buildInfoRelative in @(".cfs-build-info.json", "runtime\.cfs-build-info.json")) {
         $buildInfoPath = Join-Path $appPath $buildInfoRelative
