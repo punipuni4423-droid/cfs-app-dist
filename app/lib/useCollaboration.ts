@@ -72,7 +72,6 @@ export interface CollaborationController extends CollaborationClientState {
   closeUserDialog: () => void;
   saveUser: (profile: { displayName: string; email: string }) => Promise<void>;
   requestMicrosoftSignIn: (emailHint?: string) => Promise<void>;
-  signInWithPassword: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   openMembersDialog: () => Promise<void>;
   closeMembersDialog: () => void;
@@ -635,31 +634,6 @@ export function useCollaboration(projectId = ""): CollaborationController {
     }
   }, []);
 
-  const signInWithPassword = useCallback(async (email: string, password: string): Promise<void> => {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail || !password) {
-      window.alert("Enter the admin email address and password.");
-      return;
-    }
-    const supabase = supabaseRef.current;
-    if (!supabase) {
-      window.alert("Secure sign-in is not ready yet.");
-      return;
-    }
-    setState((current) => ({ ...current, busy: true, message: "Signing in." }));
-    try {
-      const { error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
-      if (error) throw error;
-      setState((current) => ({ ...current, busy: false, userDialogOpen: false, message: "" }));
-    } catch (error) {
-      setState((current) => ({
-        ...current,
-        busy: false,
-        message: error instanceof Error ? error.message : "Could not sign in with password.",
-      }));
-    }
-  }, []);
-
   const signOut = useCallback(async (): Promise<void> => {
     try {
       if (stateRef.current.mode === "edit") {
@@ -938,7 +912,6 @@ export function useCollaboration(projectId = ""): CollaborationController {
     closeUserDialog,
     saveUser,
     requestMicrosoftSignIn,
-    signInWithPassword,
     signOut,
     openMembersDialog,
     closeMembersDialog,

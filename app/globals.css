@@ -302,21 +302,6 @@ body {
   box-shadow: 0 24px 68px rgba(15, 23, 42, 0.24);
 }
 
-.collaboration-admin-signin-toggle {
-  justify-self: start;
-  border: none;
-  background: none;
-  padding: 0;
-  font-size: 0.78rem;
-  color: var(--color-text-muted, #64748b);
-  text-decoration: underline;
-  cursor: pointer;
-}
-
-.collaboration-admin-signin-toggle:hover {
-  color: var(--color-accent, #0f766e);
-}
-
 .collaboration-user-modal .modal-header {
   display: flex;
   align-items: flex-start;
