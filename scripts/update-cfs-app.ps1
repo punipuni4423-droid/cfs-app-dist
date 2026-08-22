@@ -383,6 +383,28 @@ try {
 
   Write-UpdateStatus -State "running" -Step "git-pull" -Message "Applying Git update." -Progress 40 -BackupPath $backupPath
   if ($behind -gt 0) {
+    # An interrupted update can leave files the incoming commits ADD sitting
+    # untracked in the working tree, which aborts "pull --ff-only". Move such
+    # files aside (kept under artifacts\self-update) instead of failing.
+    $incomingAdded = @(& $gitExe -C $repoRoot diff --name-only --diff-filter=A "HEAD..@{u}" 2>$null)
+    if (@($incomingAdded).Count -gt 0) {
+      $untrackedFiles = @(& $gitExe -C $repoRoot ls-files --others --exclude-standard)
+      $conflicting = @($incomingAdded | Where-Object { $untrackedFiles -contains $_ })
+      if (@($conflicting).Count -gt 0) {
+        $untrackedBackupDir = Join-Path $artifactDir ("untracked-backup-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+        foreach ($relPath in @($conflicting)) {
+          $sourcePath = Join-Path $repoRoot $relPath
+          if (-not (Test-Path -LiteralPath $sourcePath)) { continue }
+          $targetPath = Join-Path $untrackedBackupDir $relPath
+          $targetParent = Split-Path -Parent $targetPath
+          if (-not (Test-Path -LiteralPath $targetParent)) {
+            New-Item -ItemType Directory -Path $targetParent -Force | Out-Null
+          }
+          Move-Item -LiteralPath $sourcePath -Destination $targetPath -Force
+          Write-Log "Moved untracked file blocking the update: $relPath -> $untrackedBackupDir"
+        }
+      }
+    }
     Invoke-LoggedCommand -FilePath $gitExe -Arguments @("-C", $repoRoot, "pull", "--ff-only") -WorkingDirectory $repoRoot
   } else {
     Write-Log "No upstream commits to pull."
