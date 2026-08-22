@@ -325,8 +325,36 @@ try {
   if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$upstream)) {
     throw "Current branch does not have an upstream remote."
   }
-  $dirty = (& $gitExe -C $repoRoot status --porcelain --untracked-files=no)
-  if ($dirty) {
+  # A full disk makes git/npm truncate files to zero bytes mid-write; fail
+  # cleanly up front instead of corrupting the working tree.
+  $appDriveRoot = [System.IO.Path]::GetPathRoot((Resolve-Path -LiteralPath $appPath).Path)
+  $appDriveName = $appDriveRoot.TrimEnd(':', '\')
+  $freeBytes = (Get-PSDrive -Name $appDriveName -ErrorAction SilentlyContinue).Free
+  if ($null -ne $freeBytes -and $freeBytes -lt 3GB) {
+    $freeGb = [math]::Round($freeBytes / 1GB, 2)
+    throw "Not enough free disk space on ${appDriveRoot} (${freeGb} GB free, 3 GB required). Free up disk space and run the update again."
+  }
+
+  $dirty = @(& $gitExe -C $repoRoot status --porcelain --untracked-files=no)
+  if (@($dirty).Count -gt 0) {
+    # An update interrupted by a full disk leaves tracked files truncated to
+    # zero bytes. That signature is safe to heal automatically by restoring
+    # the files from the current commit.
+    $allZeroByte = $true
+    foreach ($line in @($dirty)) {
+      $relPath = ([string]$line).Substring(3).Trim('"')
+      if ($relPath -match "\s->\s") { $relPath = ($relPath -split "\s->\s")[-1].Trim('"') }
+      $fullPath = Join-Path $repoRoot $relPath
+      if (-not (Test-Path -LiteralPath $fullPath)) { continue }
+      if ((Get-Item -LiteralPath $fullPath).Length -gt 0) { $allZeroByte = $false; break }
+    }
+    if ($allZeroByte) {
+      Write-Log "Restoring zero-byte tracked files left by an interrupted update."
+      Invoke-LoggedCommand -FilePath $gitExe -Arguments @("-C", $repoRoot, "checkout", "--force", "--", ".") -WorkingDirectory $repoRoot
+      $dirty = @(& $gitExe -C $repoRoot status --porcelain --untracked-files=no)
+    }
+  }
+  if (@($dirty).Count -gt 0) {
     throw "Local tracked files have changes. Commit or discard them before updating."
   }
   $beforeSha = ([string](& $gitExe -C $repoRoot rev-parse HEAD)).Trim()

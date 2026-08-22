@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -177,6 +177,30 @@ async function readLastRun(): Promise<AppUpdateRunStatus | undefined> {
   }
 }
 
+// An update interrupted by a full disk leaves tracked files truncated to
+// zero bytes and permanently "blocked". That signature is safe to heal by
+// restoring the files from the current commit; real local edits (non-empty
+// files) are never touched.
+async function healZeroByteTrackedFiles(): Promise<boolean> {
+  const porcelain = await runGit(["status", "--porcelain", "--untracked-files=no"], { allowFailure: true });
+  const lines = porcelain.split("\n").map((line) => line.trimEnd()).filter(Boolean);
+  if (lines.length === 0) return false;
+  for (const line of lines) {
+    let relPath = line.slice(3).replace(/^"|"$/g, "");
+    const renameSplit = relPath.split(" -> ");
+    if (renameSplit.length > 1) relPath = renameSplit[renameSplit.length - 1].replace(/^"|"$/g, "");
+    const fullPath = path.join(appDir, relPath);
+    try {
+      const info = await stat(fullPath);
+      if (info.size > 0) return false;
+    } catch {
+      // Missing file (deleted mid-update) is part of the same signature.
+    }
+  }
+  await runGit(["checkout", "--force", "--", "."], { allowFailure: true });
+  return true;
+}
+
 async function readBuildInfo(): Promise<AppBuildInfoRecord | undefined> {
   const candidates = Array.from(
     new Set([
@@ -316,7 +340,10 @@ export async function getAppUpdateStatus(options: { fetchRemote?: boolean } = {}
       };
     }
 
-    const dirty = (await runGit(["status", "--porcelain", "--untracked-files=no"], { allowFailure: true })).length > 0;
+    let dirty = (await runGit(["status", "--porcelain", "--untracked-files=no"], { allowFailure: true })).length > 0;
+    if (dirty && (await healZeroByteTrackedFiles())) {
+      dirty = (await runGit(["status", "--porcelain", "--untracked-files=no"], { allowFailure: true })).length > 0;
+    }
     const localSha = await runGit(["rev-parse", "HEAD"]);
     const remoteSha = await runGit(["rev-parse", "@{u}"]);
     const buildInfo = await readBuildInfo();
