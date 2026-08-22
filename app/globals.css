@@ -38,6 +38,10 @@
 
 html {
   font-size: calc(16px * var(--app-content-scale, 1));
+  /* Some tabs (Fixture, PDU, Area Scene, Backlight) make the page scroll and
+     others do not. Always reserve the vertical scrollbar gutter so the tab
+     card and content card keep the same width when switching tabs. */
+  scrollbar-gutter: stable;
 }
 
 @theme inline {
