@@ -38,15 +38,6 @@ const allowedEmailDomains = new Set(
     .filter(Boolean),
 );
 const requiredAuthProvider = normalizeProvider(Deno.env.get("CFS_REQUIRED_AUTH_PROVIDER") || "azure");
-// Break-glass admin accounts that sign in with email+password instead of
-// Microsoft Entra. Listed emails skip the provider/tenant/domain checks but
-// still require an active cfs_memberships row.
-const passwordAdminEmails = new Set(
-  (Deno.env.get("CFS_PASSWORD_ADMIN_EMAILS") || "")
-    .split(",")
-    .map((value) => normalizeEmail(value))
-    .filter(Boolean),
-);
 const allowedEntraTenantIds = new Set(
   `${Deno.env.get("CFS_ENTRA_TENANT_ID") || ""},${Deno.env.get("CFS_ALLOWED_ENTRA_TENANT_IDS") || ""}`
     .split(",")
@@ -147,7 +138,6 @@ function tenantIdSet(user: AuthenticatedUser): Set<string> {
 }
 
 function requireApprovedIdentity(user: AuthenticatedUser): void {
-  if (passwordAdminEmails.has(normalizeEmail(user.email || ""))) return;
   if (requiredAuthProvider && !authProviderSet(user).has(requiredAuthProvider)) {
     throw Object.assign(new Error("Use Microsoft Entra sign-in for CFS sharing."), { status: 403 });
   }
@@ -263,7 +253,7 @@ async function authenticatedMembership(request: Request): Promise<Membership> {
   const email = normalizeEmail(user.email || "");
   if (!email) throw Object.assign(new Error("Your authenticated account does not include an email address."), { status: 403 });
   const domain = email.split("@")[1] || "";
-  if (allowedEmailDomains.size > 0 && !allowedEmailDomains.has(domain) && !passwordAdminEmails.has(email)) {
+  if (allowedEmailDomains.size > 0 && !allowedEmailDomains.has(domain)) {
     throw Object.assign(new Error("Use an approved company email address."), { status: 403 });
   }
 
