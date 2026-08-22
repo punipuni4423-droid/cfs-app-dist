@@ -32,6 +32,8 @@ function compactMessage(message: string): string {
 export default function CollaborationBar({ collaboration, compact = false }: CollaborationBarProps) {
   const [displayName, setDisplayName] = useState(collaboration.user?.displayName || "");
   const [email, setEmail] = useState(collaboration.user?.email || "");
+  const [adminSignIn, setAdminSignIn] = useState(false);
+  const [adminPassword, setAdminPassword] = useState("");
   const [memberEmail, setMemberEmail] = useState("");
   const [memberName, setMemberName] = useState("");
   const [memberRole, setMemberRole] = useState<CollaborationRole>("viewer");
@@ -269,16 +271,45 @@ export default function CollaborationBar({ collaboration, compact = false }: Col
                 </label>
               ) : null}
               <label>
-                {secure ? "Company email (optional)" : "Email address (optional)"}
-                <input value={email} type="email" maxLength={240} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" />
+                {secure ? (adminSignIn ? "Admin email" : "Company email (optional)") : "Email address (optional)"}
+                <input value={email} type="email" maxLength={240} onChange={(event) => setEmail(event.target.value)} placeholder={secure && adminSignIn ? "admin@cfs.local" : "name@example.com"} />
               </label>
+              {secure && adminSignIn ? (
+                <label>
+                  Admin password
+                  <input
+                    value={adminPassword}
+                    type="password"
+                    maxLength={240}
+                    onChange={(event) => setAdminPassword(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === "Enter" && email.trim() && adminPassword) void collaboration.signInWithPassword(email, adminPassword); }}
+                    placeholder="Password"
+                    autoComplete="current-password"
+                  />
+                </label>
+              ) : null}
             </div>
             <div className="modal-actions">
               <button type="button" className="btn btn-secondary" onClick={collaboration.closeUserDialog}>Cancel</button>
-              <button type="button" className="btn btn-primary" onClick={() => void (secure ? collaboration.requestMicrosoftSignIn(email) : collaboration.saveUser({ displayName, email }))} disabled={collaboration.busy}>
-                {secure ? "Sign in with Microsoft" : "Register"}
-              </button>
+              {secure && adminSignIn ? (
+                <button type="button" className="btn btn-primary" onClick={() => void collaboration.signInWithPassword(email, adminPassword)} disabled={collaboration.busy || !email.trim() || !adminPassword}>
+                  Sign In
+                </button>
+              ) : (
+                <button type="button" className="btn btn-primary" onClick={() => void (secure ? collaboration.requestMicrosoftSignIn(email) : collaboration.saveUser({ displayName, email }))} disabled={collaboration.busy}>
+                  {secure ? "Sign in with Microsoft" : "Register"}
+                </button>
+              )}
             </div>
+            {secure ? (
+              <button
+                type="button"
+                className="collaboration-admin-signin-toggle"
+                onClick={() => { setAdminSignIn((current) => !current); setAdminPassword(""); }}
+              >
+                {adminSignIn ? "Back to Microsoft sign-in" : "Administrator sign-in"}
+              </button>
+            ) : null}
           </section>
         </div>
       ) : null}
