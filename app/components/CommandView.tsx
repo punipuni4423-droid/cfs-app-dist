@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import type {
   BacklightLevelSetting,
   CircuitEntry,
@@ -295,22 +296,46 @@ export default function CommandView({
     updateButtonSetting(sw.id, updated.buttonSetting);
   }
 
-  function toggleCommand(id: string): void {
-    setExpandedCommandIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  // Settings open in the same full-page overlay as the Switch tab: one
+  // active command at a time, Scene Value / Backlight switchable in the header.
+  function openCommandSetting(id: string): void {
+    setExpandedBacklightIds(new Set());
+    setExpandedCommandIds(new Set([id]));
   }
 
-  function toggleBacklight(id: string): void {
-    setExpandedBacklightIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  function openBacklightSetting(id: string): void {
+    setExpandedCommandIds(new Set());
+    setExpandedBacklightIds(new Set([id]));
+  }
+
+  function closeSettingOverlay(): void {
+    setExpandedCommandIds(new Set());
+    setExpandedBacklightIds(new Set());
+    setBulkApplyMode(null);
+  }
+
+  const settingOverlayOpen = expandedCommandIds.size > 0 || expandedBacklightIds.size > 0;
+
+  useEffect(() => {
+    if (!settingOverlayOpen) return;
+    function handleEscape(event: KeyboardEvent): void {
+      if (event.key === "Escape") closeSettingOverlay();
+    }
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [settingOverlayOpen]);
+
+  useEffect(() => {
+    if (!settingOverlayOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [settingOverlayOpen]);
+
+  function commandSettingTitle(sw: SwitchEntry): string {
+    return sw.switchName.trim() || "Command Setting";
   }
 
   function backlightConditionValue(value: string): string {
@@ -331,13 +356,8 @@ export default function CommandView({
     const template = commands.find((command) => bulkSelectedIds.has(command.id));
     if (!template) return;
     setBulkApplyMode(mode);
-    if (mode === "scene") {
-      setExpandedBacklightIds(new Set());
-      setExpandedCommandIds(new Set([template.id]));
-    } else {
-      setExpandedCommandIds(new Set());
-      setExpandedBacklightIds(new Set([template.id]));
-    }
+    if (mode === "scene") openCommandSetting(template.id);
+    else openBacklightSetting(template.id);
   }
 
   function applyBulkSetting(active: SwitchEntry): void {
@@ -359,27 +379,8 @@ export default function CommandView({
         return { ...sw, backlightCondition: active.backlightCondition };
       }),
     );
-    setBulkApplyMode(null);
     setBulkSelectedIds(new Set());
-    setExpandedCommandIds(new Set());
-    setExpandedBacklightIds(new Set());
-  }
-
-  function renderBulkApplyBar(mode: "scene" | "backlight", sw: SwitchEntry) {
-    if (bulkApplyMode !== mode) return null;
-    return (
-      <div className="toolbar" style={{ margin: "0.5rem 0.75rem 0" }}>
-        <span className="toolbar-spacer" />
-        <button
-          type="button"
-          className="btn btn-primary btn-sm"
-          disabled={!canEdit}
-          onClick={() => applyBulkSetting(sw)}
-        >
-          Apply to {bulkSelectedIds.size} rows
-        </button>
-      </div>
-    );
+    closeSettingOverlay();
   }
 
   function renderBacklightPanel(sw: SwitchEntry) {
@@ -394,7 +395,6 @@ export default function CommandView({
     };
     return (
       <div className="scene-card switch-setting-card">
-        {renderBulkApplyBar("backlight", sw)}
         <div className="switch-setting-layout switch-backlight-setting-layout">
           <div className="switch-setting-section">
             <div className="switch-setting-title">Target</div>
@@ -481,7 +481,6 @@ export default function CommandView({
   function renderSettingPanel(sw: SwitchEntry) {
     return (
       <div className="scene-card switch-setting-card">
-        {renderBulkApplyBar("scene", sw)}
         <div className="switch-setting-layout">
           <div className="switch-setting-section switch-setting-scene-section">
             <div className="switch-setting-title">Area Scene</div>
@@ -770,7 +769,6 @@ export default function CommandView({
               commands.map((command, index) => {
                 const selected = selectedSwitch(command);
                 const selectedSwitchValue = selected?.value ?? "";
-                const expanded = expandedCommandIds.has(command.id);
                 const isContactSwitch = selected?.kind === "contact";
                 const isDragging = drag.draggingKey === command.id;
                 const isDropTarget = drag.dragOverInfo?.targetKey === command.id;
@@ -879,16 +877,15 @@ export default function CommandView({
                         <button
                           type="button"
                           className="btn btn-primary btn-sm"
-                          onClick={() => toggleCommand(command.id)}
+                          onClick={() => openCommandSetting(command.id)}
                         >
-                          {expanded ? "Close" : "Setting"}
+                          Setting
                         </button>
                       </td>
                       <td className={`col-center ${revisionCellClass(command.id, ["backlightTarget", "backlightCondition"])}`}>
                         {(() => {
                           const label = backlightConditionLabel(command.backlightCondition);
                           const strong = label ? backlightStrongColor(label) : null;
-                          const blExpanded = expandedBacklightIds.has(command.id);
                           return (
                             <button
                               type="button"
@@ -900,9 +897,9 @@ export default function CommandView({
                                 label || command.backlightTarget.trim() ? "has-setting" : "",
                               ].filter(Boolean).join(" ")}
                               style={strong ? { backgroundColor: strong, borderColor: strong, color: "#fff" } : undefined}
-                              onClick={() => toggleBacklight(command.id)}
+                              onClick={() => openBacklightSetting(command.id)}
                             >
-                              {blExpanded ? "Close" : label || "Setting"}
+                              {label || "Setting"}
                             </button>
                           );
                         })()}
@@ -924,20 +921,6 @@ export default function CommandView({
                         />
                       </td>
                     </tr>
-                    {expanded ? (
-                      <tr className="switch-setting-row">
-                        <td colSpan={11} style={{ padding: 0 }}>
-                          {renderSettingPanel(command)}
-                        </td>
-                      </tr>
-                    ) : null}
-                    {expandedBacklightIds.has(command.id) ? (
-                      <tr className="switch-setting-row">
-                        <td colSpan={11} style={{ padding: 0 }}>
-                          {renderBacklightPanel(command)}
-                        </td>
-                      </tr>
-                    ) : null}
                   </Fragment>
                 );
               })
@@ -954,6 +937,60 @@ export default function CommandView({
           </tfoot>
         </table>
       </div>
+      {(() => {
+        const activeSetting = commands.find((command) => expandedCommandIds.has(command.id));
+        const activeBacklight = commands.find((command) => expandedBacklightIds.has(command.id));
+        const active = activeSetting ?? activeBacklight;
+        if (!active) return null;
+        const overlay = (
+          <div className="setting-overlay" role="dialog" aria-modal="true">
+            <button
+              type="button"
+              className="setting-overlay-backdrop"
+              aria-label="Close settings"
+              onClick={closeSettingOverlay}
+            />
+            <div className="setting-overlay-panel">
+              <div className="setting-overlay-header">
+                <strong>{commandSettingTitle(active)}</strong>
+                <div className="setting-overlay-actions">
+                  <button
+                    type="button"
+                    className={`btn btn-secondary btn-sm${activeSetting ? " is-active" : ""}`}
+                    onClick={() => openCommandSetting(active.id)}
+                  >
+                    Scene Value
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn btn-secondary btn-sm${activeBacklight ? " is-active" : ""}`}
+                    onClick={() => openBacklightSetting(active.id)}
+                  >
+                    Backlight
+                  </button>
+                  {bulkApplyMode ? (
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      disabled={!canEdit}
+                      onClick={() => applyBulkSetting(active)}
+                      title="Copy this panel's settings to every checked row"
+                    >
+                      Apply to {bulkSelectedIds.size} rows
+                    </button>
+                  ) : null}
+                  <button type="button" className="btn btn-danger-ghost" onClick={closeSettingOverlay}>
+                    Close
+                  </button>
+                </div>
+              </div>
+              {activeSetting ? renderSettingPanel(activeSetting) : null}
+              {activeBacklight ? renderBacklightPanel(activeBacklight) : null}
+            </div>
+          </div>
+        );
+        return typeof document === "undefined" ? null : createPortal(overlay, document.body);
+      })()}
     </section>
   );
 }

@@ -691,35 +691,11 @@ export default function RoomSceneView({
   }
 
   function renderBacklightPanel(scene: RoomScene): ReactNode {
+    // Same layout as the Switch tab's Backlight panel: Target first, then
+    // Condition, with the clear actions shown only when a value is set.
     return (
-      <div className="scene-card switch-setting-card room-scene-setting-card">
-        <div className="switch-setting-title">Backlight Setting</div>
+      <div className="scene-card switch-setting-card">
         <div className="switch-setting-layout switch-backlight-setting-layout">
-          <div className="switch-setting-section">
-            <div className="switch-setting-title">Condition</div>
-            <select
-              className="cell-input"
-              value={scene.backlightCondition}
-              onChange={(event) => update(scene.id, { backlightCondition: event.target.value })}
-              disabled={!canEdit}
-            >
-              <option value="">-</option>
-              {backlightConditions.map((condition) => (
-                <option key={condition.key} value={condition.key}>
-                  {condition.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="btn-clear-circuit"
-              style={{ marginTop: "0.5rem" }}
-              onClick={() => update(scene.id, { backlightCondition: "" })}
-              disabled={!canEdit}
-            >
-              Uneffected
-            </button>
-          </div>
           <div className="switch-setting-section">
             <div className="switch-setting-title">Target</div>
             <div className="switch-target-list">
@@ -742,6 +718,33 @@ export default function RoomSceneView({
                 })
               )}
             </div>
+          </div>
+          <div className="switch-setting-section">
+            <div className="switch-setting-title">Condition</div>
+            <select
+              className="cell-input"
+              value={scene.backlightCondition}
+              onChange={(event) => update(scene.id, { backlightCondition: event.target.value })}
+              disabled={!canEdit}
+            >
+              <option value="" disabled>Uneffected</option>
+              {backlightConditions.map((condition) => (
+                <option key={condition.key} value={condition.key}>
+                  {condition.name}
+                </option>
+              ))}
+            </select>
+            {scene.backlightCondition.trim() ? (
+              <button
+                type="button"
+                className="btn-clear-circuit"
+                style={{ marginTop: "0.5rem" }}
+                onClick={() => update(scene.id, { backlightCondition: "" })}
+                disabled={!canEdit}
+              >
+                Uneffected
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
