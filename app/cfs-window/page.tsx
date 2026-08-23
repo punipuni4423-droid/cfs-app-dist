@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import CfsView from "../components/CfsView";
 import {
@@ -12,6 +12,12 @@ import {
 function CfsWindowContent() {
   const searchParams = useSearchParams();
   const projectId = searchParams.get("project") ?? "";
+  // "pinned": fixed room type chosen in this window (does not follow the
+  // main window). Default "linked": mirrors the main window's active room type.
+  const pinned = searchParams.get("mode") === "pinned";
+  const [pinnedRoomTypeId, setPinnedRoomTypeId] = useState<string>(
+    () => searchParams.get("roomType") ?? "",
+  );
   const [snapshot, setSnapshot] = useState<CfsWindowSnapshot | null>(null);
   const [connected, setConnected] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string>("");
@@ -58,17 +64,54 @@ function CfsWindowContent() {
     };
   }, [projectId]);
 
+  const roomTypeEntries = useMemo(() => snapshot?.roomTypeEntries ?? [], [snapshot]);
+  const pinnedEntry = useMemo(
+    () => (pinned ? roomTypeEntries.find((entry) => entry.roomType.id === pinnedRoomTypeId) ?? null : null),
+    [pinned, roomTypeEntries, pinnedRoomTypeId],
+  );
+
+  // Pinned mode falls back to the first room type when the requested one is
+  // missing (deleted in the main window, or no roomType in the URL).
   useEffect(() => {
-    document.title = snapshot
-      ? `CFS - ${snapshot.projectName} / ${snapshot.roomType.name}`
-      : "CFS - Sub Window";
-  }, [snapshot]);
+    if (!pinned || roomTypeEntries.length === 0) return;
+    if (roomTypeEntries.some((entry) => entry.roomType.id === pinnedRoomTypeId)) return;
+    setPinnedRoomTypeId(roomTypeEntries[0].roomType.id);
+  }, [pinned, roomTypeEntries, pinnedRoomTypeId]);
+
+  const view = useMemo(() => {
+    if (pinned) {
+      return pinnedEntry ? { roomType: pinnedEntry.roomType, circuits: pinnedEntry.circuits } : null;
+    }
+    return snapshot ? { roomType: snapshot.roomType, circuits: snapshot.circuits } : null;
+  }, [pinned, pinnedEntry, snapshot]);
+
+  useEffect(() => {
+    document.title = snapshot && view
+      ? `CFS - ${snapshot.projectName} / ${view.roomType.name}${pinned ? " (Fixed)" : ""}`
+      : pinned ? "CFS - Fixed Window" : "CFS - Sub Window";
+  }, [snapshot, view, pinned]);
 
   return (
     <main className="cfs-window-main">
       <div className="cfs-window-status-bar">
         <strong>{snapshot?.projectName ?? "-"}</strong>
-        <span className="cfs-window-room">{snapshot?.roomType.name ?? "-"}</span>
+        {pinned ? <span className="cfs-window-mode">Fixed</span> : null}
+        {pinned && roomTypeEntries.length > 0 ? (
+          <select
+            className="cfs-window-room-select"
+            aria-label="Room type"
+            value={pinnedEntry ? pinnedRoomTypeId : ""}
+            onChange={(event) => setPinnedRoomTypeId(event.target.value)}
+          >
+            {roomTypeEntries.map((entry) => (
+              <option key={entry.roomType.id} value={entry.roomType.id}>
+                {entry.roomType.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="cfs-window-room">{view?.roomType.name ?? "-"}</span>
+        )}
         <span className="toolbar-spacer" />
         <span className={`cfs-window-status${connected ? " is-connected" : " is-disconnected"}`}>
           {connected ? "Linked" : "Waiting for the main window..."}
@@ -77,11 +120,12 @@ function CfsWindowContent() {
       </div>
       {!projectId ? (
         <p className="screen-empty">No project specified.</p>
-      ) : snapshot ? (
+      ) : snapshot && view ? (
         <CfsView
+          key={view.roomType.id}
           projectName={snapshot.projectName}
-          roomType={snapshot.roomType}
-          circuits={snapshot.circuits}
+          roomType={view.roomType}
+          circuits={view.circuits}
           devices={snapshot.devices}
           locations={snapshot.locations}
           programmingNameSettings={snapshot.programmingNameSettings}

@@ -2278,6 +2278,24 @@ body.cfs-top-ui-collapsed .project-screen-shell > .collaboration-bar {
   color: #94a3b8;
 }
 
+.cfs-window-mode {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #0369a1;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.cfs-window-room-select {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: #1e293b;
+  background: #fff;
+}
+
 .room-scene-bulk-toolbar {
   margin-bottom: 0.5rem;
 }

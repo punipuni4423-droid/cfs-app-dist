@@ -97,6 +97,7 @@ interface CfsViewProps {
   onCfsRowDisplayChange?: (next: CfsRowDisplaySettings) => void;
   // Opens the read-only linked CFS sub-window (button hidden when absent).
   onOpenExternalWindow?: () => void;
+  onOpenPinnedWindow?: () => void;
   canEdit?: boolean;
   hasRevisionDraft?: boolean;
   onBeforeInspectionStart?: (choice: InspectionRevisionChoice) => boolean;
@@ -675,6 +676,7 @@ export default function CfsView({
   onProgrammingNameSettingsChange,
   onCfsRowDisplayChange,
   onOpenExternalWindow,
+  onOpenPinnedWindow,
   canEdit = true,
   hasRevisionDraft = false,
   onBeforeInspectionStart,
@@ -4610,6 +4612,16 @@ export default function CfsView({
                 title="Open a read-only linked CFS view in a separate window"
               >
                 Sub Window
+              </button>
+            ) : null}
+            {onOpenPinnedWindow ? (
+              <button
+                type="button"
+                className="btn btn-secondary cfs-pinned-window-trigger"
+                onClick={onOpenPinnedWindow}
+                title="Open a read-only CFS view fixed to one room type (switchable inside the window)"
+              >
+                Fixed Window
               </button>
             ) : null}
             <button

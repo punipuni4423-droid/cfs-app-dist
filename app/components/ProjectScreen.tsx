@@ -38,7 +38,7 @@ import { useAppSettings } from "../lib/appSettings";
 import { useGridArrowNavigation } from "../lib/useGridArrowNavigation";
 import { buildProjectCircuitSuggestions } from "../lib/projectCircuitSuggestions";
 import { duplicateRoomType } from "../lib/roomTypeCopy";
-import { cfsWindowChannelName, type CfsWindowMessage, type CfsWindowSnapshot } from "../lib/cfsWindowSync";
+import { cfsWindowChannelName, cfsWindowUrl, stripRoomTypeForWindow, type CfsWindowMessage, type CfsWindowRoomTypeEntry, type CfsWindowSnapshot } from "../lib/cfsWindowSync";
 import { circuitsForRoomType, inferRoomTypeCircuitIds, normalizeProjectRoomTypeCircuitIds, syncProjectRoomTypeLinks } from "../lib/roomTypeSync";
 import TabsBar, { type TabDef } from "./TabsBar";
 import LocationsView from "./LocationsView";
@@ -587,18 +587,27 @@ export default function ProjectScreen({
   const cfsWindowChannelRef = useRef<BroadcastChannel | null>(null);
   const cfsWindowSnapshotRef = useRef<CfsWindowSnapshot | null>(null);
   const programmingNameSettings = project.settings?.programmingName;
+  const cfsWindowRoomTypeEntries = useMemo<CfsWindowRoomTypeEntry[]>(
+    () =>
+      project.roomTypes.map((roomType) => ({
+        roomType: stripRoomTypeForWindow(roomType),
+        circuits: circuitsForRoomType(project, roomType),
+      })),
+    [project],
+  );
   const cfsWindowSnapshot = useMemo<CfsWindowSnapshot | null>(() => {
     if (!activeRoomType) return null;
     return {
       projectName: project.name,
-      roomType: activeRoomType,
+      roomType: stripRoomTypeForWindow(activeRoomType),
       circuits: activeRoomTypeCircuits,
+      roomTypeEntries: cfsWindowRoomTypeEntries,
       devices,
       locations: project.locations,
       programmingNameSettings,
       sentAt: Date.now(),
     };
-  }, [project.name, activeRoomType, activeRoomTypeCircuits, devices, project.locations, programmingNameSettings]);
+  }, [project.name, activeRoomType, activeRoomTypeCircuits, cfsWindowRoomTypeEntries, devices, project.locations, programmingNameSettings]);
 
   useEffect(() => {
     if (typeof BroadcastChannel === "undefined") return;
@@ -642,11 +651,21 @@ export default function ProjectScreen({
 
   const handleOpenCfsWindow = useCallback(() => {
     window.open(
-      `/cfs-window?project=${encodeURIComponent(project.id)}`,
+      cfsWindowUrl(project.id, "linked"),
       `cfs-window-${project.id}`,
       "width=1500,height=900",
     );
   }, [project.id]);
+
+  // Pinned window: starts on the active room type but does not follow the
+  // main window afterwards. Unique window name so several can be open.
+  const handleOpenPinnedCfsWindow = useCallback(() => {
+    window.open(
+      cfsWindowUrl(project.id, "pinned", activeRoomTypeId),
+      `cfs-window-pinned-${project.id}-${Date.now()}`,
+      "width=1500,height=900",
+    );
+  }, [project.id, activeRoomTypeId]);
 
   useEffect(() => {
     if (!canEdit) return;
@@ -3398,6 +3417,7 @@ export default function ProjectScreen({
                 onProgrammingNameSettingsChange={setProgrammingNameSettings}
                 onCfsRowDisplayChange={setCfsRowDisplay}
                 onOpenExternalWindow={handleOpenCfsWindow}
+                onOpenPinnedWindow={handleOpenPinnedCfsWindow}
                 canEdit={canEdit}
                 hasRevisionDraft={roomTypeHasRevisionDraft(activeRoomType)}
                 onBeforeInspectionStart={handlePrepareInspectionStart}

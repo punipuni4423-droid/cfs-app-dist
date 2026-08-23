@@ -105,4 +105,56 @@ test.describe("CFS sub-window", () => {
 
     await popup.close();
   });
+
+  // Fixed Window (2026-08-23): opens /cfs-window?mode=pinned. It starts on
+  // the active room type, does NOT follow main-window room-type switches, and
+  // has its own room-type selector.
+  test("fixed window stays on its room type and switches via its own selector", async ({ page }) => {
+    await isolate(page);
+
+    const projectName = `CFS-FIX-${Date.now()}`;
+    const nameInput = page.locator('input[placeholder="New project name"]').first();
+    await expect(nameInput).toBeVisible({ timeout: 15000 });
+    await nameInput.fill(projectName);
+    await page.locator("button").filter({ hasText: /^Create Project$/ }).first().click();
+
+    const roomA = `FIX-Room-A-${Date.now()}`;
+    const roomB = `FIX-Room-B-${Date.now()}`;
+    await createRoomType(page, roomA);
+    await createRoomType(page, roomB);
+    await activateRoomType(page, roomA);
+
+    await page.locator('[role="tab"]').filter({ hasText: /^CFS$/ }).first().click();
+    await page.waitForTimeout(400);
+
+    const [popup] = await Promise.all([
+      page.waitForEvent("popup"),
+      page.locator(".cfs-pinned-window-trigger").first().click(),
+    ]);
+    await popup.waitForLoadState("domcontentloaded");
+    expect(popup.url()).toContain("mode=pinned");
+
+    const statusBar = popup.locator(".cfs-window-status-bar");
+    await expect(statusBar.locator("strong")).toHaveText(projectName, { timeout: 10000 });
+    await expect(statusBar.locator(".cfs-window-mode")).toHaveText("Fixed");
+    const select = statusBar.locator(".cfs-window-room-select");
+    await expect(select).toBeVisible({ timeout: 10000 });
+    await expect(select.locator("option:checked")).toHaveText(roomA, { timeout: 10000 });
+    await expect(select.locator("option")).toHaveCount(2);
+    await expect(popup.locator(".cfs-window-status")).toHaveText("Linked", { timeout: 10000 });
+    await expect(popup.locator(".cfs-matrix-card")).toBeVisible({ timeout: 10000 });
+    await expect(popup.locator(".cfs-pinned-window-trigger")).toHaveCount(0);
+
+    // Switching the main window to room B must NOT move the fixed window.
+    await activateRoomType(page, roomB);
+    await page.waitForTimeout(1200);
+    await expect(select.locator("option:checked")).toHaveText(roomA);
+
+    // The fixed window can switch on its own.
+    await select.selectOption({ label: roomB });
+    await expect(select.locator("option:checked")).toHaveText(roomB);
+    await expect(popup.locator(".cfs-matrix-card")).toBeVisible({ timeout: 10000 });
+
+    await popup.close();
+  });
 });
