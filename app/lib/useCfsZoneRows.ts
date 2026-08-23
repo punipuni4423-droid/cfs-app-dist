@@ -349,6 +349,24 @@ export function isBacklightTargetCondition(value: string): boolean {
   return normalizeBacklightCondition(trimmed) === "Base";
 }
 
+// "" assignment = By Scene (documented default). Shared by the Switch and
+// Command tabs so their Backlight Target lists are always the same set.
+export function isByScenePalladiomBacklightTarget(sw: SwitchEntry): boolean {
+  return sw.kind === "lutronPd" && sw.backlightAssignment.trim() === "";
+}
+
+// One representative row per Palladiom switch group, By Scene only — the
+// candidate Target list of the Backlight setting panels.
+export function byScenePalladiomBacklightTargets(switches: SwitchEntry[]): SwitchEntry[] {
+  const groups = new Map<string, SwitchEntry>();
+  for (const sw of switches) {
+    if (sw.kind !== "lutronPd") continue;
+    const key = switchGroupId(sw);
+    if (!groups.has(key)) groups.set(key, sw);
+  }
+  return Array.from(groups.values()).filter((sw) => isByScenePalladiomBacklightTarget(sw));
+}
+
 export function isPalladiomBacklightTarget(sw: SwitchEntry): boolean {
   if (sw.kind !== "lutronPd" || !hasSwitchOperationalIdentity(sw)) return false;
   // Group assignment decides target eligibility ("" = By Scene, or a

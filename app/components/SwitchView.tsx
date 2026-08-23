@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { byScenePalladiomBacklightTargets } from "../lib/useCfsZoneRows";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type {
@@ -98,12 +99,6 @@ const PALLADIOM_BUTTON_COUNTS = ["1", "2", "3", "4", "4LR", "5", "6", "7", "8"];
 const BY_SCENE_VALUE = "__byScene";
 
 type CciOption = CciAssignmentOption;
-
-function isByScenePalladiomBacklightTarget(sw: SwitchEntry): boolean {
-  // Assignment "" = By Scene (documented default); the row-action condition
-  // no longer participates in the group's By-Scene membership.
-  return sw.kind === "lutronPd" && sw.backlightAssignment.trim() === "";
-}
 
 interface CciDeviceOption {
   value: string;
@@ -310,8 +305,8 @@ export default function SwitchView({
   }, [switches]);
 
   const byScenePalladiomSwitches = useMemo(
-    () => palladiomSwitches.filter((sw) => isByScenePalladiomBacklightTarget(sw)),
-    [palladiomSwitches],
+    () => byScenePalladiomBacklightTargets(switches),
+    [switches],
   );
 
   const effectiveBacklightLevels = useMemo(

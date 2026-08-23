@@ -19,7 +19,7 @@ import type {
 } from "../types";
 import { createEmptySwitchEntry, normalizeBacklightLevels } from "../lib/constants";
 import { backlightStrongColor } from "../lib/backlightColors";
-import { isPalladiomBacklightTarget } from "../lib/useCfsZoneRows";
+import { byScenePalladiomBacklightTargets } from "../lib/useCfsZoneRows";
 import { useDragReorder } from "../lib/useDragReorder";
 import { selectedSceneIdsForSwitch as selectedSceneIds } from "../lib/cfsValueResolver";
 import AutoGrowTextarea from "./AutoGrowTextarea";
@@ -208,15 +208,11 @@ export default function CommandView({
     () => normalizeBacklightLevels(backlightLevels),
     [backlightLevels],
   );
-  const byScenePalladiomSwitches = useMemo(() => {
-    const groups = new Map<string, SwitchEntry>();
-    for (const sw of switches) {
-      if (sw.kind !== "lutronPd") continue;
-      const gid = switchGroupId(sw);
-      if (!groups.has(gid)) groups.set(gid, sw);
-    }
-    return Array.from(groups.values()).filter((sw) => isPalladiomBacklightTarget(sw));
-  }, [switches]);
+  // Same candidate set as the Switch tab (By Scene Palladiom groups only).
+  const byScenePalladiomSwitches = useMemo(
+    () => byScenePalladiomBacklightTargets(switches),
+    [switches],
+  );
 
   function addCommand(): void {
     commitCommands([...switches, createEmptySwitchEntry("command")]);
