@@ -41,6 +41,13 @@ function CfsWindowContent() {
       const message = event.data as CfsWindowMessage | undefined;
       if (!message) return;
       if (message.type === "snapshot") {
+        // A main window still running an older build (e.g. a tab opened before
+        // an App Update) broadcasts snapshots without roomTypeEntries. In pinned
+        // mode those cannot be rendered, so keep the last usable snapshot.
+        if (pinned && !message.snapshot.roomTypeEntries?.length) {
+          markAlive();
+          return;
+        }
         setSnapshot(message.snapshot);
         setLastUpdatedAt(new Date(message.snapshot.sentAt).toLocaleTimeString());
         markAlive();
@@ -62,7 +69,7 @@ function CfsWindowContent() {
       window.clearInterval(retry);
       channel.close();
     };
-  }, [projectId]);
+  }, [projectId, pinned]);
 
   const roomTypeEntries = useMemo(() => snapshot?.roomTypeEntries ?? [], [snapshot]);
   const pinnedEntry = useMemo(
