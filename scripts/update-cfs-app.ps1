@@ -112,11 +112,41 @@ function Invoke-WithProductionNodeEnv {
   }
 }
 
+function Import-PublicSupabaseEnv {
+  $publicEnvPath = Join-Path $appPath "cfs-public-supabase.env"
+  if (-not (Test-Path -LiteralPath $publicEnvPath)) {
+    return
+  }
+
+  $allowedKeys = @(
+    "CFS_SHARING_MODE",
+    "SUPABASE_URL",
+    "SUPABASE_PUBLISHABLE_KEY",
+    "CFS_SUPABASE_FUNCTION_NAME"
+  )
+  $loadedKeys = @()
+
+  foreach ($line in Get-Content -LiteralPath $publicEnvPath) {
+    if ($line -match "^\s*#" -or $line -notmatch "=") { continue }
+    $key, $value = $line.Split("=", 2)
+    $key = $key.Trim()
+    if ($allowedKeys -notcontains $key) { continue }
+    if (Test-Path -LiteralPath "Env:$key") { continue }
+    Set-Item -Path "Env:$key" -Value $value.Trim()
+    $loadedKeys += $key
+  }
+
+  if (@($loadedKeys).Count -gt 0) {
+    Write-Log ("Loaded public Supabase sharing environment keys: " + ($loadedKeys -join ", "))
+  }
+}
+
 function Start-CfsAppServer {
   # Starts the app on $Port. Prefers the freshly built .next standalone output;
   # falls back to the shipped runtime\server.js (packaged installs keep it even
   # after a failed rebuild) so the browser can always reconnect and read the
   # update status - including a failure.
+  Import-PublicSupabaseEnv
   $outLog = Join-Path $appPath ("start-" + $Port + ".out.log")
   $errLog = Join-Path $appPath ("start-" + $Port + ".err.log")
   $standaloneServer = Join-Path $appPath ".next\standalone\server.js"
