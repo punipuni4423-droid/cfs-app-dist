@@ -1452,7 +1452,7 @@ test.describe("Protected CFS behaviors", () => {
     await dialog.getByRole("button", { name: "Save Revision", exact: true }).click();
     const prompt = await conflictPrompt;
     expect(prompt.type()).toBe("prompt");
-    expect(prompt.message()).toContain("This project was saved elsewhere after this screen loaded.");
+    expect(prompt.message()).toContain("この画面を開いた後に、他のユーザーがこのプロジェクトを保存しました。");
     await prompt.accept("B");
 
     await expect(dialog).toBeVisible();
@@ -1532,7 +1532,10 @@ test.describe("Protected CFS behaviors", () => {
     expect(prompt.type()).toBe("prompt");
     await prompt.accept("O");
     const download = await downloadPromise;
-    await download.delete().catch(() => undefined);
+    await Promise.race([
+      download.delete().catch(() => undefined),
+      new Promise<void>((resolve) => setTimeout(resolve, 500)),
+    ]);
 
     await expect(page.locator(".revision-save-status-label")).toHaveText("Saved", { timeout: 10000 });
     const savedRetryPayload = retryPayload as Record<string, unknown> | null;

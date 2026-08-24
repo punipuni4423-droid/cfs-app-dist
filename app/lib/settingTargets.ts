@@ -1,6 +1,7 @@
 import type { CfsCircuit, CircuitEntry, CurtainAssignment, DeviceAssignment, HvacAssignment, LocationMaster, SwitchEntry } from "../types";
 import { corridorPicoLedTargets } from "./picoSpecials";
 import { circuitGroupMembers, uniqueCircuitGroupHeads } from "./circuitGroups";
+import { OTHER_AREA_ID } from "./cfsTableModel";
 import { isOnOffLikeDimmingType } from "./settingValues";
 
 export const HVAC_METRICS = ["On/Off", "Setpoint", "Fan Mode", "Drift"] as const;
@@ -31,8 +32,6 @@ export interface SettingTargetGroup {
   name: string;
   targets: SettingTarget[];
 }
-
-export const OTHER_AREA_ID = "__other__";
 
 export function settingTargetIds(target: SettingTarget): string[] {
   return target.groupCircuitIds && target.groupCircuitIds.length > 0

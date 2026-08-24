@@ -371,6 +371,7 @@ async function status(body: Record<string, unknown>, membership: Membership) {
     lock,
     locks,
     lastUpdatedBy: await lastUpdatedBy(),
+    lastUpdatedAt: await projectLastUpdatedAt(scope.projectId),
     membership: publicMembership(membership),
     leaseSeconds,
     heartbeatMs,
@@ -411,6 +412,11 @@ async function readProject(projectId: string): Promise<unknown | null> {
     .maybeSingle();
   if (result.error) throw result.error;
   return result.data?.payload ?? null;
+}
+
+async function projectLastUpdatedAt(projectId: string): Promise<string | null> {
+  if (!projectId) return null;
+  return projectUpdatedAt(await readProject(projectId).catch(() => null)) || null;
 }
 
 function validatedProjects(value: unknown, membership: Membership) {

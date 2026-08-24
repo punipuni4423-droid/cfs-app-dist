@@ -7,6 +7,7 @@ import type {
   CollaborationStatus,
   CollaborationUser,
 } from "../types";
+import { migrateProjectsPayload } from "./storage";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const COLLABORATION_FILE = path.join(DATA_DIR, "collaboration.json");
@@ -388,6 +389,17 @@ function statusFromStore(store: CollaborationStore, identity: Partial<Collaborat
   };
 }
 
+async function projectLastUpdatedAt(projectId: string): Promise<string | null> {
+  if (!projectId) return null;
+  try {
+    const raw = await readFile(path.join(DATA_DIR, "projects.json"), "utf8");
+    const projects = migrateProjectsPayload(JSON.parse(raw));
+    return projects.find((project) => project.id === projectId)?.updatedAt ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function registeredUser(store: CollaborationStore, userId: string): CollaborationUser {
   const id = normalizeId(userId, "User ID");
   const user = store.users.find((candidate) => candidate.id === id);
@@ -419,6 +431,7 @@ export async function collaborationStatus(identity: Partial<CollaborationIdentit
       lock: null,
       locks: [],
       lastUpdatedBy: null,
+      lastUpdatedAt: await projectLastUpdatedAt(scope.projectId),
       leaseSeconds: leaseSeconds(),
       heartbeatMs: heartbeatMs(),
       idleMs: idleMs(),
@@ -426,7 +439,10 @@ export async function collaborationStatus(identity: Partial<CollaborationIdentit
   }
 
   const store = await readStore();
-  return statusFromStore(store, identity);
+  return {
+    ...statusFromStore(store, identity),
+    lastUpdatedAt: await projectLastUpdatedAt(scope.projectId),
+  };
 }
 
 export async function registerCollaborationUser(body: unknown): Promise<CollaborationUser> {

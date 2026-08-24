@@ -3015,7 +3015,7 @@ export default function ProjectScreen({
             <span className="breadcrumb-current">{project.name}</span>
           </nav>
           <div className="project-top-action-groups">
-            <CollaborationBar collaboration={collaboration} compact />
+            <CollaborationBar collaboration={collaboration} compact projectUpdatedAt={project.updatedAt} />
             <div className="history-controls" aria-label="History controls">
               <button
                 type="button"

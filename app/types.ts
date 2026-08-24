@@ -157,6 +157,7 @@ export interface CollaborationStatus {
   lock: CollaborationLock | null;
   locks?: CollaborationLock[];
   lastUpdatedBy: CollaborationEditorInfo | null;
+  lastUpdatedAt?: string | null;
   membership?: CollaborationMembership;
   leaseSeconds: number;
   heartbeatMs: number;

@@ -19,6 +19,7 @@ import {
   saveProjectsDraftLocally,
   saveProjectsToDatabase,
   saveTrashToDatabase,
+  type CollaborationSaveIdentity,
 } from "./lib/storage";
 import ProjectListScreen from "./components/ProjectListScreen";
 import ProjectScreen from "./components/ProjectScreen";
@@ -41,6 +42,7 @@ type SaveStatus =
   | "error";
 type ImportConflictAction = "update" | "copy" | "cancel";
 type SaveConflictAction = "overwrite" | "reload" | "backup" | "cancel";
+type SharingMode = "local" | "supabase";
 
 function readStoredActiveProjectId(): string {
   if (typeof window === "undefined") return "";
@@ -211,18 +213,18 @@ function chooseImportConflictAction(conflicts: ReadonlyArray<ProjectData>): Impo
 }
 
 function formatConflictTimestamp(value: string | undefined): string {
-  if (!value) return "unknown time";
+  if (!value) return "不明";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
 function projectSaveConflictSummary(project: ProjectData | undefined): string {
-  if (!project) return "Server version: unavailable";
+  if (!project) return "サーバー版: 取得できませんでした";
   return [
-    `Server version: ${project.name}`,
-    `Updated: ${formatConflictTimestamp(project.updatedAt)}`,
-    `Room Types: ${project.roomTypes.length}`,
-    `Circuits: ${project.circuits.length}`,
+    `サーバー版: ${project.name}`,
+    `更新日時: ${formatConflictTimestamp(project.updatedAt)}`,
+    `Room Type数: ${project.roomTypes.length}`,
+    `Circuit数: ${project.circuits.length}`,
   ].join("\n");
 }
 
@@ -232,15 +234,15 @@ function chooseProjectSaveConflictAction(
 ): SaveConflictAction {
   const answer = window.prompt(
     [
-      "This project was saved elsewhere after this screen loaded.",
+      "この画面を開いた後に、他のユーザーがこのプロジェクトを保存しました。",
       "",
-      `Current draft: ${draftProject.name}`,
+      `現在の下書き: ${draftProject.name}`,
       projectSaveConflictSummary(serverProject),
       "",
-      "Type O to overwrite the server with this draft.",
-      "Type R to reload the server version.",
-      "Type B to download this draft as a JSON backup and keep editing.",
-      "Press Cancel to keep editing without saving.",
+      "O: この下書きで上書きします（非推奨。相手の保存内容を消します）",
+      "R: サーバー最新版を読み込みます",
+      "B: この下書きをJSONバックアップとして保存し、編集を続けます",
+      "Cancel: 保存せずに編集を続けます",
     ].join("\n"),
     "B",
   );
@@ -249,7 +251,7 @@ function chooseProjectSaveConflictAction(
   if (normalized === "o" || normalized === "overwrite") return "overwrite";
   if (normalized === "r" || normalized === "reload") return "reload";
   if (normalized === "b" || normalized === "backup") return "backup";
-  window.alert("Save cancelled. Enter O to overwrite, R to reload, or B to download a backup.");
+  window.alert("保存をキャンセルしました。O（上書き）、R（再読み込み）、B（バックアップ）のいずれかを入力してください。");
   return "cancel";
 }
 
@@ -341,6 +343,7 @@ export default function Home() {
   const trashSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextSave = useRef(false);
   const skipNextTrashSave = useRef(false);
+  const collaborationAccessTokenRef = useRef(collaboration.accessToken);
   const trashSaveIdentity = useRef(collaboration.editIdentity);
   const persistedProjectUpdatedAt = useRef<Map<string, string>>(new Map());
 
@@ -351,6 +354,36 @@ export default function Home() {
   const rememberPersistedProject = useCallback((project: ProjectData): void => {
     persistedProjectUpdatedAt.current.set(project.id, project.updatedAt);
   }, []);
+
+  const applyLoadedServerState = useCallback((loaded: ProjectData[], loadedTrash: TrashData, sharingMode: SharingMode): void => {
+    skipNextSave.current = true;
+    skipNextTrashSave.current = true;
+    rememberPersistedProjects(loaded);
+    if (sharingMode === "supabase") {
+      // Shared mode: the server is authoritative. Silently adopting newer
+      // browser drafts resurrected stale data and overwrote other users'
+      // saves (2026-08-24), so leftover drafts become a downloadable
+      // backup instead of the working copy.
+      const staleDrafts = newerLocalDraftsThan(loaded);
+      if (staleDrafts.length > 0) {
+        downloadProjectBackup(staleDrafts, "unsaved_browser_draft");
+        clearProjectDrafts();
+        window.alert(
+          "Unsaved browser drafts from a previous session were found. They were downloaded as a backup file and the screen now shows the latest shared data. Use Import Data if you need to restore the backup.",
+        );
+      }
+      setProjects(loaded);
+    } else {
+      // Local mode: keep browser-draft copies that are newer than the
+      // server snapshot so a reload does not discard unsaved edits.
+      setProjects(mergeNewerLocalDrafts(loaded));
+    }
+    setTrash(loadedTrash);
+  }, [rememberPersistedProjects]);
+
+  useEffect(() => {
+    collaborationAccessTokenRef.current = collaboration.accessToken;
+  }, [collaboration.accessToken]);
 
   useEffect(() => {
     trashSaveIdentity.current = collaboration.editIdentity;
@@ -384,41 +417,19 @@ export default function Home() {
       loadProjectsFromDatabase({
         signal: controller.signal,
         throwOnError: true,
-        accessToken: collaboration.accessToken || undefined,
+        accessToken: collaborationAccessTokenRef.current || undefined,
         secureSharing: collaboration.sharingMode === "supabase",
       }),
       loadTrashFromDatabase({
         signal: controller.signal,
         throwOnError: true,
-        accessToken: collaboration.accessToken || undefined,
+        accessToken: collaborationAccessTokenRef.current || undefined,
         secureSharing: collaboration.sharingMode === "supabase",
       }),
     ])
       .then(([loaded, loadedTrash]) => {
         if (cancelled) return;
-        skipNextSave.current = true;
-        skipNextTrashSave.current = true;
-        rememberPersistedProjects(loaded);
-        if (collaboration.sharingMode === "supabase") {
-          // Shared mode: the server is authoritative. Silently adopting newer
-          // browser drafts resurrected stale data and overwrote other users'
-          // saves (2026-08-24), so leftover drafts become a downloadable
-          // backup instead of the working copy.
-          const staleDrafts = newerLocalDraftsThan(loaded);
-          if (staleDrafts.length > 0) {
-            downloadProjectBackup(staleDrafts, "unsaved_browser_draft");
-            clearProjectDrafts();
-            window.alert(
-              "Unsaved browser drafts from a previous session were found. They were downloaded as a backup file and the screen now shows the latest shared data. Use Import Data if you need to restore the backup.",
-            );
-          }
-          setProjects(loaded);
-        } else {
-          // Local mode: keep browser-draft copies that are newer than the
-          // server snapshot so a reload does not discard unsaved edits.
-          setProjects(mergeNewerLocalDrafts(loaded));
-        }
-        setTrash(loadedTrash);
+        applyLoadedServerState(loaded, loadedTrash, collaboration.sharingMode);
         if (timedOut) {
           setLoadError(
             loaded.length > 0
@@ -468,8 +479,8 @@ export default function Home() {
     collaboration.authReady,
     collaboration.requiresSignIn,
     collaboration.sharingMode,
+    applyLoadedServerState,
     loadAttempt,
-    rememberPersistedProjects,
   ]);
 
   useEffect(() => {
@@ -574,13 +585,41 @@ export default function Home() {
     [projects, activeProjectId],
   );
 
+  const refreshLatestServerStateForEditStart = useCallback(async (): Promise<void> => {
+    const [loaded, loadedTrash] = await Promise.all([
+      loadProjectsFromDatabase({
+        throwOnError: true,
+        accessToken: collaboration.accessToken || undefined,
+        secureSharing: collaboration.sharingMode === "supabase",
+      }),
+      loadTrashFromDatabase({
+        throwOnError: true,
+        accessToken: collaboration.accessToken || undefined,
+        secureSharing: collaboration.sharingMode === "supabase",
+      }),
+    ]);
+    applyLoadedServerState(loaded, loadedTrash, collaboration.sharingMode);
+    if (activeProjectId && !loaded.some((project) => project.id === activeProjectId)) {
+      setActiveProjectId("");
+      writeStoredActiveProjectId("");
+      throw new Error("The selected project no longer exists on the server.");
+    }
+    setLoadError(null);
+  }, [activeProjectId, applyLoadedServerState, collaboration.accessToken, collaboration.sharingMode]);
+
+  const setEditStartRefresh = collaboration.setEditStartRefresh;
+  useEffect(() => {
+    setEditStartRefresh(refreshLatestServerStateForEditStart);
+    return () => setEditStartRefresh(null);
+  }, [setEditStartRefresh, refreshLatestServerStateForEditStart]);
+
   const requireEditMode = useCallback((): boolean => {
     if (collaboration.canEdit) return true;
     collaboration.readOnlyMessage();
     return false;
   }, [collaboration]);
 
-  const collaborationBar = <CollaborationBar collaboration={collaboration} />;
+  const collaborationBar = <CollaborationBar collaboration={collaboration} projectUpdatedAt={activeProject?.updatedAt} />;
 
   const recoverProjectSaveConflict = useCallback(
     async (
@@ -588,7 +627,7 @@ export default function Home() {
       projectToSave: ProjectData,
       nextProjects: ProjectData[],
       expectedUpdatedAt: string,
-      saveIdentity: typeof collaboration.editIdentity,
+      saveIdentity: CollaborationSaveIdentity | undefined,
     ): Promise<ProjectData | null> => {
       if (!isProjectSaveConflictError(error)) throw error;
 

@@ -37,6 +37,7 @@ import {
   roomSceneSelectedAreaSceneId,
   roomSceneSettingValue,
   roomSceneUsesAreaSceneValue,
+  sceneMatchesArea,
   sceneRawValuesForCircuit,
   sceneRawValuesForTarget,
   sceneValueForCircuit,
@@ -2611,16 +2612,11 @@ export default function CfsView({
     return target?.dimmingType || "Level";
   }
 
-  function sceneIdsForSwitchTarget(sw: SwitchEntry, targetId: string, areaId: string): string[] {
-    const selectedIds = selectedSceneIdsForSwitch(sw).filter((sceneId) => scenesById.has(sceneId));
-    if (selectedIds.length === 0) return [];
-    const sameAreaIds = selectedIds.filter((sceneId) => scenesById.get(sceneId)?.areaId === areaId);
-    if (sameAreaIds.length > 0) return sameAreaIds;
-    const withExistingValue = selectedIds.filter((sceneId) => {
-      const scene = scenesById.get(sceneId);
-      return scene ? sceneValueForCircuit(scene, targetId) : false;
-    });
-    return withExistingValue.length > 0 ? withExistingValue : selectedIds;
+  function sceneIdsForSwitchTarget(sw: SwitchEntry, _targetId: string, areaId: string): string[] {
+    return selectedSceneIdsForSwitch(sw)
+      .map((sceneId) => scenesById.get(sceneId))
+      .filter((scene): scene is Scene => scene !== undefined && sceneMatchesArea(scene, areaId))
+      .map((scene) => scene.id);
   }
 
   function inspectionDraftKey(sourceType: InspectionDraftSource, sourceId: string, targetId: string): string {
@@ -3647,7 +3643,7 @@ export default function CfsView({
         .find((setting) => setting.circuitId === row.hvacSettingId)
         ?.percentage ?? "";
       if (direct.trim()) return [formatLevel(direct, dimmingType)];
-      return sceneRawValuesForTarget(col.source, row.hvacSettingId, scenesById)
+      return sceneRawValuesForTarget(col.source, row.hvacSettingId, row.locationId, scenesById)
         .map((value) => formatLevel(value, dimmingType))
         .filter(Boolean);
     }
@@ -3712,7 +3708,7 @@ export default function CfsView({
         .find((setting) => setting.circuitId === item.circuit.id)
         ?.percentage.trim() ?? "";
       if (!direct) return false;
-      const sceneValues = sceneRawValuesForCircuit(sw, item.circuit.id, scenesById);
+      const sceneValues = sceneRawValuesForCircuit(sw, item.circuit, scenesById);
       if (sceneValues.length === 0) return false;
       const normalizedDirect = normalizeLevelForCompare(direct);
       return sceneValues.some((sceneValue) => normalizeLevelForCompare(sceneValue) !== normalizedDirect);
@@ -3851,14 +3847,14 @@ export default function CfsView({
   function hasAreaSceneValueCell(row: CfsZoneRow, col: FunctionColumn): boolean {
     if (row.isBacklight) return false;
     if (row.isHvac && row.hvacSettingId) {
-      return col.source ? switchUsesAreaSceneValue(col.source, row.hvacSettingId, scenesById) : false;
+      return col.source ? switchUsesAreaSceneValue(col.source, row.hvacSettingId, row.locationId, scenesById) : false;
     }
     if (row.circuits.length === 0) return false;
     if (col.roomScene) {
       return row.circuits.some((item) => roomSceneUsesAreaSceneValue(col.roomScene!, item.circuit, scenesById));
     }
     if (col.source) {
-      return row.circuits.some((item) => switchUsesAreaSceneValue(col.source!, item.circuit.id, scenesById));
+      return row.circuits.some((item) => switchUsesAreaSceneValue(col.source!, item.circuit.id, item.circuit.area, scenesById));
     }
     return false;
   }

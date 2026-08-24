@@ -8,6 +8,7 @@ import { ActionIcon } from "./ActionIconButton";
 interface CollaborationBarProps {
   collaboration: CollaborationController;
   compact?: boolean;
+  projectUpdatedAt?: string | null;
 }
 
 function displayTime(value: string | null | undefined): string {
@@ -29,7 +30,14 @@ function compactMessage(message: string): string {
   return trimmed;
 }
 
-export default function CollaborationBar({ collaboration, compact = false }: CollaborationBarProps) {
+function isRemoteProjectNewer(remote: string | null | undefined, local: string | null | undefined): boolean {
+  if (!remote || !local) return false;
+  const remoteTime = Date.parse(remote);
+  const localTime = Date.parse(local);
+  return Number.isFinite(remoteTime) && Number.isFinite(localTime) && remoteTime > localTime;
+}
+
+export default function CollaborationBar({ collaboration, compact = false, projectUpdatedAt = null }: CollaborationBarProps) {
   const [displayName, setDisplayName] = useState(collaboration.user?.displayName || "");
   const [email, setEmail] = useState(collaboration.user?.email || "");
   const [memberEmail, setMemberEmail] = useState("");
@@ -44,6 +52,7 @@ export default function CollaborationBar({ collaboration, compact = false }: Col
   const occupied = Boolean(collaboration.lock && !editing);
   const canStartEditing = !occupied && (!secure || collaboration.role === "editor" || collaboration.role === "admin");
   const canForceRelease = occupied && (!secure ? signedIn : collaboration.role === "admin");
+  const hasRemoteProjectUpdate = !editing && isRemoteProjectNewer(collaboration.lastUpdatedAt, projectUpdatedAt);
   const idleMinutes = Math.max(1, Math.round(collaboration.idleMs / 60000));
   const lastUpdatedText = collaboration.lastUpdatedBy
     ? `${collaboration.lastUpdatedBy.displayName} / ${displayTime(collaboration.lastUpdatedBy.updatedAt)}`
@@ -158,6 +167,11 @@ export default function CollaborationBar({ collaboration, compact = false }: Col
           <div>
             <span className="collaboration-primary" title={primaryText}>{compact ? compactPrimaryText : primaryText}</span>
             {!compact ? <span className="collaboration-meta">Last saved: {lastUpdatedText}</span> : null}
+            {hasRemoteProjectUpdate ? (
+              <span className="collaboration-refresh-notice" role="status" title="他のユーザーが保存しました。Editで最新に更新されます。">
+                他のユーザーが保存しました。Editで最新に更新されます。
+              </span>
+            ) : null}
             {collaboration.message ? <span className="collaboration-message" title={collaboration.message}>{compact ? compactMessage(collaboration.message) : collaboration.message}</span> : null}
           </div>
         </div>

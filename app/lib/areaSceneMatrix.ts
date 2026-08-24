@@ -7,6 +7,7 @@ import type {
   SwitchEntry,
 } from "../types";
 import { formatLevel } from "./cfsValueResolver";
+import { OTHER_AREA_ID } from "./cfsTableModel";
 import {
   circuitGroupMembers,
   sceneSettingValueForCircuitGroup,
@@ -14,7 +15,6 @@ import {
 } from "./circuitGroups";
 import { escapeCsvField } from "./csv";
 import {
-  OTHER_AREA_ID,
   circuitSettingTarget,
   curtainSettingTargets,
   hvacSettingTargets,

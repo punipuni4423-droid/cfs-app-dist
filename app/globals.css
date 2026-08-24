@@ -231,7 +231,8 @@ body {
 }
 
 .collaboration-meta,
-.collaboration-message {
+.collaboration-message,
+.collaboration-refresh-notice {
   color: var(--color-text-secondary);
   font-size: 0.78rem;
   font-weight: 700;
@@ -239,6 +240,18 @@ body {
 
 .collaboration-message {
   color: var(--color-accent);
+}
+
+.collaboration-refresh-notice {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.45rem;
+  padding: 0 0.5rem;
+  border: 1px solid #f3c96a;
+  border-radius: var(--radius-pill);
+  background: #fff7d6;
+  color: #8a5b00;
+  white-space: nowrap;
 }
 
 .modal-backdrop {
@@ -1913,7 +1926,8 @@ textarea:disabled {
 }
 
 .collaboration-bar.is-compact .collaboration-primary,
-.collaboration-bar.is-compact .collaboration-message {
+.collaboration-bar.is-compact .collaboration-message,
+.collaboration-bar.is-compact .collaboration-refresh-notice {
   flex: 0 0 auto;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1924,7 +1938,8 @@ textarea:disabled {
   max-width: 7rem;
 }
 
-.collaboration-bar.is-compact .collaboration-message {
+.collaboration-bar.is-compact .collaboration-message,
+.collaboration-bar.is-compact .collaboration-refresh-notice {
   max-width: 8rem;
 }
 

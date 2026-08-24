@@ -1,4 +1,5 @@
 import type { CircuitEntry, RoomScene, Scene, SceneCircuitSetting, SwitchEntry } from "../types";
+import { OTHER_AREA_ID } from "./cfsTableModel";
 
 export function uniqueNonEmptyValues(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
@@ -54,6 +55,16 @@ export function selectedSceneIdsForSwitch(sw: SwitchEntry): string[] {
   );
 }
 
+function normalizedAreaId(areaId: string | null | undefined): string {
+  return (areaId ?? "").trim() || OTHER_AREA_ID;
+}
+
+// Area Scene settings may outlive a target's area change. Every CFS consumer
+// must ignore stale settings from scenes outside the target's current area.
+export function sceneMatchesArea(scene: Scene, areaId: string | null | undefined): boolean {
+  return normalizedAreaId(scene.areaId) === normalizedAreaId(areaId);
+}
+
 // Scene-name lines inside CFS cell stacks are tagged with this prefix so the
 // renderer bolds exactly the Area Scene name, never a setting value. The old
 // even/odd line heuristic mis-bolded values whenever a zone row mixed a
@@ -88,7 +99,7 @@ export function cellValues(
       // can hold stale rows for circuits that were later moved to another
       // area (e.g. TP-08 Vanity -> Bedroom, 2026-08-24); without this guard
       // the old area's scene added a second name/value pair to the cell.
-      if (scene.areaId !== circuit.area) return [];
+      if (!sceneMatchesArea(scene, circuit.area)) return [];
       const value = sceneValueForCircuit(scene, circuit.id);
       if (!value) return [];
       const formattedValue = formatLevel(value, circuit.dimmingType);
@@ -143,22 +154,33 @@ export function roomSceneUsesAreaSceneValue(scene: RoomScene, circuit: CircuitEn
   return !direct && roomSceneHasAreaSceneValue(scene, circuit, scenesById);
 }
 
-export function sceneRawValuesForTarget(sw: SwitchEntry, targetId: string, scenesById: Map<string, Scene>): string[] {
+export function sceneRawValuesForTarget(
+  sw: SwitchEntry,
+  targetId: string,
+  areaId: string,
+  scenesById: Map<string, Scene>,
+): string[] {
   return selectedSceneIdsForSwitch(sw)
     .map((sceneId) => scenesById.get(sceneId))
     .filter((scene): scene is Scene => Boolean(scene))
+    .filter((scene) => sceneMatchesArea(scene, areaId))
     .map((scene) => sceneValueForCircuit(scene, targetId).trim())
     .filter(Boolean);
 }
 
-export function sceneRawValuesForCircuit(sw: SwitchEntry, circuitId: string, scenesById: Map<string, Scene>): string[] {
-  return sceneRawValuesForTarget(sw, circuitId, scenesById);
+export function sceneRawValuesForCircuit(sw: SwitchEntry, circuit: CircuitEntry, scenesById: Map<string, Scene>): string[] {
+  return sceneRawValuesForTarget(sw, circuit.id, circuit.area, scenesById);
 }
 
-export function switchUsesAreaSceneValue(sw: SwitchEntry, targetId: string, scenesById: Map<string, Scene>): boolean {
+export function switchUsesAreaSceneValue(
+  sw: SwitchEntry,
+  targetId: string,
+  areaId: string,
+  scenesById: Map<string, Scene>,
+): boolean {
   const direct = sw.buttonSetting.circuitSettings.find((setting) => setting.circuitId === targetId)?.percentage.trim() ?? "";
   if (direct) return false;
-  return sceneRawValuesForTarget(sw, targetId, scenesById).length > 0;
+  return sceneRawValuesForTarget(sw, targetId, areaId, scenesById).length > 0;
 }
 
 export function normalizeLevelForCompare(value: string): string {

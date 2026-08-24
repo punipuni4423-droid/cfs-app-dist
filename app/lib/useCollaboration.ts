@@ -43,6 +43,7 @@ interface CollaborationClientState {
   lock: CollaborationLock | null;
   locks: CollaborationLock[];
   lastUpdatedBy: CollaborationEditorInfo | null;
+  lastUpdatedAt: string | null;
   busy: boolean;
   message: string;
   userDialogOpen: boolean;
@@ -59,6 +60,7 @@ export interface FinishEditingOptions {
 }
 
 export type CollaborationFinishGuard = (options: { idle: boolean }) => boolean | Promise<boolean>;
+export type CollaborationEditStartRefresh = (status: CollaborationStatus) => boolean | void | Promise<boolean | void>;
 
 export interface CollaborationController extends CollaborationClientState {
   canEdit: boolean;
@@ -80,6 +82,7 @@ export interface CollaborationController extends CollaborationClientState {
   forceReleaseLock: () => Promise<void>;
   finishEditing: (options?: FinishEditingOptions) => Promise<void>;
   setFinishGuard: (guard: CollaborationFinishGuard | null) => void;
+  setEditStartRefresh: (refresh: CollaborationEditStartRefresh | null) => void;
   refreshStatus: () => Promise<void>;
   markActivity: () => void;
   readOnlyMessage: () => void;
@@ -252,6 +255,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
     lock: null,
     locks: [],
     lastUpdatedBy: null,
+    lastUpdatedAt: null,
     busy: false,
     message: "",
     userDialogOpen: false,
@@ -267,6 +271,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
   const lastHeartbeatAtRef = useRef(0);
   const heartbeatInFlightRef = useRef(false);
   const finishGuardRef = useRef<CollaborationFinishGuard | null>(null);
+  const editStartRefreshRef = useRef<CollaborationEditStartRefresh | null>(null);
   const startEditingAfterRegistrationRef = useRef(false);
   const projectIdRef = useRef(scopedProjectId);
 
@@ -298,6 +303,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
         user,
         role: membership?.role || current.role,
         lastUpdatedBy: status.lastUpdatedBy || current.lastUpdatedBy,
+        lastUpdatedAt: status.lastUpdatedAt !== undefined ? status.lastUpdatedAt : current.lastUpdatedAt,
         leaseSeconds: Number(status.leaseSeconds) || current.leaseSeconds,
         heartbeatMs: Number(status.heartbeatMs) || current.heartbeatMs,
         idleMs: Number(status.idleMs) || current.idleMs,
@@ -328,6 +334,32 @@ export function useCollaboration(projectId = ""): CollaborationController {
     const payload = await parseJsonResponse<CollaborationReleaseResponse>(response);
     return payload.status ?? null;
   }, [authHeaders, identityBody]);
+
+  const runEditStartRefresh = useCallback(async (status: CollaborationStatus): Promise<boolean> => {
+    const refresh = editStartRefreshRef.current;
+    if (!refresh) return true;
+    setState((current) => ({ ...current, message: "Refreshing latest shared data." }));
+    try {
+      const result = await refresh(status);
+      if (result === false) throw new Error("Latest shared data could not be loaded.");
+      return true;
+    } catch (error) {
+      const message = error instanceof Error
+        ? `Latest shared data could not be loaded: ${error.message}. Edit mode was not started.`
+        : "Latest shared data could not be loaded. Edit mode was not started.";
+      try {
+        const releaseStatus = await releaseEditingLock();
+        if (releaseStatus) {
+          applyStatus(releaseStatus, message);
+        } else {
+          setState((current) => ({ ...current, mode: "view", lock: null, message }));
+        }
+      } catch {
+        setState((current) => ({ ...current, mode: "view", message: `${message} The edit lock could not be released immediately and will expire automatically.` }));
+      }
+      return false;
+    }
+  }, [applyStatus, releaseEditingLock]);
 
   useEffect(() => {
     const previousProjectId = projectIdRef.current;
@@ -423,6 +455,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
         lock: status?.lock || null,
         locks: status?.locks || [],
         lastUpdatedBy: status?.lastUpdatedBy || current.lastUpdatedBy,
+        lastUpdatedAt: status?.lastUpdatedAt !== undefined ? status.lastUpdatedAt : current.lastUpdatedAt,
         leaseSeconds: Number(status?.leaseSeconds) || current.leaseSeconds,
         heartbeatMs: Number(status?.heartbeatMs) || current.heartbeatMs,
         idleMs: Number(status?.idleMs) || current.idleMs,
@@ -576,6 +609,8 @@ export function useCollaboration(projectId = ""): CollaborationController {
           applyStatus(lockPayload.status, `${owner} is editing. Stay in view mode.`);
           return;
         }
+        const refreshed = await runEditStartRefresh(lockPayload.status);
+        if (!refreshed) return;
         lastActivityAtRef.current = Date.now();
         lastHeartbeatAtRef.current = Date.now();
         applyStatus(lockPayload.status, "Editing started.");
@@ -594,7 +629,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       setState((current) => ({ ...current, busy: false, message: "User registration failed." }));
       window.alert(error instanceof Error ? error.message : "User registration failed.");
     }
-  }, [applyStatus, authHeaders, refreshStatus]);
+  }, [applyStatus, authHeaders, refreshStatus, runEditStartRefresh]);
 
   const requestMicrosoftSignIn = useCallback(async (emailHint = ""): Promise<void> => {
     const normalizedHint = emailHint.trim().toLowerCase();
@@ -704,6 +739,8 @@ export function useCollaboration(projectId = ""): CollaborationController {
         applyStatus(payload.status, `${owner} is editing. Stay in view mode.`);
         return;
       }
+      const refreshed = await runEditStartRefresh(payload.status);
+      if (!refreshed) return;
       lastActivityAtRef.current = Date.now();
       lastHeartbeatAtRef.current = Date.now();
       applyStatus(payload.status, "Editing started.");
@@ -712,7 +749,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
     } finally {
       setState((next) => ({ ...next, busy: false }));
     }
-  }, [applyStatus, authHeaders, identityBody, openUserDialog]);
+  }, [applyStatus, authHeaders, identityBody, runEditStartRefresh]);
 
   const forceReleaseLock = useCallback(async (): Promise<void> => {
     const current = stateRef.current;
@@ -749,6 +786,10 @@ export function useCollaboration(projectId = ""): CollaborationController {
 
   const setFinishGuard = useCallback((guard: CollaborationFinishGuard | null): void => {
     finishGuardRef.current = guard;
+  }, []);
+
+  const setEditStartRefresh = useCallback((refresh: CollaborationEditStartRefresh | null): void => {
+    editStartRefreshRef.current = refresh;
   }, []);
 
   const finishEditing = useCallback(async (options: FinishEditingOptions = {}): Promise<void> => {
@@ -920,6 +961,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
     forceReleaseLock,
     finishEditing,
     setFinishGuard,
+    setEditStartRefresh,
     refreshStatus,
     markActivity,
     readOnlyMessage,
