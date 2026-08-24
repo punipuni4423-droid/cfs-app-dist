@@ -242,11 +242,17 @@ test.describe("Area Scene overview", () => {
       const labels = [...toolbar.querySelectorAll<HTMLElement>("button")].map((button) => ({
         label: button.textContent?.trim() ?? "",
         left: Math.round(button.getBoundingClientRect().left),
+        height: Math.round(button.getBoundingClientRect().height * 100) / 100,
+        fontSize: getComputedStyle(button).fontSize,
+        fontWeight: getComputedStyle(button).fontWeight,
       }));
       return { left: Math.round(toolbar.getBoundingClientRect().left), labels: labels.slice(0, 3) };
     });
-    expect(toolbarMetrics.labels.map((item) => item.label)).toEqual(["Base", "Display", "CSV"]);
+    expect(toolbarMetrics.labels.map((item) => item.label)).toEqual(["Base", "Display", "CSV Export"]);
     expect(Math.abs(toolbarMetrics.labels[0].left - toolbarMetrics.left)).toBeLessThanOrEqual(1);
+    expect(new Set(toolbarMetrics.labels.map((item) => item.height)).size).toBe(1);
+    expect(new Set(toolbarMetrics.labels.map((item) => item.fontSize))).toEqual(new Set(["13.76px"]));
+    expect(new Set(toolbarMetrics.labels.map((item) => item.fontWeight))).toEqual(new Set(["800"]));
 
     const sceneHeaders = table.locator("thead th:not([data-base-column])");
     await expect(sceneHeaders.nth(0)).toContainText("Welcome Day");
@@ -347,7 +353,7 @@ test.describe("Area Scene overview", () => {
 
     await expect(table.locator("input, select")).toHaveCount(0);
     const downloadPromise = page.waitForEvent("download");
-    await page.getByRole("button", { name: "CSV" }).click();
+    await page.getByRole("button", { name: "CSV Export" }).click();
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toMatch(/^AreaScene_RT_A_\d{8}\.csv$/);
 

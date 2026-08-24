@@ -426,8 +426,8 @@ export default function AreaSceneOverview({
   let renderedRowNumber = 0;
   return (
     <div className="area-scene-overview" data-testid="area-scene-overview">
-      <div className="area-scene-overview-toolbar">
-        <div className="area-scene-overview-actions">
+      <div className="area-scene-overview-toolbar cfs-matrix-toolbar">
+        <div className="area-scene-overview-actions cfs-matrix-controls">
           <CfsFilterMenu
             label="Base Columns"
             displayLabel="Base"
@@ -503,7 +503,7 @@ export default function AreaSceneOverview({
               </label>
             </>
           </CfsFilterMenu>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={handleDownloadCsv}>CSV</button>
+          <button type="button" className="btn btn-secondary" onClick={handleDownloadCsv}>CSV Export</button>
           <span className="muted-pill">{visibleRowCount} rows</span>
         </div>
       </div>
