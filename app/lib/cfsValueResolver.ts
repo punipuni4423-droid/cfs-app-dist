@@ -84,6 +84,11 @@ export function cellValues(
     .map((sceneId) => scenesById.get(sceneId))
     .filter((scene): scene is Scene => Boolean(scene))
     .flatMap((scene) => {
+      // Only the scene of the circuit's own area may label this cell. Scenes
+      // can hold stale rows for circuits that were later moved to another
+      // area (e.g. TP-08 Vanity -> Bedroom, 2026-08-24); without this guard
+      // the old area's scene added a second name/value pair to the cell.
+      if (scene.areaId !== circuit.area) return [];
       const value = sceneValueForCircuit(scene, circuit.id);
       if (!value) return [];
       const formattedValue = formatLevel(value, circuit.dimmingType);
