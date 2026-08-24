@@ -54,6 +54,20 @@ export function selectedSceneIdsForSwitch(sw: SwitchEntry): string[] {
   );
 }
 
+// Scene-name lines inside CFS cell stacks are tagged with this prefix so the
+// renderer bolds exactly the Area Scene name, never a setting value. The old
+// even/odd line heuristic mis-bolded values whenever a zone row mixed a
+// direct-override circuit (1 line) with an area-scene circuit (2 lines).
+export const SCENE_NAME_LINE_PREFIX = "\u0001";
+
+export function stripSceneNameLinePrefix(value: string): string {
+  return value.startsWith(SCENE_NAME_LINE_PREFIX) ? value.slice(1) : value;
+}
+
+export function isSceneNameLine(value: string): boolean {
+  return value.startsWith(SCENE_NAME_LINE_PREFIX);
+}
+
 export function cellValues(
   sw: SwitchEntry,
   circuit: CircuitEntry,
@@ -77,7 +91,7 @@ export function cellValues(
       const key = `${showAreaSceneNames ? label : ""}\u0000${formattedValue}`;
       if (seenSceneValues.has(key)) return [];
       seenSceneValues.add(key);
-      return showAreaSceneNames && label ? [label, formattedValue] : [formattedValue];
+      return showAreaSceneNames && label ? [SCENE_NAME_LINE_PREFIX + label, formattedValue] : [formattedValue];
     })
     .filter(Boolean)
     .filter((value) => value.trim() !== "");
@@ -103,7 +117,7 @@ export function roomSceneCellValue(
   if (!areaSceneValue) return [];
   const formattedValue = formatLevel(areaSceneValue, circuit.dimmingType);
   const label = areaSceneDisplayName(areaScene);
-  return showAreaSceneNames && label ? [label, formattedValue] : [formattedValue];
+  return showAreaSceneNames && label ? [SCENE_NAME_LINE_PREFIX + label, formattedValue] : [formattedValue];
 }
 
 export function roomSceneSettingValue(scene: RoomScene, targetId: string, dimmingType: string): string {

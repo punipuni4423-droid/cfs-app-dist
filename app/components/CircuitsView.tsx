@@ -48,7 +48,9 @@ interface CircuitsViewProps {
 const COL_COUNT = 15;
 const DRY_CONTACT_COL_COUNT = 6;
 const MAX_IMPORT_FILE_SIZE = 5 * 1024 * 1024;
-const CIRCUIT_COLUMN_WIDTHS = [36, 44, 130, 100, 120, 140, 44, 150, 86, 70, 80, 60, 80, 200, 96] as const;
+// pcs column (index 8) must fit the value combobox plus the 2x2 step-button
+// grid used by indirect fixtures; 86px clipped the buttons / bled into VA.
+const CIRCUIT_COLUMN_WIDTHS = [36, 44, 130, 100, 120, 140, 44, 150, 170, 70, 80, 60, 80, 200, 96] as const;
 type CircuitViewMode = "lighting" | "dryContact";
 const EMPTY_SUGGESTIONS: readonly SuggestionOption[] = [];
 
@@ -840,7 +842,7 @@ export default function CircuitsView({
                 +
               </th>
               <th style={{ minWidth: 150 }}>Fixture</th>
-              <th style={{ minWidth: 70 }}>pcs.</th>
+              <th style={{ minWidth: 170 }}>pcs.</th>
               <th style={{ minWidth: 70 }}>VA</th>
               <th style={{ minWidth: 80 }}>Total VA</th>
               <th className="col-center" style={{ minWidth: 60 }}>FFE</th>

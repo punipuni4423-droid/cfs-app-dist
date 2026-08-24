@@ -1,11 +1,16 @@
 import type { CfsCircuit, CircuitEntry, CurtainAssignment, DeviceAssignment, HvacAssignment, LocationMaster, SwitchEntry } from "../types";
 import { corridorPicoLedTargets } from "./picoSpecials";
+import { circuitGroupMembers, uniqueCircuitGroupHeads } from "./circuitGroups";
 import { isOnOffLikeDimmingType } from "./settingValues";
 
 export const HVAC_METRICS = ["On/Off", "Setpoint", "Fan Mode", "Drift"] as const;
 
 export interface SettingTarget {
   id: string;
+  // All circuit row ids of the target's circuit group. Setting overlays show
+  // one row per circuit (Designer #) and write the value to every member row
+  // (2026-08-24), matching the Area Scene tab behavior.
+  groupCircuitIds?: string[];
   areaId: string;
   areaName: string;
   circuitNumber: string;
@@ -28,6 +33,12 @@ export interface SettingTargetGroup {
 }
 
 export const OTHER_AREA_ID = "__other__";
+
+export function settingTargetIds(target: SettingTarget): string[] {
+  return target.groupCircuitIds && target.groupCircuitIds.length > 0
+    ? target.groupCircuitIds
+    : [target.id];
+}
 
 export function hvacSettingId(assignmentId: string, metric: string): string {
   return `hvac:${assignmentId}:${metric}`;
@@ -185,7 +196,10 @@ export function buildSettingTargetGroups(
   switches: readonly SwitchEntry[] = [],
 ): SettingTargetGroup[] {
   const targets = [
-    ...circuits.map((circuit) => circuitSettingTarget(circuit, locations)),
+    ...uniqueCircuitGroupHeads(circuits).map((head) => ({
+      ...circuitSettingTarget(head, locations),
+      groupCircuitIds: circuitGroupMembers(circuits, head).map((member) => member.id),
+    })),
     ...ccoSettingTargets(deviceAssignments, locations),
     ...cfsOnlySettingTargets(cfsOnlyRows, locations),
     ...curtainSettingTargets(curtainAssignments, locations),

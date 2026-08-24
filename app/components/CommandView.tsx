@@ -24,7 +24,7 @@ import { useDragReorder } from "../lib/useDragReorder";
 import { selectedSceneIdsForSwitch as selectedSceneIds } from "../lib/cfsValueResolver";
 import AutoGrowTextarea from "./AutoGrowTextarea";
 import Combobox from "./Combobox";
-import { buildSettingTargetGroups, hvacSettingTargets as buildHvacSettingTargets, type SettingTarget } from "../lib/settingTargets";
+import { buildSettingTargetGroups, hvacSettingTargets as buildHvacSettingTargets, settingTargetIds, type SettingTarget } from "../lib/settingTargets";
 import {
   bulkModeAppliesToTarget,
   clampPercentValue,
@@ -283,7 +283,10 @@ export default function CommandView({
     setAreaBulkValues((prev) => ({ ...prev, [key]: value }));
     if (!value) return;
     const updated = areaTargets.reduce(
-      (next, target) => (!target.isOnOff && !isCurtainTarget(target) ? setCircuitSetting(next, target.id, value) : next),
+      (next, target) =>
+        !target.isOnOff && !isCurtainTarget(target)
+          ? settingTargetIds(target).reduce((acc, id) => setCircuitSetting(acc, id, value), next)
+          : next,
       sw,
     );
     updateButtonSetting(sw.id, updated.buttonSetting);
@@ -302,7 +305,9 @@ export default function CommandView({
     const updated = areaTargets.reduce((next, target) => {
       if (isCurtainTarget(target) && mode !== "clear") return next;
       const value = settingValueForBulkMode(mode, target.isOnOff, areaBulkValues[key] || "");
-      return value === null ? next : setCircuitSetting(next, target.id, value);
+      return value === null
+        ? next
+        : settingTargetIds(target).reduce((acc, id) => setCircuitSetting(acc, id, value), next);
     }, sw);
     updateButtonSetting(sw.id, updated.buttonSetting);
   }
@@ -325,20 +330,25 @@ export default function CommandView({
     });
   }
 
+  // One setting row represents a whole circuit group; read the first
+  // non-empty member value (legacy data may only have some rows filled).
+  function getTargetValue(sw: SwitchEntry, target: SettingTarget): string {
+    for (const id of settingTargetIds(target)) {
+      const value = getPercent(sw, id);
+      if (value.trim() !== "") return value;
+    }
+    return "";
+  }
+
   function handleTargetValueChange(sw: SwitchEntry, target: SettingTarget, raw: string): void {
     const value = target.isOnOff || ["Raise", "Lower", "0.5 sec", "Blinking (Short)", "Blinking (Long)"].includes(raw) ? raw : clampPercent(raw);
-    const updated = setCircuitSetting(sw, target.id, value);
+    const updated = settingTargetIds(target).reduce((next, id) => setCircuitSetting(next, id, value), sw);
     updateButtonSetting(sw.id, updated.buttonSetting);
   }
 
   function stepTargetPercent(sw: SwitchEntry, target: SettingTarget, delta: number): void {
-    const current = Number.parseFloat(getPercent(sw, target.id) || "0");
+    const current = Number.parseFloat(getTargetValue(sw, target) || "0");
     handleTargetValueChange(sw, target, String(current + delta));
-  }
-
-  function clearCircuitSetting(sw: SwitchEntry, circuitId: string): void {
-    const updated = setCircuitSetting(sw, circuitId, "");
-    updateButtonSetting(sw.id, updated.buttonSetting);
   }
 
   // Settings open in the same full-page overlay as the Switch tab: one
@@ -594,7 +604,7 @@ export default function CommandView({
                 settingTargetGroups.map((area) => {
                   const bulkKey = areaKey(sw.id, area.id);
                   const open = expandedAreaKeys.has(bulkKey);
-                  const hasAreaSetting = area.targets.some((target) => getPercent(sw, target.id).trim() !== "");
+                  const hasAreaSetting = area.targets.some((target) => getTargetValue(sw, target).trim() !== "");
                   return (
                     <div className="switch-area-panel" key={area.id}>
                       <button
@@ -653,7 +663,7 @@ export default function CommandView({
                             </thead>
                             <tbody>
                               {area.targets.map((target) => {
-                                const value = getPercent(sw, target.id);
+                                const value = getTargetValue(sw, target);
                                 return (
                                   <tr key={target.id}>
                                     <td><span className="cell-readonly">{target.circuitNumber}</span></td>
@@ -708,7 +718,7 @@ export default function CommandView({
                                           <button
                                             type="button"
                                             className="btn-clear-circuit"
-                                            onClick={() => clearCircuitSetting(sw, target.id)}
+                                            onClick={() => handleTargetValueChange(sw, target, "")}
                                             disabled={!canEdit}
                                           >
                                             Uneffected

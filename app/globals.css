@@ -1541,7 +1541,7 @@ textarea:disabled {
 }
 
 .lighting-circuits-table {
-  min-width: 1536px;
+  min-width: 1636px;
   table-layout: fixed;
 }
 
@@ -5543,6 +5543,11 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   font-weight: 900;
 }
 
+/* Off / 0% values render in blue so unlit states stand out (2026-08-24). */
+.cfs-function-cell .cfs-off-value-line {
+  color: #2563eb;
+}
+
 .cfs-ffe-row > td:not(.cfs-no-col):not(.cfs-base-device):not(.cfs-base-deviceNum):not(.cfs-base-dimmingType),
 .cfs-ffe-row .cfs-sticky-base:not(.cfs-no-col):not(.cfs-base-device):not(.cfs-base-deviceNum):not(.cfs-base-dimmingType),
 .cfs-ffe-row .cfs-function-cell {
@@ -8422,19 +8427,22 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 
 .pcs-cell-control {
   display: grid;
-  grid-template-columns: minmax(4.5rem, 1fr) auto;
+  /* Must fit inside the fixed-layout pcs column (170px header width):
+     value combobox + the 2x2 step-button grid, no bleed into the VA column. */
+  grid-template-columns: minmax(3.8rem, 1fr) auto;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.25rem;
+  min-width: 0;
 }
 
 .pcs-step-buttons {
   display: grid;
-  grid-template-columns: repeat(2, minmax(2.6rem, auto));
-  gap: 0.18rem;
+  grid-template-columns: repeat(2, minmax(2.2rem, auto));
+  gap: 0.15rem;
 }
 
 .pcs-step-buttons-compact {
-  grid-template-columns: minmax(2.6rem, auto);
+  grid-template-columns: minmax(2.2rem, auto);
 }
 
 .pcs-step-buttons button {

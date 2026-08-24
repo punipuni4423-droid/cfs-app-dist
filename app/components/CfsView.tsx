@@ -25,6 +25,8 @@ import { buildCfsLinkageGraph, sourceIdsForIssue, type CfsLinkIssue } from "../l
 import {
   areaSceneDisplayName,
   cellValues,
+  isSceneNameLine,
+  stripSceneNameLinePrefix,
   formatLevel,
   hasSetting,
   isPercentInspectionType,
@@ -627,25 +629,67 @@ function pirAreaNumberSummary(sw: SwitchEntry, locations: LocationMaster[]): str
   return "-";
 }
 
+function isOffLikeDisplayValue(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === "Off" || trimmed === "0%" || trimmed === "0";
+}
+
+// Deterministic color per Area Scene NAME: the same scene name gets the same
+// color in every area and room type (2026-08-24). Off-like names keep the
+// shared blue from the off-value rule instead.
+const SCENE_NAME_COLORS = [
+  "#b45309", // amber-700
+  "#0f766e", // teal-700
+  "#7c3aed", // violet-600
+  "#be185d", // pink-700
+  "#166534", // green-800
+  "#0369a1", // sky-700
+  "#a16207", // yellow-700
+  "#dc2626", // red-600
+  "#4d7c0f", // lime-700
+  "#6d28d9", // purple-700
+];
+
+function sceneNameColor(name: string): string {
+  const normalized = name.trim().toLowerCase();
+  let hash = 0;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash = (hash * 31 + normalized.charCodeAt(index)) >>> 0;
+  }
+  return SCENE_NAME_COLORS[hash % SCENE_NAME_COLORS.length];
+}
+
 function renderStack(
   values: string[],
   placeholder = "-",
-  options?: { emphasizeSceneNameLines?: boolean },
+  options?: { emphasizeSceneNameLines?: boolean; sceneNameColors?: Map<string, string> },
 ): ReactNode {
   const safeValues = values.length > 0 ? values : [placeholder];
-  const title = safeValues.map((value) => value || placeholder).join(" / ");
+  const title = safeValues.map((value) => stripSceneNameLinePrefix(value) || placeholder).join(" / ");
   return (
     <div className={safeValues.length > 1 ? "cfs-cell-stack" : undefined} title={title}>
-      {safeValues.map((value, index) => (
-        <div
-          key={`${value}-${index}`}
-          className={`cfs-cell-line${
-            options?.emphasizeSceneNameLines && index % 2 === 0 ? " cfs-scene-name-line" : ""
-          }`}
-        >
-          {value || placeholder}
-        </div>
-      ))}
+      {safeValues.map((value, index) => {
+        // Scene-name lines carry an explicit prefix from the value resolver;
+        // never infer them from line position (see SCENE_NAME_LINE_PREFIX).
+        const sceneName = options?.emphasizeSceneNameLines && isSceneNameLine(value);
+        const text = stripSceneNameLinePrefix(value);
+        const offLike = isOffLikeDisplayValue(text);
+        const nameStyle =
+          sceneName && !offLike && text.trim() !== ""
+            ? { color: options?.sceneNameColors?.get(text.trim().toLowerCase()) ?? sceneNameColor(text) }
+            : undefined;
+        return (
+          <div
+            key={`${text}-${index}`}
+            style={nameStyle}
+            className={`cfs-cell-line${sceneName ? " cfs-scene-name-line" : ""}${
+              offLike ? " cfs-off-value-line" : ""
+            }`}
+          >
+            {text || placeholder}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1094,6 +1138,21 @@ export default function CfsView({
     }
     return map;
   }, [roomType.switches]);
+
+  // Palette order follows the room type's Area Scene registration order so
+  // every distinct scene name gets a distinct color (same name = same color
+  // across areas). Hash fallback only covers names not registered here.
+  const sceneNameColors = useMemo(() => {
+    const map = new Map<string, string>();
+    let index = 0;
+    for (const scene of roomType.scenes) {
+      const key = scene.name.trim().toLowerCase();
+      if (!key || isOffLikeDisplayValue(scene.name) || map.has(key)) continue;
+      map.set(key, SCENE_NAME_COLORS[index % SCENE_NAME_COLORS.length]);
+      index += 1;
+    }
+    return map;
+  }, [roomType.scenes]);
 
   const functionColumns = useMemo<FunctionColumn[]>(() => {
     const sceneColumns: FunctionColumn[] = sortRoomScenesByGroup(roomType.roomScenes)
@@ -2201,7 +2260,7 @@ export default function CfsView({
 
     function stackedText(values: string[], placeholder = "-"): string {
       const safeValues = values.length > 0 ? values : [placeholder];
-      return safeValues.map((value) => value || placeholder).join("\n");
+      return safeValues.map((value) => stripSceneNameLinePrefix(value) || placeholder).join("\n");
     }
 
     function splitHeaderText(value: string): string {
@@ -3308,6 +3367,7 @@ export default function CfsView({
   ): ReactNode {
     const content = renderStack(values, row.isBacklight ? "" : "-", {
       emphasizeSceneNameLines: isAreaSceneValue && values.length > 1,
+      sceneNameColors,
     });
     const model = inspectionCellModel(row, col);
     if (!model.editable) return content;
@@ -5287,6 +5347,7 @@ export default function CfsView({
                             ? renderInspectionCellContent(row, col, values, isAreaSceneValue)
                             : renderStack(values, row.isBacklight ? "" : "-", {
                                 emphasizeSceneNameLines: isAreaSceneValue && values.length > 1,
+                                sceneNameColors,
                               })}
                         </td>
                       );

@@ -26,7 +26,7 @@ import { useDragReorder } from "../lib/useDragReorder";
 import ActionIconButton from "./ActionIconButton";
 import AutoGrowTextarea from "./AutoGrowTextarea";
 import Combobox from "./Combobox";
-import { buildSettingTargetGroups, hvacSettingTargets as buildHvacSettingTargets, type SettingTarget } from "../lib/settingTargets";
+import { buildSettingTargetGroups, hvacSettingTargets as buildHvacSettingTargets, settingTargetIds, type SettingTarget } from "../lib/settingTargets";
 import {
   bulkModeAppliesToTarget,
   clampPercentValue,
@@ -229,6 +229,26 @@ export default function RoomSceneView({
     commitRoomScenes(effectiveRoomScenes.map((scene) => (scene.id === id ? setSetting(scene, circuitId, value) : scene)));
   }
 
+  // One setting row represents a whole circuit group: write to every member
+  // row, read the first non-empty member value.
+  function updateTargetSetting(id: string, target: SettingTarget, value: string): void {
+    commitRoomScenes(
+      effectiveRoomScenes.map((scene) =>
+        scene.id === id
+          ? settingTargetIds(target).reduce((next, circuitId) => setSetting(next, circuitId, value), scene)
+          : scene,
+      ),
+    );
+  }
+
+  function settingTargetValue(scene: RoomScene, target: SettingTarget): string {
+    for (const circuitId of settingTargetIds(target)) {
+      const value = settingValue(scene, circuitId);
+      if (value.trim() !== "") return value;
+    }
+    return "";
+  }
+
   function applyAreaScene(roomScene: RoomScene, areaId: string, areaSceneId: string): void {
     const nextScene = setAreaSceneSelection(roomScene, areaId, areaSceneId);
     commitRoomScenes(effectiveRoomScenes.map((item) => (item.id === roomScene.id ? nextScene : item)));
@@ -303,7 +323,7 @@ export default function RoomSceneView({
     setExpandedAreaKeys(() => {
       const next = new Set<string>();
       for (const area of areaGroups) {
-        if (area.targets.some((target) => settingValue(scene, target.id).trim() !== "")) {
+        if (area.targets.some((target) => settingTargetValue(scene, target).trim() !== "")) {
           next.add(areaKey(scene.id, area.id));
         }
       }
@@ -458,7 +478,9 @@ export default function RoomSceneView({
     if (!value) return;
     let nextScene = scene;
     for (const target of areaTargets) {
-      if (!target.isOnOff && !isCurtainTarget(target)) nextScene = setSetting(nextScene, target.id, value);
+      if (!target.isOnOff && !isCurtainTarget(target)) {
+        nextScene = settingTargetIds(target).reduce((next, circuitId) => setSetting(next, circuitId, value), nextScene);
+      }
     }
     commitRoomScenes(effectiveRoomScenes.map((item) => (item.id === scene.id ? nextScene : item)));
   }
@@ -468,7 +490,9 @@ export default function RoomSceneView({
     for (const target of areaTargets) {
       if (isCurtainTarget(target) && mode !== "clear") continue;
       const value = settingValueForBulkMode(mode, target.isOnOff, areaBulkValues[key] || "");
-      if (value !== null) nextScene = setSetting(nextScene, target.id, value);
+      if (value !== null) {
+        nextScene = settingTargetIds(target).reduce((next, circuitId) => setSetting(next, circuitId, value), nextScene);
+      }
     }
     commitRoomScenes(effectiveRoomScenes.map((item) => (item.id === scene.id ? nextScene : item)));
   }
@@ -539,7 +563,7 @@ export default function RoomSceneView({
               {areaGroups.map((area) => {
                 const key = areaKey(scene.id, area.id);
                 const open = expandedAreaKeys.has(key);
-                const hasAreaSetting = area.targets.some((target) => settingValue(scene, target.id).trim() !== "");
+                const hasAreaSetting = area.targets.some((target) => settingTargetValue(scene, target).trim() !== "");
                 return (
                   <div className="switch-area-panel" key={area.id}>
                     <button
@@ -599,7 +623,7 @@ export default function RoomSceneView({
                             </thead>
                             <tbody>
                               {area.targets.map((target) => {
-                                const value = settingValue(scene, target.id);
+                                const value = settingTargetValue(scene, target);
                                 return (
                                   <tr key={target.id}>
                                     <td><span className="cell-readonly">{target.circuitNumber}</span></td>
@@ -609,7 +633,7 @@ export default function RoomSceneView({
                                       {isCurtainTarget(target) ? (
                                         <CurtainActionButtons
                                           value={value}
-                                          onChange={(next) => updateSetting(scene.id, target.id, next)}
+                                          onChange={(next) => updateTargetSetting(scene.id, target, next)}
                                           disabled={!canEdit}
                                         />
                                       ) : target.isOnOff ? (
@@ -619,7 +643,7 @@ export default function RoomSceneView({
                                               key={quick}
                                               type="button"
                                               className={(quick === "Uneffected" ? value === "" : value === quick) ? "is-active" : ""}
-                                              onClick={() => updateSetting(scene.id, target.id, quick === "Uneffected" ? "" : quick)}
+                                              onClick={() => updateTargetSetting(scene.id, target, quick === "Uneffected" ? "" : quick)}
                                               disabled={!canEdit}
                                             >
                                               {quick}
@@ -631,14 +655,14 @@ export default function RoomSceneView({
                                           <AutoGrowTextarea
                                             className="scene-level-input"
                                             value={value}
-                                            onChange={(next) => updateSetting(scene.id, target.id, next)}
+                                            onChange={(next) => updateTargetSetting(scene.id, target, next)}
                                             disabled={!canEdit}
                                           />
                                           <div className="scene-step-grid switch-step-grid" aria-label="Level adjustment">
-                                            <button type="button" onClick={() => updateSetting(scene.id, target.id, stepPercentValue(value, 1))} disabled={!canEdit}>+1</button>
-                                            <button type="button" onClick={() => updateSetting(scene.id, target.id, stepPercentValue(value, 10))} disabled={!canEdit}>+10</button>
-                                            <button type="button" onClick={() => updateSetting(scene.id, target.id, stepPercentValue(value, -1))} disabled={!canEdit}>-1</button>
-                                            <button type="button" onClick={() => updateSetting(scene.id, target.id, stepPercentValue(value, -10))} disabled={!canEdit}>-10</button>
+                                            <button type="button" onClick={() => updateTargetSetting(scene.id, target, stepPercentValue(value, 1))} disabled={!canEdit}>+1</button>
+                                            <button type="button" onClick={() => updateTargetSetting(scene.id, target, stepPercentValue(value, 10))} disabled={!canEdit}>+10</button>
+                                            <button type="button" onClick={() => updateTargetSetting(scene.id, target, stepPercentValue(value, -1))} disabled={!canEdit}>-1</button>
+                                            <button type="button" onClick={() => updateTargetSetting(scene.id, target, stepPercentValue(value, -10))} disabled={!canEdit}>-10</button>
                                           </div>
                                           <div className="scene-quick-buttons room-scene-extra-buttons">
                                             {PERCENT_QUICK_VALUES.map((quick) => (
@@ -646,7 +670,7 @@ export default function RoomSceneView({
                                                 key={quick}
                                                 type="button"
                                                 className={(quick === "Uneffected" ? value === "" : value === quick) ? "is-active" : ""}
-                                                onClick={() => updateSetting(scene.id, target.id, quick === "Uneffected" ? "" : quick)}
+                                                onClick={() => updateTargetSetting(scene.id, target, quick === "Uneffected" ? "" : quick)}
                                                 disabled={!canEdit}
                                               >
                                                 {quick}
