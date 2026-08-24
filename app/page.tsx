@@ -7,6 +7,7 @@ import {
   createNewProject,
   downloadProjectBackup,
   emptyTrashData,
+  clearProjectDrafts,
   loadProjectDrafts,
   loadProjects,
   loadProjectsFromDatabase,
@@ -60,6 +61,27 @@ function writeStoredActiveProjectId(projectId: string): void {
     }
   } catch {
     // Navigation restore is a convenience feature; storage failures should not block editing.
+  }
+}
+
+// Browser drafts for projects that exist on the server but carry a newer
+// updatedAt. In shared (supabase) mode these are never adopted silently:
+// a tab with a stale base keeps a "newer" draft forever and resurrecting it
+// overwrote other users' saves (incident 2026-08-24).
+function newerLocalDraftsThan(serverProjects: ProjectData[]): ProjectData[] {
+  try {
+    const drafts = loadProjectDrafts();
+    if (drafts.length === 0) return [];
+    const serverById = new Map(serverProjects.map((project) => [project.id, project]));
+    return drafts.filter((draft) => {
+      const server = serverById.get(draft.id);
+      if (!server) return false;
+      const serverTime = Date.parse(server.updatedAt ?? "");
+      const draftTime = Date.parse(draft.updatedAt ?? "");
+      return Number.isFinite(draftTime) && (!Number.isFinite(serverTime) || draftTime > serverTime);
+    });
+  } catch {
+    return [];
   }
 }
 
@@ -377,11 +399,25 @@ export default function Home() {
         skipNextSave.current = true;
         skipNextTrashSave.current = true;
         rememberPersistedProjects(loaded);
-        // Keep browser-draft copies that are newer than the server snapshot:
-        // an auth-churn reload must not silently discard unsaved edits. The
-        // conflict token still tracks the server updatedAt above, so a later
-        // explicit save runs the normal conflict flow.
-        setProjects(mergeNewerLocalDrafts(loaded));
+        if (collaboration.sharingMode === "supabase") {
+          // Shared mode: the server is authoritative. Silently adopting newer
+          // browser drafts resurrected stale data and overwrote other users'
+          // saves (2026-08-24), so leftover drafts become a downloadable
+          // backup instead of the working copy.
+          const staleDrafts = newerLocalDraftsThan(loaded);
+          if (staleDrafts.length > 0) {
+            downloadProjectBackup(staleDrafts, "unsaved_browser_draft");
+            clearProjectDrafts();
+            window.alert(
+              "Unsaved browser drafts from a previous session were found. They were downloaded as a backup file and the screen now shows the latest shared data. Use Import Data if you need to restore the backup.",
+            );
+          }
+          setProjects(loaded);
+        } else {
+          // Local mode: keep browser-draft copies that are newer than the
+          // server snapshot so a reload does not discard unsaved edits.
+          setProjects(mergeNewerLocalDrafts(loaded));
+        }
         setTrash(loadedTrash);
         if (timedOut) {
           setLoadError(

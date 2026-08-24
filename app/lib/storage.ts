@@ -1222,6 +1222,10 @@ export function loadProjectDrafts(): ProjectData[] {
   return loadLocalProjectDrafts();
 }
 
+export function clearProjectDrafts(): void {
+  clearLocalProjectDrafts();
+}
+
 export function saveProjectsDraftLocally(projects: ReadonlyArray<ProjectData>): boolean {
   return saveLocalProjectDrafts(projects, { notifyOnError: false });
 }

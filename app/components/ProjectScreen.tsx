@@ -2264,6 +2264,27 @@ export default function ProjectScreen({
     return () => collaboration.setFinishGuard(null);
   }, [collaboration, openFinishRevisionDialog, revisionDraftRoomTypes.length, saveDraftRoomTypeRevisions]);
 
+  // Closing the window/tab while editing with draft changes: the browser only
+  // allows its generic leave-confirmation during beforeunload, so when the
+  // user cancels the close we surface the finish dialog (save as new revision
+  // / save current / discard draft) instead of losing the choice.
+  useEffect(() => {
+    if (collaboration.mode !== "edit" || revisionDraftRoomTypes.length === 0) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+      event.preventDefault();
+      event.returnValue = "";
+      window.setTimeout(() => {
+        // Still here => the user canceled the close; let them decide how to
+        // finish the editing session.
+        if (document.visibilityState === "visible") {
+          openFinishRevisionDialog(false, "stay");
+        }
+      }, 400);
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [collaboration.mode, revisionDraftRoomTypes.length, openFinishRevisionDialog]);
+
   const handleBackToProjectList = useCallback((): void => {
     if (collaboration.mode !== "edit") {
       onBackToProjects();
