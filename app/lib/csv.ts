@@ -8,7 +8,7 @@ type GenericCsvRow = Record<string, CsvPrimitive>;
 const UTF8_BOM = '\ufeff';
 const LEGACY_BOM_MARKERS = ['ï»¿', '・ｿ'] as const;
 
-function escapeCsvField(value: string): string {
+export function escapeCsvField(value: string): string {
   if (/[",\n\r]/.test(value)) {
     return `"${value.replace(/"/g, '""')}"`;
   }

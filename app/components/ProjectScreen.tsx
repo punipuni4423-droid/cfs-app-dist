@@ -3340,6 +3340,7 @@ export default function ProjectScreen({
               hvacSeasons={activeRoomType.hvacSeasons}
               curtainAssignments={activeRoomType.curtainAssignments ?? []}
               switches={activeRoomType.switches}
+              roomTypeName={activeRoomType.name}
               onChange={setScenes}
               revisionChanges={revisionDiff?.sceneFields}
               canEdit={canEdit}

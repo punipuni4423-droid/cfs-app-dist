@@ -15,12 +15,19 @@ import type {
 } from "../types";
 import { createEmptyScene } from "../lib/constants";
 import {
-  OTHER_AREA_ID,
-  curtainSettingTargets,
-  hvacSettingTargets,
-  picoLedSettingTargets,
   type SettingTarget,
 } from "../lib/settingTargets";
+import {
+  HVAC_AREA_ID,
+  buildAreaSceneAreas,
+  buildAreaSceneCircuitHeads,
+  buildAreaSceneCurtainTargets,
+  buildAreaSceneHvacTargets,
+  buildAreaScenePicoLedTargets,
+  buildAreaSceneTargets,
+  findFirstAreaSceneTargetAreaId,
+  type AreaSceneSourceInput,
+} from "../lib/areaSceneMatrix";
 import {
   bulkModeAppliesToTarget,
   clampPercentValue,
@@ -38,6 +45,7 @@ import {
   uniqueCircuitGroupHeads,
 } from "../lib/circuitGroups";
 import ActionIconButton from "./ActionIconButton";
+import AreaSceneOverview from "./AreaSceneOverview";
 import CurtainActionButtons from "./CurtainActionButtons";
 import HvacSettingPanel from "./HvacSettingPanel";
 import { createAppId } from '../lib/id';
@@ -54,16 +62,17 @@ interface SceneViewProps {
   onChange: (next: Scene[]) => void;
   revisionChanges?: RevisionFieldChanges;
   canEdit?: boolean;
+  roomTypeName?: string;
 }
 
 type CircuitMode = "designer" | "internal";
+type SceneViewMode = "edit" | "overview";
 type FixtureKind = "DL" | "Indirect" | "Mixed" | "Unknown";
 type BulkTarget = "all" | "checked" | "dl" | "indirect" | "onOff";
 type BulkMode = BulkSettingMode;
 type SceneDropPosition = "before" | "after";
 const PERCENT_LEVEL_VALUES = ["Raise", "Lower"];
 const ON_OFF_LEVEL_VALUES = ["On", "Off", "Blinking (Short)", "Blinking (Long)", "0.5 sec", "Uneffected"];
-const HVAC_AREA_ID = "__hvac_area_scene__";
 
 function getSetting(scene: Scene, circuitId: string): string {
   return scene.settings.find((s) => s.circuitId === circuitId)?.percentage ?? "";
@@ -100,10 +109,12 @@ export default function SceneView({
   onChange,
   revisionChanges = {},
   canEdit = true,
+  roomTypeName = "",
 }: SceneViewProps) {
   const [selectedAreaId, setSelectedAreaId] = useState("");
   const [selectedSceneId, setSelectedSceneId] = useState("");
   const [circuitMode, setCircuitMode] = useState<CircuitMode>("designer");
+  const [viewMode, setViewMode] = useState<SceneViewMode>("edit");
   const [draggingSceneId, setDraggingSceneId] = useState<string | null>(null);
   const [sceneDragOverInfo, setSceneDragOverInfo] = useState<{
     targetId: string;
@@ -198,84 +209,38 @@ export default function SceneView({
     return hasRevisionChange(id, fields) ? "revision-changed-cell" : "";
   }
 
-  const picoLedTargets = useMemo(
-    () => picoLedSettingTargets(switches, locations),
-    [switches, locations],
+  const areaSceneSource = useMemo<AreaSceneSourceInput>(
+    () => ({
+      locations,
+      circuits,
+      hvacAssignments,
+      curtainAssignments,
+      switches,
+    }),
+    [locations, circuits, hvacAssignments, curtainAssignments, switches],
   );
 
-  const firstTargetAreaId = useMemo(() => {
-    const locationIds = new Set(locations.map((location) => location.id));
-    for (const circuit of circuits) {
-      if (circuit.area && locationIds.has(circuit.area)) return circuit.area;
-    }
-    for (const assignment of hvacAssignments) {
-      if (assignment.area && locationIds.has(assignment.area)) return assignment.area;
-    }
-    for (const assignment of curtainAssignments) {
-      if (assignment.area && locationIds.has(assignment.area)) return assignment.area;
-    }
-    for (const target of picoLedTargets) {
-      if (target.areaId) return target.areaId;
-    }
-    return locations[0]?.id ?? "";
-  }, [locations, circuits, hvacAssignments, curtainAssignments, picoLedTargets]);
+  const firstTargetAreaId = useMemo(
+    () => findFirstAreaSceneTargetAreaId(areaSceneSource),
+    [areaSceneSource],
+  );
 
   useEffect(() => {
     if (selectedAreaId === HVAC_AREA_ID && hvacAssignments.length > 0) return;
     const selectedAreaHasTargets =
       selectedAreaId &&
-      (selectedAreaId === OTHER_AREA_ID || locations.some((location) => location.id === selectedAreaId)) &&
-      (circuits.some((circuit) => circuit.area === selectedAreaId) ||
-        hvacAssignments.some((assignment) => assignment.area === selectedAreaId) ||
-        curtainAssignments.some((assignment) => assignment.area === selectedAreaId) ||
-        picoLedTargets.some((target) => target.areaId === selectedAreaId));
+      buildAreaSceneTargets(selectedAreaId, areaSceneSource).length > 0;
     if (selectedAreaHasTargets) return;
     setSelectedAreaId(firstTargetAreaId);
-  }, [locations, circuits, hvacAssignments, curtainAssignments, picoLedTargets, selectedAreaId, firstTargetAreaId]);
+  }, [areaSceneSource, hvacAssignments.length, selectedAreaId, firstTargetAreaId]);
 
-  const availableAreas = useMemo(() => {
-    const firstTargetOrder = new Map<string, number>();
-    circuits.forEach((circuit, index) => {
-      if (circuit.area && !firstTargetOrder.has(circuit.area)) firstTargetOrder.set(circuit.area, index);
-    });
-    hvacAssignments.forEach((assignment, index) => {
-      if (assignment.area && !firstTargetOrder.has(assignment.area)) {
-        firstTargetOrder.set(assignment.area, circuits.length + index);
-      }
-    });
-    curtainAssignments.forEach((assignment, index) => {
-      if (assignment.area && !firstTargetOrder.has(assignment.area)) {
-        firstTargetOrder.set(assignment.area, circuits.length + hvacAssignments.length + index);
-      }
-    });
-    picoLedTargets.forEach((target, index) => {
-      if (target.areaId && !firstTargetOrder.has(target.areaId)) {
-        firstTargetOrder.set(target.areaId, circuits.length + hvacAssignments.length + curtainAssignments.length + index);
-      }
-    });
-    const base = locations
-      .filter((loc) =>
-        circuits.some((c) => c.area === loc.id) ||
-        hvacAssignments.some((h) => h.area === loc.id) ||
-        curtainAssignments.some((curtain) => curtain.area === loc.id) ||
-        picoLedTargets.some((target) => target.areaId === loc.id)
-      )
-      .sort((a, b) => (firstTargetOrder.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (firstTargetOrder.get(b.id) ?? Number.MAX_SAFE_INTEGER));
-    const withOther = picoLedTargets.some((target) => target.areaId === OTHER_AREA_ID)
-      ? [...base, { id: OTHER_AREA_ID, name: "Other", number: "", code: "", color: "" }]
-      : base;
-    return hvacAssignments.length > 0
-      ? [...withOther, { id: HVAC_AREA_ID, name: "HVAC", number: "", code: "HV", color: "" }]
-      : withOther;
-  }, [locations, circuits, hvacAssignments, curtainAssignments, picoLedTargets]);
-
-  const areaCircuitRows = useMemo(
-    () => selectedAreaId === HVAC_AREA_ID ? [] : circuits.filter((c) => c.area === selectedAreaId),
-    [circuits, selectedAreaId],
+  const availableAreas = useMemo(
+    () => buildAreaSceneAreas(areaSceneSource),
+    [areaSceneSource],
   );
   const areaCircuits = useMemo(
-    () => uniqueCircuitGroupHeads(areaCircuitRows),
-    [areaCircuitRows],
+    () => buildAreaSceneCircuitHeads(selectedAreaId, areaSceneSource),
+    [selectedAreaId, areaSceneSource],
   );
 
   const areaScenes = useMemo(
@@ -311,26 +276,16 @@ export default function SceneView({
   const selectedArea = availableAreas.find((l) => l.id === selectedAreaId);
   const isHvacAreaScene = selectedAreaId === HVAC_AREA_ID;
   const areaHvacItems = useMemo(
-    () => hvacSettingTargets(
-      selectedAreaId === HVAC_AREA_ID
-        ? hvacAssignments
-        : hvacAssignments.filter((assignment) => assignment.area === selectedAreaId),
-      locations,
-    ),
-    [hvacAssignments, locations, selectedAreaId],
+    () => buildAreaSceneHvacTargets(selectedAreaId, areaSceneSource),
+    [selectedAreaId, areaSceneSource],
   );
   const areaCurtainItems = useMemo(
-    () => curtainSettingTargets(
-      selectedAreaId === HVAC_AREA_ID
-        ? []
-        : curtainAssignments.filter((assignment) => assignment.area === selectedAreaId),
-      locations,
-    ),
-    [curtainAssignments, locations, selectedAreaId],
+    () => buildAreaSceneCurtainTargets(selectedAreaId, areaSceneSource),
+    [selectedAreaId, areaSceneSource],
   );
   const areaPicoLedItems = useMemo(
-    () => selectedAreaId === HVAC_AREA_ID ? [] : picoLedTargets.filter((target) => target.areaId === selectedAreaId),
-    [picoLedTargets, selectedAreaId],
+    () => buildAreaScenePicoLedTargets(selectedAreaId, areaSceneSource),
+    [selectedAreaId, areaSceneSource],
   );
   const selectedScene = areaScenes.find((s) => s.id === selectedSceneId);
   const allAreaCircuitsChecked =
@@ -343,7 +298,7 @@ export default function SceneView({
       uniqueCircuitGroupHeads(circuits.filter((circuit) => circuit.area === areaId)).length +
       hvacAssignments.filter((assignment) => assignment.area === areaId).length * 4 +
       curtainAssignments.filter((assignment) => assignment.area === areaId).length +
-      picoLedTargets.filter((target) => target.areaId === areaId).length
+      buildAreaScenePicoLedTargets(areaId, areaSceneSource).length
     );
   }
 
@@ -675,6 +630,41 @@ export default function SceneView({
 
   return (
     <section className="card card-padded fade-in scene-view">
+      <div className="scene-view-mode-bar" role="tablist" aria-label="Area Scene view mode">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewMode === "edit"}
+          className={`scene-view-mode-chip${viewMode === "edit" ? " scene-view-mode-chip-active" : ""}`}
+          onClick={() => setViewMode("edit")}
+          data-testid="area-scene-mode-edit"
+        >
+          編集
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewMode === "overview"}
+          className={`scene-view-mode-chip${viewMode === "overview" ? " scene-view-mode-chip-active" : ""}`}
+          onClick={() => setViewMode("overview")}
+          data-testid="area-scene-mode-overview"
+        >
+          一覧
+        </button>
+      </div>
+
+      {viewMode === "overview" ? (
+        <AreaSceneOverview
+          scenes={scenes}
+          locations={locations}
+          circuits={circuits}
+          hvacAssignments={hvacAssignments}
+          curtainAssignments={curtainAssignments}
+          switches={switches}
+          roomTypeName={roomTypeName}
+        />
+      ) : (
+      <>
       <div className="scene-area-bar" role="tablist" aria-label="Area selection">
         {availableAreas.map((loc) => {
           const active = loc.id === selectedAreaId;
@@ -1107,6 +1097,8 @@ export default function SceneView({
         </div>
         )}
         </>
+      )}
+      </>
       )}
     </section>
   );
