@@ -83,6 +83,8 @@ import {
 import { isPmsScene, sortRoomScenesByGroup } from "../lib/roomScenes";
 import { CFS_ROW_DISPLAY_OPTIONS, normalizeCfsRowDisplaySettings } from "../lib/cfsRowDisplay";
 import { normalizeBacklightLevels } from "../lib/constants";
+import CfsBaseColumnMenu from "./CfsBaseColumnMenu";
+import CfsFilterMenu from "./CfsFilterMenu";
 
 interface CfsViewProps {
   projectName: string;
@@ -156,178 +158,6 @@ export interface InspectionRevisionTarget {
   revision: string;
   note: string;
   selected: boolean;
-}
-
-interface FloatingPosition {
-  top: number;
-  left: number;
-  width: number;
-  maxHeight: number;
-}
-
-interface CfsFilterMenuProps {
-  label: string;
-  displayLabel?: string;
-  toolbarOrder?: number;
-  wide?: boolean;
-  panelMinWidth?: number;
-  panelMaxHeight?: number;
-  onOpen?: () => void;
-  highlighted?: boolean;
-  children: ReactNode;
-}
-
-function computeFloatingPosition(
-  trigger: HTMLElement,
-  panel: HTMLElement | null,
-  minWidth: number,
-  maxPanelHeight: number,
-): FloatingPosition {
-  const rect = trigger.getBoundingClientRect();
-  const margin = 8;
-  const viewportWidth = window.innerWidth;
-  const viewportHeight = window.innerHeight;
-  const width = Math.min(Math.max(rect.width, minWidth), viewportWidth - margin * 2);
-  const measuredHeight = panel?.offsetHeight || maxPanelHeight;
-  const desiredHeight = Math.min(measuredHeight, maxPanelHeight);
-  const spaceBelow = viewportHeight - rect.bottom - margin;
-  const spaceAbove = rect.top - margin;
-  const flipUp = spaceBelow < desiredHeight && spaceAbove > spaceBelow;
-  const availableHeight = Math.max(96, flipUp ? spaceAbove : spaceBelow);
-  const maxHeight = Math.min(maxPanelHeight, availableHeight);
-  const rawTop = flipUp ? rect.top - Math.min(desiredHeight, maxHeight) - 4 : rect.bottom + 4;
-  return {
-    top: Math.max(margin, Math.min(rawTop, viewportHeight - maxHeight - margin)),
-    left: Math.max(margin, Math.min(rect.left, viewportWidth - width - margin)),
-    width,
-    maxHeight,
-  };
-}
-
-function CfsFilterMenu({
-  label,
-  displayLabel,
-  toolbarOrder,
-  wide = false,
-  panelMinWidth,
-  panelMaxHeight,
-  onOpen,
-  highlighted = false,
-  children,
-}: CfsFilterMenuProps): React.JSX.Element {
-  const [open, setOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  const [position, setPosition] = useState<FloatingPosition | null>(null);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  const onOpenRef = useRef(onOpen);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    onOpenRef.current = onOpen;
-  }, [onOpen]);
-
-  useEffect(() => {
-    if (open) onOpenRef.current?.();
-  }, [open]);
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    function recompute(): void {
-      const trigger = wrapRef.current;
-      if (!trigger) return;
-      setPosition(
-        computeFloatingPosition(
-          trigger,
-          panelRef.current,
-          panelMinWidth ?? (wide ? 288 : 208),
-          panelMaxHeight ?? 320,
-        ),
-      );
-    }
-    recompute();
-    const raf = requestAnimationFrame(recompute);
-    window.addEventListener("scroll", recompute, true);
-    window.addEventListener("resize", recompute);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("scroll", recompute, true);
-      window.removeEventListener("resize", recompute);
-    };
-  }, [open, panelMaxHeight, panelMinWidth, wide]);
-
-  useEffect(() => {
-    if (!open || !position) return;
-    const raf = requestAnimationFrame(() => {
-      panelRef.current
-        ?.querySelector<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)")
-        ?.focus();
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [open, position]);
-
-  useEffect(() => {
-    if (!open) return;
-    function closeOnOutsideClick(event: PointerEvent): void {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (wrapRef.current?.contains(target)) return;
-      if (panelRef.current?.contains(target)) return;
-      setOpen(false);
-    }
-    function closeOnEscape(event: KeyboardEvent): void {
-      if (event.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("pointerdown", closeOnOutsideClick);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsideClick);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
-
-  const panel =
-    open && position ? (
-      <div
-        ref={panelRef}
-        className={`cfs-filter-list cfs-filter-list-portal${wide ? " cfs-filter-list-wide" : ""}`}
-        style={{
-          position: "fixed",
-          top: position.top,
-          left: position.left,
-          width: position.width,
-          maxHeight: position.maxHeight,
-          zIndex: 6000,
-        }}
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        {children}
-      </div>
-    ) : null;
-
-  const wrapStyle: CSSProperties | undefined =
-    typeof toolbarOrder === "number" ? { order: toolbarOrder } : undefined;
-
-  return (
-    <div className="cfs-filter-menu" ref={wrapRef} style={wrapStyle}>
-      <button
-        type="button"
-        className={`cfs-filter-menu-trigger${highlighted ? " revision-changed-cell" : ""}`}
-        aria-label={label}
-        aria-expanded={open}
-        aria-haspopup="menu"
-        onClick={() => {
-          setOpen((prev) => !prev);
-        }}
-      >
-        {displayLabel ?? label}
-      </button>
-      {mounted && panel ? createPortal(panel, document.body) : null}
-    </div>
-  );
 }
 
 type InspectionEditScope = "areaScene" | "override";
@@ -4221,56 +4051,16 @@ export default function CfsView({
             ))}
           </CfsFilterMenu>
           <CfsFilterMenu label="Base Columns" displayLabel="Base" toolbarOrder={1} wide panelMinWidth={360} panelMaxHeight={720}>
-            <div className="cfs-column-actions">
-              <button type="button" onClick={() => setHiddenBaseColumns(new Set())}>Show all</button>
-              <button type="button" onClick={() => setHiddenBaseColumns(new Set(BASE_COLUMNS.map((col) => col.key)))}>
-                Hide all
-              </button>
-            </div>
-            <div className="cfs-column-options cfs-base-column-options">
-              {orderedBaseColumns.map((col, colIndex) => (
-                <div
-                  key={col.key}
-                  className="cfs-base-column-row cfs-draggable-column"
-                  draggable
-                  onDragStart={(event) => event.dataTransfer.setData("text/plain", col.key)}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    moveBaseColumn(event.dataTransfer.getData("text/plain"), col.key);
-                  }}
-                  title="Drag to reorder"
-                >
-                  <span className="drag-handle" aria-hidden="true">::</span>
-                  <input
-                    type="checkbox"
-                    checked={!hiddenBaseColumns.has(col.key)}
-                    onChange={() => toggleBaseColumn(col.key)}
-                  />
-                  <span className="cfs-base-column-label">
-                    {baseColumnLabel(col)}
-                  </span>
-                  <button
-                    type="button"
-                    className="cfs-function-group-move"
-                    disabled={colIndex === 0}
-                    title="Move up"
-                    onClick={() => moveBaseColumnByOffset(col.key, -1)}
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    className="cfs-function-group-move"
-                    disabled={colIndex === orderedBaseColumns.length - 1}
-                    title="Move down"
-                    onClick={() => moveBaseColumnByOffset(col.key, 1)}
-                  >
-                    ↓
-                  </button>
-                </div>
-              ))}
-            </div>
+            <CfsBaseColumnMenu
+              columns={orderedBaseColumns}
+              hiddenColumns={hiddenBaseColumns}
+              getColumnLabel={baseColumnLabel}
+              onShowAll={() => setHiddenBaseColumns(new Set())}
+              onHideAll={() => setHiddenBaseColumns(new Set(BASE_COLUMNS.map((column) => column.key)))}
+              onToggleColumn={toggleBaseColumn}
+              onMoveColumn={moveBaseColumn}
+              onMoveColumnByOffset={moveBaseColumnByOffset}
+            />
           </CfsFilterMenu>
           <CfsFilterMenu label="Programming Name" toolbarOrder={6} wide panelMinWidth={680} panelMaxHeight={720}>
             <div className="cfs-programming-settings">

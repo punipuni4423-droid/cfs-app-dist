@@ -7913,62 +7913,18 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 
 .area-scene-overview-toolbar {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+  justify-content: flex-start;
+  align-items: center;
   gap: 0.75rem;
   flex-wrap: wrap;
-}
-
-.area-scene-overview-area-filter {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  min-inline-size: min(100%, 32rem);
-}
-
-.area-scene-overview-filter-chip {
-  min-inline-size: 7rem;
 }
 
 .area-scene-overview-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 0.45rem;
   flex-wrap: wrap;
-}
-
-.area-scene-overview-menu {
-  position: relative;
-}
-
-.area-scene-overview-menu > summary {
-  list-style: none;
-  cursor: pointer;
-}
-
-.area-scene-overview-menu > summary::-webkit-details-marker {
-  display: none;
-}
-
-.area-scene-overview-menu-panel {
-  position: absolute;
-  z-index: 40;
-  inset-block-start: calc(100% + 0.3rem);
-  inset-inline-end: 0;
-  inline-size: min(24rem, calc(100vw - 2rem));
-  min-inline-size: min(22rem, calc(100vw - 2rem));
-  max-block-size: min(70vh, 38rem);
-  overflow: auto;
-}
-
-.area-scene-overview-display-panel {
-  inline-size: min(34rem, calc(100vw - 2rem));
-}
-
-.area-scene-overview-menu-panel .cfs-base-column-row .cfs-check {
-  flex: 1 1 auto;
-  min-inline-size: 0;
 }
 
 .area-scene-overview-actions .header-toggle.is-active {
@@ -8022,15 +7978,12 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   font-weight: 800;
 }
 
-.area-scene-overview-group-row th span + span {
-  margin-left: 0.5rem;
-}
-
 .area-scene-overview-group-label {
   position: sticky;
   left: 0.7rem;
   display: inline-flex;
   align-items: center;
+  gap: 0.5rem;
   padding-inline: 0.25rem;
   background: var(--color-surface-hover);
 }

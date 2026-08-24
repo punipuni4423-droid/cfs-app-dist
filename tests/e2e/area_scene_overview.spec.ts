@@ -225,7 +225,7 @@ test.describe("Area Scene overview", () => {
   test("shows a read-only all-area Area Scene matrix", async ({ page }) => {
     const state = await installLocalEditingMocks(page);
     state.projects = [makeProject() as unknown as Record<string, unknown>];
-    await page.addInitScript(() => window.localStorage.removeItem("cfs-area-scene-overview-prefs-v1"));
+    await page.addInitScript(() => window.localStorage.removeItem("cfs-area-scene-overview-prefs-v2"));
 
     await openRoomTypeSubTab(page, "Area Scene");
 
@@ -238,6 +238,15 @@ test.describe("Area Scene overview", () => {
     const table = page.getByTestId("area-scene-overview-table");
     await expect(table).toBeVisible();
     await expect(page.getByTestId("area-scene-mode-overview")).toHaveAttribute("aria-selected", "true");
+    const toolbarMetrics = await page.locator(".area-scene-overview-toolbar").evaluate((toolbar) => {
+      const labels = [...toolbar.querySelectorAll<HTMLElement>("button")].map((button) => ({
+        label: button.textContent?.trim() ?? "",
+        left: Math.round(button.getBoundingClientRect().left),
+      }));
+      return { left: Math.round(toolbar.getBoundingClientRect().left), labels: labels.slice(0, 3) };
+    });
+    expect(toolbarMetrics.labels.map((item) => item.label)).toEqual(["Base", "Display", "CSV"]);
+    expect(Math.abs(toolbarMetrics.labels[0].left - toolbarMetrics.left)).toBeLessThanOrEqual(1);
 
     const sceneHeaders = table.locator("thead th:not([data-base-column])");
     await expect(sceneHeaders.nth(0)).toContainText("Welcome Day");
@@ -246,14 +255,17 @@ test.describe("Area Scene overview", () => {
     await expect(sceneHeaders.nth(3)).toContainText("Unr-Uno");
     await expect(sceneHeaders.nth(4)).toContainText("Check-in");
 
-    await expect(table.locator('thead th[data-base-column="area"]')).toHaveCount(0);
-    await expect(table.locator('thead th[data-base-column="number"]')).toHaveText("No");
-    await expect(table.locator('thead th[data-base-column="device"]')).toHaveText("Device");
-    await expect(table.locator('thead th[data-base-column="programmingName"]')).toHaveText("Programming Name");
+    await expect(page.getByLabel("Area filter")).toHaveCount(0);
+    await expect(table.locator('thead th[data-base-column="area"] .cfs-base-head-content > span')).toHaveText("Area");
+    await expect(table.locator('thead th[data-base-column="number"] .cfs-base-head-content > span')).toHaveText("No");
+    await expect(table.locator('thead th[data-base-column="device"] .cfs-base-head-content > span')).toHaveText("Device");
+    await expect(table.locator('thead th[data-base-column="programmingName"] .cfs-base-head-content > span')).toHaveText("Programming Name");
 
     const baseMenu = page.getByTestId("area-scene-base-menu");
-    await baseMenu.locator("summary").click();
-    await expect(baseMenu.locator(".cfs-base-column-label")).toHaveText([
+    const baseTrigger = baseMenu.getByRole("button", { name: "Base Columns" });
+    await baseTrigger.click();
+    const basePanel = page.locator(".cfs-filter-list-portal");
+    await expect(basePanel.locator(".cfs-base-column-label")).toHaveText([
       "No",
       "Device",
       "Device #",
@@ -266,9 +278,7 @@ test.describe("Area Scene overview", () => {
       "Detail",
       "Programming Name",
     ]);
-    await expect(baseMenu.getByLabel("Show Area column")).not.toBeChecked();
-    await baseMenu.getByRole("button", { name: "Show all" }).click();
-    await expect(table.locator('thead th[data-base-column="area"]')).toHaveText("Area");
+    await expect(basePanel.getByLabel("Show Area column")).toBeChecked();
     await expect(table.locator("colgroup col").evaluateAll((columns) => columns.slice(0, 11).map((column) => (column as HTMLElement).style.width))).resolves.toEqual([
       "44px",
       "150px",
@@ -282,17 +292,45 @@ test.describe("Area Scene overview", () => {
       "170px",
       "240px",
     ]);
-    await baseMenu.getByRole("button", { name: "Move Device right" }).click();
-    await expect(table.locator("thead th[data-base-column]").evaluateAll((headers) => headers.slice(0, 3).map((header) => header.textContent?.trim()))).resolves.toEqual([
+    await basePanel.getByRole("button", { name: "Move Device column down" }).click();
+    await expect(table.locator("thead th[data-base-column] .cfs-base-head-content > span").evaluateAll((headers) => headers.slice(0, 3).map((header) => header.textContent?.trim()))).resolves.toEqual([
       "No",
       "Device #",
       "Device",
     ]);
-    await baseMenu.getByRole("button", { name: "Move Device left" }).click();
-    await baseMenu.getByLabel("Show Area column").uncheck();
+    await basePanel.getByRole("button", { name: "Move Device column up" }).click();
+
+    const deviceColumnRow = basePanel.locator(".cfs-base-column-row").filter({ hasText: "Device" }).filter({ hasNotText: "Device #" });
+    const typeColumnRow = basePanel.locator(".cfs-base-column-row").filter({ hasText: "Type" });
+    await deviceColumnRow.dragTo(typeColumnRow);
+    await expect(table.locator("thead th[data-base-column] .cfs-base-head-content > span").evaluateAll((headers) => headers.slice(0, 4).map((header) => header.textContent?.trim()))).resolves.toEqual([
+      "No",
+      "Device #",
+      "Type",
+      "Device",
+    ]);
+    await basePanel.getByRole("button", { name: "Move Device column up" }).click();
+    await basePanel.getByRole("button", { name: "Move Device column up" }).click();
+
+    await page.getByTestId("area-scene-mode-overview").click();
+    await expect(baseTrigger).toHaveAttribute("aria-expanded", "false");
+
+    await table.getByRole("button", { name: "Hide Area", exact: true }).click();
     await expect(table.locator('thead th[data-base-column="area"]')).toHaveCount(0);
+    await baseTrigger.click();
+    await expect(basePanel.getByLabel("Show Area column")).not.toBeChecked();
+    await basePanel.getByLabel("Show Area column").check();
+    await expect(table.locator('thead th[data-base-column="area"] .cfs-base-head-content > span')).toHaveText("Area");
+    await page.getByTestId("area-scene-mode-overview").click();
 
     await expect(table.locator('tbody tr:not(.area-scene-overview-group-row)').filter({ hasText: "B-01" })).toHaveCount(1);
+    const bedroomGroup = page.getByTestId("area-scene-group-area-bedroom");
+    await bedroomGroup.getByRole("button", { name: "Collapse Bedroom" }).click();
+    await expect(bedroomGroup).toHaveAttribute("data-collapsed", "true");
+    await expect(table.locator('tbody tr[data-area-id="area-bedroom"]')).toHaveCount(0);
+    await bedroomGroup.getByRole("button", { name: "Expand Bedroom" }).click();
+    await expect(bedroomGroup).toHaveAttribute("data-collapsed", "false");
+    await expect(table.locator('tbody tr[data-area-id="area-bedroom"]')).not.toHaveCount(0);
     await expect(page.getByTestId("area-scene-cell-circuit-ent-1-0")).toHaveText("80%");
     await expect(page.getByTestId("area-scene-cell-circuit-ent-1-1")).toHaveText("0%");
     await expect(page.getByTestId("area-scene-cell-circuit-ent-1-1")).toHaveClass(/area-scene-overview-off/);
@@ -319,19 +357,27 @@ test.describe("Area Scene overview", () => {
 
     await expect(table.locator('tbody tr:not(.area-scene-overview-group-row)').filter({ hasText: "V-01" })).toHaveCount(1);
     const displayMenu = page.getByTestId("area-scene-display-menu");
-    await displayMenu.locator("summary").click();
-    await displayMenu.getByLabel("Hide Unset Rows").check();
+    const displayTrigger = displayMenu.getByRole("button", { name: "Display" });
+    await displayTrigger.click();
+    const displayPanel = page.locator(".cfs-filter-list-portal");
+    await displayPanel.getByLabel("Hide Unset Rows").check();
     await expect(table.locator('tbody tr:not(.area-scene-overview-group-row)').filter({ hasText: "V-01" })).toHaveCount(0);
 
-    await displayMenu.getByLabel("Hide Unset Rows").uncheck();
+    await displayPanel.getByLabel("Hide Unset Rows").uncheck();
+    await displayPanel.getByLabel("Differences Only").check();
+    await expect(table.locator('tbody tr:not(.area-scene-overview-group-row)').filter({ hasText: "V-01" })).toHaveCount(0);
+    await expect(table.locator(`tr[data-area-id="${HVAC_AREA_ID}"][data-target-id^="hvac:"]`)).toHaveCount(0);
+    await displayPanel.getByLabel("Differences Only").uncheck();
     const bedroomRows = table.locator('tbody tr[data-area-id="area-bedroom"]');
-    await displayMenu.getByLabel("Area Scene sort mode").getByRole("button", { name: "Device" }).click();
+    await displayPanel.getByLabel("Area Scene sort mode").getByRole("button", { name: "Device" }).click();
     await expect(bedroomRows.first()).toHaveAttribute("data-target-id", "circuit-bed-3");
-    await displayMenu.getByLabel("Area Scene sort mode").getByRole("button", { name: "Internal #" }).click();
+    await displayPanel.getByLabel("Area Scene sort mode").getByRole("button", { name: "Internal #" }).click();
     await expect(bedroomRows.first()).toHaveAttribute("data-target-id", "circuit-bed-1");
-    await displayMenu.getByLabel("Area Scene number display").getByRole("button", { name: "Internal #" }).click();
-    await expect(table.locator('thead th[data-base-column="designerNumber"]')).toHaveText("Internal #");
+    await displayPanel.getByLabel("Area Scene number display").getByRole("button", { name: "Internal #" }).click();
+    await expect(table.locator('thead th[data-base-column="designerNumber"] .cfs-base-head-content > span')).toHaveText("Internal #");
     await expect(table.locator('tr[data-target-id="circuit-bed-1"] td[data-base-column="designerNumber"]')).toContainText("INT-B1");
+    await page.getByTestId("area-scene-mode-overview").click();
+    await expect(displayTrigger).toHaveAttribute("aria-expanded", "false");
 
     await page.getByTestId("area-scene-mode-edit").click();
     await expect(page.locator(".scene-table")).toBeVisible();
@@ -350,7 +396,7 @@ test.describe("Area Scene overview", () => {
       })),
     );
     state.projects = [project as unknown as Record<string, unknown>];
-    await page.addInitScript(() => window.localStorage.removeItem("cfs-area-scene-overview-prefs-v1"));
+    await page.addInitScript(() => window.localStorage.removeItem("cfs-area-scene-overview-prefs-v2"));
     await page.setViewportSize({ width: 1365, height: 760 });
 
     await openRoomTypeSubTab(page, "Area Scene");

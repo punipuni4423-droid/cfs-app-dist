@@ -38,6 +38,8 @@ import {
 import { buildAreaAddressAssignmentMap } from "../lib/programming";
 import { buildCfsZoneRows } from "../lib/useCfsZoneRows";
 import { downloadCsv, escapeCsvField } from "../lib/csv";
+import CfsBaseColumnMenu from "./CfsBaseColumnMenu";
+import CfsFilterMenu from "./CfsFilterMenu";
 
 interface AreaSceneOverviewProps {
   scenes: Scene[];
@@ -71,8 +73,7 @@ interface AreaSceneOverviewPrefs {
   baseColumnOrder?: BaseColumnKey[];
 }
 
-const AREA_SCENE_OVERVIEW_PREFS_KEY = "cfs-area-scene-overview-prefs-v1";
-const DEFAULT_HIDDEN_BASE_COLUMNS = new Set<BaseColumnKey>(["area"]);
+const AREA_SCENE_OVERVIEW_PREFS_KEY = "cfs-area-scene-overview-prefs-v2";
 
 function sanitizeTestIdPart(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]/g, "_");
@@ -119,12 +120,10 @@ function cellClassName(cell: AreaSceneCell): string {
 
 function filteredGroups(
   groups: AreaSceneGroup[],
-  selectedAreaIds: Set<string>,
   hideEmptyRows: boolean,
   showDifferentOnly: boolean,
 ): AreaSceneGroup[] {
   return groups
-    .filter((group) => selectedAreaIds.has(group.areaId))
     .map((group) => ({
       ...group,
       rows: group.rows.filter((row) => {
@@ -253,22 +252,14 @@ export default function AreaSceneOverview({
     () => buildAreaSceneMatrix({ scenes, locations, circuits, hvacAssignments, curtainAssignments, switches }),
     [scenes, locations, circuits, hvacAssignments, curtainAssignments, switches],
   );
-  const areaIdsKey = matrix.groups.map((group) => group.areaId).join("\u0000");
-  const allAreaIds = useMemo(() => areaIdsKey === "" ? [] : areaIdsKey.split("\u0000"), [areaIdsKey]);
-  const [selectedAreaIds, setSelectedAreaIds] = useState<Set<string>>(() => new Set(allAreaIds));
   const [hideEmptyRows, setHideEmptyRows] = useState(false);
   const [showDifferentOnly, setShowDifferentOnly] = useState(false);
+  const [collapsedAreaIds, setCollapsedAreaIds] = useState<Set<string>>(new Set());
   const [sortMode, setSortMode] = useState<CfsSortMode>("area");
   const [numberMode, setNumberMode] = useState<CfsNumberMode>("designer");
-  const [hiddenBaseColumns, setHiddenBaseColumns] = useState<Set<BaseColumnKey>>(
-    () => new Set(DEFAULT_HIDDEN_BASE_COLUMNS),
-  );
+  const [hiddenBaseColumns, setHiddenBaseColumns] = useState<Set<BaseColumnKey>>(new Set());
   const [baseColumnOrder, setBaseColumnOrder] = useState<BaseColumnKey[]>([]);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
-
-  useEffect(() => {
-    setSelectedAreaIds(new Set(allAreaIds));
-  }, [areaIdsKey, allAreaIds]);
 
   useEffect(() => {
     try {
@@ -373,17 +364,16 @@ export default function AreaSceneOverview({
   }, [baseContext, circuits, locations, roomType, sortMode]);
 
   const visibleGroups = useMemo(
-    () => filteredGroups(matrix.groups, selectedAreaIds, hideEmptyRows, showDifferentOnly),
-    [matrix.groups, selectedAreaIds, hideEmptyRows, showDifferentOnly],
+    () => filteredGroups(matrix.groups, hideEmptyRows, showDifferentOnly),
+    [matrix.groups, hideEmptyRows, showDifferentOnly],
   );
   const displayGroups = useMemo(() => expandDisplayGroups(visibleGroups, cfsRows), [cfsRows, visibleGroups]);
   const visibleRowCount = displayGroups.reduce((count, group) => count + group.rows.length, 0);
-  const allSelected = selectedAreaIds.size === allAreaIds.length;
   const tableMinWidth = visibleBaseColumns.reduce((sum, column) => sum + column.minWidth, 0)
     + matrix.columns.length * CFS_FUNCTION_COLUMN_WIDTH;
 
-  function toggleArea(areaId: string): void {
-    setSelectedAreaIds((prev) => {
+  function toggleAreaCollapsed(areaId: string): void {
+    setCollapsedAreaIds((prev) => {
       const next = new Set(prev);
       if (next.has(areaId)) next.delete(areaId);
       else next.add(areaId);
@@ -397,6 +387,19 @@ export default function AreaSceneOverview({
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
+    });
+  }
+
+  function moveBaseColumn(draggedKey: string, targetKey: BaseColumnKey): void {
+    if (draggedKey === targetKey) return;
+    setBaseColumnOrder(() => {
+      const keys = orderedBaseColumns.map((column) => column.key);
+      const from = keys.indexOf(draggedKey as BaseColumnKey);
+      const to = keys.indexOf(targetKey);
+      if (from < 0 || to < 0) return keys;
+      const [moved] = keys.splice(from, 1);
+      keys.splice(to, 0, moved);
+      return keys;
     });
   }
 
@@ -424,85 +427,33 @@ export default function AreaSceneOverview({
   return (
     <div className="area-scene-overview" data-testid="area-scene-overview">
       <div className="area-scene-overview-toolbar">
-        <div className="area-scene-overview-area-filter" aria-label="Area filter">
-          <button
-            type="button"
-            className={`scene-area-chip area-scene-overview-filter-chip${allSelected ? " scene-area-chip-active" : ""}`}
-            onClick={() => setSelectedAreaIds(new Set(allAreaIds))}
-            aria-pressed={allSelected}
-          >
-            <span className="scene-area-chip-name">All</span>
-            <span className="scene-area-chip-meta">{matrix.groups.length} areas</span>
-          </button>
-          {matrix.groups.map((group) => {
-            const active = selectedAreaIds.has(group.areaId);
-            return (
-              <button
-                key={group.areaId}
-                type="button"
-                className={`scene-area-chip area-scene-overview-filter-chip${active ? " scene-area-chip-active" : ""}`}
-                onClick={() => toggleArea(group.areaId)}
-                aria-pressed={active}
-              >
-                <span className="scene-area-chip-name">{group.areaName}</span>
-                <span className="scene-area-chip-meta">{group.rows.length} targets</span>
-              </button>
-            );
-          })}
-        </div>
         <div className="area-scene-overview-actions">
-          <details className="area-scene-overview-menu" data-testid="area-scene-base-menu">
-            <summary className="cfs-filter-menu-trigger">Base</summary>
-            <div className="cfs-filter-list area-scene-overview-menu-panel">
-              <div className="cfs-column-actions">
-                <button type="button" onClick={() => setHiddenBaseColumns(new Set())}>Show all</button>
-                <button type="button" onClick={() => setHiddenBaseColumns(new Set(BASE_COLUMNS.map((column) => column.key)))}>
-                  Hide all
-                </button>
-              </div>
-              <div className="cfs-column-options cfs-base-column-options">
-                {orderedBaseColumns.map((column, index) => {
-                  const label = cfsBaseColumnLabel(column, numberMode);
-                  return (
-                    <div key={column.key} className="cfs-base-column-row">
-                      <label className="cfs-check">
-                        <input
-                          type="checkbox"
-                          checked={!hiddenBaseColumns.has(column.key)}
-                          onChange={() => toggleBaseColumn(column.key)}
-                          aria-label={`Show ${label} column`}
-                        />
-                        <span className="cfs-base-column-label">{label}</span>
-                      </label>
-                      <button
-                        type="button"
-                        className="cfs-function-group-move"
-                        disabled={index === 0}
-                        title={`Move ${label} left`}
-                        aria-label={`Move ${label} left`}
-                        onClick={() => moveBaseColumnByOffset(column.key, -1)}
-                      >
-                        ←
-                      </button>
-                      <button
-                        type="button"
-                        className="cfs-function-group-move"
-                        disabled={index === orderedBaseColumns.length - 1}
-                        title={`Move ${label} right`}
-                        aria-label={`Move ${label} right`}
-                        onClick={() => moveBaseColumnByOffset(column.key, 1)}
-                      >
-                        →
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </details>
-          <details className="area-scene-overview-menu" data-testid="area-scene-display-menu">
-            <summary className="cfs-filter-menu-trigger">Display</summary>
-            <div className="cfs-filter-list area-scene-overview-menu-panel area-scene-overview-display-panel">
+          <CfsFilterMenu
+            label="Base Columns"
+            displayLabel="Base"
+            wide
+            panelMinWidth={360}
+            panelMaxHeight={720}
+            testId="area-scene-base-menu"
+          >
+            <CfsBaseColumnMenu
+              columns={orderedBaseColumns}
+              hiddenColumns={hiddenBaseColumns}
+              getColumnLabel={(column) => cfsBaseColumnLabel(column, numberMode)}
+              onShowAll={() => setHiddenBaseColumns(new Set())}
+              onHideAll={() => setHiddenBaseColumns(new Set(BASE_COLUMNS.map((column) => column.key)))}
+              onToggleColumn={toggleBaseColumn}
+              onMoveColumn={moveBaseColumn}
+              onMoveColumnByOffset={moveBaseColumnByOffset}
+            />
+          </CfsFilterMenu>
+          <CfsFilterMenu
+            label="Display"
+            wide
+            panelMinWidth={520}
+            testId="area-scene-display-menu"
+          >
+            <>
               <div className="cfs-menu-section">
                 <div className="cfs-menu-title">Sort</div>
                 <div className="cfs-segmented cfs-menu-segmented" aria-label="Area Scene sort mode">
@@ -550,8 +501,8 @@ export default function AreaSceneOverview({
                 <input type="checkbox" checked={showDifferentOnly} onChange={(event) => setShowDifferentOnly(event.target.checked)} />
                 Differences Only
               </label>
-            </div>
-          </details>
+            </>
+          </CfsFilterMenu>
           <button type="button" className="btn btn-secondary btn-sm" onClick={handleDownloadCsv}>CSV</button>
           <span className="muted-pill">{visibleRowCount} rows</span>
         </div>
@@ -576,11 +527,22 @@ export default function AreaSceneOverview({
                   <th
                     key={column.key}
                     scope="col"
-                    className="area-scene-overview-sticky"
+                    className="area-scene-overview-sticky cfs-base-head"
                     style={{ left: stickyOffsets.get(column.key) ?? 0 }}
                     data-base-column={column.key}
                   >
-                    {cfsBaseColumnLabel(column, numberMode)}
+                    <div className="cfs-base-head-content">
+                      <button
+                        type="button"
+                        className="cfs-base-head-hide-button"
+                        title={`Hide ${cfsBaseColumnLabel(column, numberMode)}`}
+                        aria-label={`Hide ${cfsBaseColumnLabel(column, numberMode)}`}
+                        onClick={() => toggleBaseColumn(column.key)}
+                      >
+                        -
+                      </button>
+                      <span>{cfsBaseColumnLabel(column, numberMode)}</span>
+                    </div>
                   </th>
                 ))}
                 {matrix.columns.map((column) => (
@@ -602,15 +564,29 @@ export default function AreaSceneOverview({
             <tbody>
               {displayGroups.map((group) => (
                 <Fragment key={group.areaId}>
-                  <tr className="area-scene-overview-group-row" data-testid={`area-scene-group-${sanitizeTestIdPart(group.areaId)}`}>
+                  <tr
+                    className="area-scene-overview-group-row"
+                    data-testid={`area-scene-group-${sanitizeTestIdPart(group.areaId)}`}
+                    data-collapsed={collapsedAreaIds.has(group.areaId) ? "true" : "false"}
+                  >
                     <th scope="colgroup" colSpan={visibleBaseColumns.length + matrix.columns.length}>
                       <span className="area-scene-overview-group-label">
+                        <button
+                          type="button"
+                          className="collapse-toggle"
+                          title={`${collapsedAreaIds.has(group.areaId) ? "Expand" : "Collapse"} ${group.areaName}`}
+                          aria-label={`${collapsedAreaIds.has(group.areaId) ? "Expand" : "Collapse"} ${group.areaName}`}
+                          aria-expanded={!collapsedAreaIds.has(group.areaId)}
+                          onClick={() => toggleAreaCollapsed(group.areaId)}
+                        >
+                          {collapsedAreaIds.has(group.areaId) ? "▶" : "▼"}
+                        </button>
                         <span>{group.areaName}</span>
                         <span className="muted-pill">{group.rows.length}</span>
                       </span>
                     </th>
                   </tr>
-                  {group.rows.map((row) => {
+                  {collapsedAreaIds.has(group.areaId) ? null : group.rows.map((row) => {
                     renderedRowNumber += 1;
                     const rowNumber = renderedRowNumber;
                     const targetTestId = sanitizeTestIdPart(row.source.target.id);
