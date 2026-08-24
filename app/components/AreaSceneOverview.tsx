@@ -118,7 +118,7 @@ export default function AreaSceneOverview({
     [scenes, locations, circuits, hvacAssignments, curtainAssignments, switches],
   );
   const areaIdsKey = matrix.groups.map((group) => group.areaId).join("\u0000");
-  const allAreaIds = useMemo(() => matrix.groups.map((group) => group.areaId), [areaIdsKey, matrix.groups]);
+  const allAreaIds = useMemo(() => areaIdsKey === "" ? [] : areaIdsKey.split("\u0000"), [areaIdsKey]);
   const [selectedAreaIds, setSelectedAreaIds] = useState<Set<string>>(() => new Set(allAreaIds));
   const [hideEmptyRows, setHideEmptyRows] = useState(false);
   const [showDifferentOnly, setShowDifferentOnly] = useState(false);
