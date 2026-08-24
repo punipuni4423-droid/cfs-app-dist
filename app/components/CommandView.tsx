@@ -25,6 +25,13 @@ import { selectedSceneIdsForSwitch as selectedSceneIds } from "../lib/cfsValueRe
 import AutoGrowTextarea from "./AutoGrowTextarea";
 import Combobox from "./Combobox";
 import { buildSettingTargetGroups, hvacSettingTargets as buildHvacSettingTargets, type SettingTarget } from "../lib/settingTargets";
+import {
+  bulkModeAppliesToTarget,
+  clampPercentValue,
+  settingValueForBulkMode,
+  stepPercentValue,
+  type BulkSettingMode,
+} from "../lib/settingValues";
 import HvacSettingPanel from "./HvacSettingPanel";
 import CurtainActionButtons from "./CurtainActionButtons";
 import ActionIconButton from "./ActionIconButton";
@@ -261,6 +268,48 @@ export default function CommandView({
         sw.id === id ? { ...sw, buttonSetting: setting } : sw,
       ),
     );
+  }
+
+  // Area bulk controls: same UI/behavior as the Switch tab setting overlay.
+  const [areaBulkValues, setAreaBulkValues] = useState<Record<string, string>>({});
+
+  function applyAreaBulkPercentValue(
+    sw: SwitchEntry,
+    areaTargets: SettingTarget[],
+    key: string,
+    rawValue: string,
+  ): void {
+    const value = clampPercentValue(rawValue);
+    setAreaBulkValues((prev) => ({ ...prev, [key]: value }));
+    if (!value) return;
+    const updated = areaTargets.reduce(
+      (next, target) => (!target.isOnOff && !isCurtainTarget(target) ? setCircuitSetting(next, target.id, value) : next),
+      sw,
+    );
+    updateButtonSetting(sw.id, updated.buttonSetting);
+  }
+
+  function stepAreaBulkValue(sw: SwitchEntry, areaTargets: SettingTarget[], key: string, delta: number): void {
+    applyAreaBulkPercentValue(sw, areaTargets, key, stepPercentValue(areaBulkValues[key] || "", delta));
+  }
+
+  function applyAreaBulk(
+    sw: SwitchEntry,
+    areaTargets: SettingTarget[],
+    mode: BulkSettingMode,
+    key: string,
+  ): void {
+    const updated = areaTargets.reduce((next, target) => {
+      if (isCurtainTarget(target) && mode !== "clear") return next;
+      const value = settingValueForBulkMode(mode, target.isOnOff, areaBulkValues[key] || "");
+      return value === null ? next : setCircuitSetting(next, target.id, value);
+    }, sw);
+    updateButtonSetting(sw.id, updated.buttonSetting);
+  }
+
+  function canApplyAreaBulkMode(areaTargets: SettingTarget[], mode: BulkSettingMode, key: string): boolean {
+    if (mode === "percent" && !clampPercentValue(areaBulkValues[key] || "")) return false;
+    return areaTargets.some((target) => !isCurtainTarget(target) && bulkModeAppliesToTarget(mode, target.isOnOff));
   }
 
   function setSceneForArea(sw: SwitchEntry, areaId: string, sceneId: string): void {
@@ -543,7 +592,8 @@ export default function CommandView({
                 <p className="screen-empty">No circuits are registered.</p>
               ) : (
                 settingTargetGroups.map((area) => {
-                  const open = expandedAreaKeys.has(areaKey(sw.id, area.id));
+                  const bulkKey = areaKey(sw.id, area.id);
+                  const open = expandedAreaKeys.has(bulkKey);
                   const hasAreaSetting = area.targets.some((target) => getPercent(sw, target.id).trim() !== "");
                   return (
                     <div className="switch-area-panel" key={area.id}>
@@ -558,6 +608,39 @@ export default function CommandView({
                         <span className="muted-pill">{area.targets.length}</span>
                       </button>
                       {open ? (
+                        <>
+                        <div className="switch-area-bulk-panel">
+                          <span className="switch-area-bulk-label">Area bulk</span>
+                          <div className="scene-level-control switch-area-bulk-control">
+                            <input
+                              className="cell-input scene-level-input"
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="1"
+                              value={areaBulkValues[bulkKey] ?? ""}
+                              onChange={(e) => applyAreaBulkPercentValue(sw, area.targets, bulkKey, e.target.value)}
+                              disabled={!canEdit}
+                            />
+                            <div className="scene-step-grid switch-step-grid" aria-label="Area bulk level adjustment">
+                              <button type="button" onClick={() => stepAreaBulkValue(sw, area.targets, bulkKey, 1)} disabled={!canEdit}>+1</button>
+                              <button type="button" onClick={() => stepAreaBulkValue(sw, area.targets, bulkKey, 10)} disabled={!canEdit}>+10</button>
+                              <button type="button" onClick={() => stepAreaBulkValue(sw, area.targets, bulkKey, -1)} disabled={!canEdit}>-1</button>
+                              <button type="button" onClick={() => stepAreaBulkValue(sw, area.targets, bulkKey, -10)} disabled={!canEdit}>-10</button>
+                            </div>
+                          </div>
+                          <div className="switch-onoff-buttons switch-area-bulk-buttons" role="group" aria-label="Area On Off Uneffected Raise Lower 0.5 sec">
+                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "percent", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "percent", bulkKey)}>Apply %</button>
+                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "on", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "on", bulkKey)}>On</button>
+                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "off", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "off", bulkKey)}>Off</button>
+                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "blinkShort", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "blinkShort", bulkKey)}>Blinking (Short)</button>
+                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "blinkLong", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "blinkLong", bulkKey)}>Blinking (Long)</button>
+                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "raise", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "raise", bulkKey)}>Raise</button>
+                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "lower", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "lower", bulkKey)}>Lower</button>
+                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "halfSec", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "halfSec", bulkKey)}>0.5 sec</button>
+                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "clear", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "clear", bulkKey)}>Uneffected</button>
+                          </div>
+                        </div>
                         <div className="matrix-scroll">
                           <table className="matrix-table master-table switch-setting-table switch-individual-table">
                             <thead>
@@ -584,28 +667,25 @@ export default function CommandView({
                                           disabled={!canEdit}
                                         />
                                       ) : target.isOnOff ? (
-                                        <div className="scene-level-control scene-onoff-control switch-override-control">
-                                          <select
-                                            className="cell-input"
-                                            value={value === "On" || value === "Off" || value === "0.5 sec" || value === "Blinking (Short)" || value === "Blinking (Long)" ? value : ""}
-                                            onChange={(e) => handleTargetValueChange(sw, target, e.target.value)}
-                                            disabled={!canEdit}
-                                          >
-                                            <option value="">Uneffected</option>
-                                            <option value="Off">Off</option>
-                                            <option value="On">On</option>
-                                            <option value="Blinking (Short)">Blinking (Short)</option>
-                                            <option value="Blinking (Long)">Blinking (Long)</option>
-                                            <option value="0.5 sec">0.5 sec</option>
-                                          </select>
-                                          <button
-                                            type="button"
-                                            className="btn-clear-circuit"
-                                            onClick={() => clearCircuitSetting(sw, target.id)}
-                                            disabled={!canEdit}
-                                          >
-                                            Clear
-                                          </button>
+                                        <div className="switch-onoff-buttons" role="group" aria-label="On Off Uneffected 0.5 sec">
+                                          {[
+                                            ["On", "On"],
+                                            ["Off", "Off"],
+                                            ["Blinking (Short)", "Blinking (Short)"],
+                                            ["Blinking (Long)", "Blinking (Long)"],
+                                            ["0.5 sec", "0.5 sec"],
+                                            ["", "Uneffected"],
+                                          ].map(([nextValue, label]) => (
+                                            <button
+                                              key={label}
+                                              type="button"
+                                              className={(nextValue === "" ? value === "" : value === nextValue) ? "is-active" : ""}
+                                              onClick={() => handleTargetValueChange(sw, target, nextValue)}
+                                              disabled={!canEdit}
+                                            >
+                                              {label}
+                                            </button>
+                                          ))}
                                         </div>
                                       ) : (
                                         <div className="scene-level-control switch-override-control">
@@ -631,7 +711,7 @@ export default function CommandView({
                                             onClick={() => clearCircuitSetting(sw, target.id)}
                                             disabled={!canEdit}
                                           >
-                                            Clear
+                                            Uneffected
                                           </button>
                                           <div className="scene-quick-buttons area-scene-extra-buttons">
                                             {["Raise", "Lower"].map((option) => (
@@ -655,6 +735,7 @@ export default function CommandView({
                             </tbody>
                           </table>
                         </div>
+                        </>
                       ) : null}
                     </div>
                   );

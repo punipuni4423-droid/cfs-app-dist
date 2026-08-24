@@ -72,7 +72,9 @@ test.describe("Command tab backlight + bulk setting", () => {
     await expect(page.locator(".muted-pill").filter({ hasText: /checked/ })).toHaveText(/2 checked/);
     await page.locator(".toolbar button").filter({ hasText: /^Backlight Setting$/ }).click();
 
-    const panel = page.locator(".switch-setting-card").first();
+    // The overlay header (with the bulk Apply button) lives in
+    // .setting-overlay-panel; .switch-setting-card is only the inner panel.
+    const panel = page.locator(".setting-overlay-panel").first();
     await expect(panel).toBeVisible({ timeout: 5000 });
     const conditionSelect = panel.locator("select").first();
     await conditionSelect.selectOption({ index: 1 });
