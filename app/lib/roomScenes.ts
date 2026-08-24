@@ -87,6 +87,14 @@ export function dedupeRoomSceneIds(
   return changed ? next : roomScenes;
 }
 
+// Canonical room-scene order (2026-08-24): PMS scenes always come before the
+// Door Magnet (standard) scenes, matching the Scene tab layout, regardless of
+// when a row was added. Within each group the insertion order is kept.
+export function sortRoomScenesByGroup(roomScenes: RoomScene[]): RoomScene[] {
+  const sorted = [...roomScenes.filter(isPmsScene), ...roomScenes.filter((scene) => !isPmsScene(scene))];
+  return sorted.every((scene, index) => scene === roomScenes[index]) ? roomScenes : sorted;
+}
+
 export function ensureRoomScenes(
   roomScenes: RoomScene[],
   createId?: () => string,
@@ -96,6 +104,6 @@ export function ensureRoomScenes(
   const kindsChanged = normalized.some((scene, index) => scene !== deduped[index]);
   const next = kindsChanged ? normalized : deduped;
   if (next.length === 0) return [...defaultPmsScenes(), ...defaultRoomScenes()];
-  if (next.some(isPmsScene)) return next;
+  if (next.some(isPmsScene)) return sortRoomScenesByGroup(next);
   return [...defaultPmsScenes(), ...next];
 }

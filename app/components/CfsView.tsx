@@ -78,7 +78,7 @@ import {
   formatProgrammingName,
   normalizeProgrammingNameSettings,
 } from "../lib/programmingNameSettings";
-import { isPmsScene } from "../lib/roomScenes";
+import { isPmsScene, sortRoomScenesByGroup } from "../lib/roomScenes";
 import { CFS_ROW_DISPLAY_OPTIONS, normalizeCfsRowDisplaySettings } from "../lib/cfsRowDisplay";
 import { normalizeBacklightLevels } from "../lib/constants";
 
@@ -1096,7 +1096,7 @@ export default function CfsView({
   }, [roomType.switches]);
 
   const functionColumns = useMemo<FunctionColumn[]>(() => {
-    const sceneColumns: FunctionColumn[] = roomType.roomScenes
+    const sceneColumns: FunctionColumn[] = sortRoomScenesByGroup(roomType.roomScenes)
       .filter((scene) =>
         scene.sceneType.trim() ||
         scene.triggerCondition.trim() ||

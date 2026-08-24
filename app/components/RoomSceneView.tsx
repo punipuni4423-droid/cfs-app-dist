@@ -21,7 +21,7 @@ import type {
   TriggerMaster,
 } from "../types";
 import { createEmptyRoomScene, normalizeBacklightLevels } from "../lib/constants";
-import { ensureRoomScenes, isPmsScene } from "../lib/roomScenes";
+import { ensureRoomScenes, isPmsScene, sortRoomScenesByGroup } from "../lib/roomScenes";
 import { useDragReorder } from "../lib/useDragReorder";
 import ActionIconButton from "./ActionIconButton";
 import AutoGrowTextarea from "./AutoGrowTextarea";
@@ -269,7 +269,9 @@ export default function RoomSceneView({
 
   function commitRoomScenes(next: RoomScene[]): void {
     if (!canEdit) return;
-    onChange(next);
+    // Keep the stored order grouped as the tab shows it (PMS before Door
+    // Magnet) so CFS columns and exports never interleave the groups.
+    onChange(sortRoomScenesByGroup(next));
   }
 
   function areaKey(sceneId: string, areaId: string): string {
