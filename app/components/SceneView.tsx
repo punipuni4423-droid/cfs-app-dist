@@ -5,11 +5,14 @@ import type { DragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPoi
 import type {
   CircuitEntry,
   CurtainAssignment,
+  DeviceMaster,
   FixtureMaster,
   HvacAssignment,
   HvacSeason,
   LocationMaster,
+  ProgrammingNameSettings,
   RevisionFieldChanges,
+  RoomType,
   Scene,
   SwitchEntry,
 } from "../types";
@@ -63,6 +66,9 @@ interface SceneViewProps {
   revisionChanges?: RevisionFieldChanges;
   canEdit?: boolean;
   roomTypeName?: string;
+  roomType?: RoomType;
+  devices?: DeviceMaster[];
+  programmingNameSettings?: ProgrammingNameSettings;
 }
 
 type CircuitMode = "designer" | "internal";
@@ -110,6 +116,9 @@ export default function SceneView({
   revisionChanges = {},
   canEdit = true,
   roomTypeName = "",
+  roomType,
+  devices = [],
+  programmingNameSettings,
 }: SceneViewProps) {
   const [selectedAreaId, setSelectedAreaId] = useState("");
   const [selectedSceneId, setSelectedSceneId] = useState("");
@@ -639,7 +648,7 @@ export default function SceneView({
           onClick={() => setViewMode("edit")}
           data-testid="area-scene-mode-edit"
         >
-          編集
+          Edit
         </button>
         <button
           type="button"
@@ -649,7 +658,7 @@ export default function SceneView({
           onClick={() => setViewMode("overview")}
           data-testid="area-scene-mode-overview"
         >
-          一覧
+          Overview
         </button>
       </div>
 
@@ -662,6 +671,9 @@ export default function SceneView({
           curtainAssignments={curtainAssignments}
           switches={switches}
           roomTypeName={roomTypeName}
+          roomType={roomType}
+          devices={devices}
+          programmingNameSettings={programmingNameSettings}
         />
       ) : (
       <>

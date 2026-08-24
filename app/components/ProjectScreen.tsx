@@ -3341,6 +3341,9 @@ export default function ProjectScreen({
               curtainAssignments={activeRoomType.curtainAssignments ?? []}
               switches={activeRoomType.switches}
               roomTypeName={activeRoomType.name}
+              roomType={activeRoomType}
+              devices={devices}
+              programmingNameSettings={project.settings?.programmingName}
               onChange={setScenes}
               revisionChanges={revisionDiff?.sceneFields}
               canEdit={canEdit}

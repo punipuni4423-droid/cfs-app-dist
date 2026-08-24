@@ -7938,6 +7938,39 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   flex-wrap: wrap;
 }
 
+.area-scene-overview-menu {
+  position: relative;
+}
+
+.area-scene-overview-menu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.area-scene-overview-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.area-scene-overview-menu-panel {
+  position: absolute;
+  z-index: 40;
+  inset-block-start: calc(100% + 0.3rem);
+  inset-inline-end: 0;
+  inline-size: min(24rem, calc(100vw - 2rem));
+  min-inline-size: min(22rem, calc(100vw - 2rem));
+  max-block-size: min(70vh, 38rem);
+  overflow: auto;
+}
+
+.area-scene-overview-display-panel {
+  inline-size: min(34rem, calc(100vw - 2rem));
+}
+
+.area-scene-overview-menu-panel .cfs-base-column-row .cfs-check {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
 .area-scene-overview-actions .header-toggle.is-active {
   border-color: var(--color-accent);
   background: var(--color-accent-soft);
@@ -7946,7 +7979,9 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 
 .area-scene-overview-scroll {
   overflow: auto;
-  max-block-size: min(68vh, 42rem);
+  block-size: clamp(28rem, calc(100dvh - 17rem), 72dvh);
+  max-block-size: 46rem;
+  overscroll-behavior: contain;
 }
 
 .area-scene-overview-table {
@@ -7991,6 +8026,24 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   margin-left: 0.5rem;
 }
 
+.area-scene-overview-group-label {
+  position: sticky;
+  left: 0.7rem;
+  display: inline-flex;
+  align-items: center;
+  padding-inline: 0.25rem;
+  background: var(--color-surface-hover);
+}
+
+.area-scene-overview-base-cell {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.area-scene-overview-base-line {
+  display: block;
+}
+
 .area-scene-overview-value {
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -8013,9 +8066,8 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
     );
 }
 
-.area-scene-overview-off {
+.area-scene-overview-table tbody td.area-scene-overview-off {
   color: #2563eb;
-  font-weight: 700;
 }
 
 .area-scene-overview-dup {
