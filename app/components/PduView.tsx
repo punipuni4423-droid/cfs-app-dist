@@ -26,6 +26,8 @@ import {
   PICO_CORRIDOR_ALLOCATION,
   PICO_CORRIDOR_BUTTON_COUNT,
   PICO_CORRIDOR_BUTTON_LABEL,
+  PICO_PRIVACY_BUTTON_COUNT,
+  isPrivacyPicoButtonCount,
 } from "../lib/picoSpecials";
 import { createAppId } from '../lib/id';
 
@@ -95,6 +97,17 @@ function switchGroupKey(sw: SwitchEntry): string {
   return sw.switchGroupId || sw.id;
 }
 
+// A physical Palladiom keypad can span several switch groups (e.g. the upper
+// and lower halves of a bedside keypad share one switch number). The PDU count
+// follows the Switch tab quantity, so Palladioms are counted per switch number.
+function palladiomUnitKey(sw: SwitchEntry): string {
+  return sw.switchNumber.trim() || switchGroupKey(sw);
+}
+
+function switchUnitKey(sw: SwitchEntry): string {
+  return sw.kind === "lutronPd" ? palladiomUnitKey(sw) : switchGroupKey(sw);
+}
+
 function switchKindForDevice(device: DeviceMaster): SwitchKind | null {
   const model = device.model.trim().toLowerCase();
   if (model.includes("palladiom")) return "lutronPd";
@@ -108,6 +121,28 @@ function isCorridorPicoDevice(device: DeviceMaster): boolean {
   return device.model.replace(/\s+/g, "").toLowerCase() === "corridorpico";
 }
 
+function isPrivacyPicoDevice(device: DeviceMaster): boolean {
+  return device.model.replace(/\s+/g, "").toLowerCase() === "privacypico";
+}
+
+// The PDU table lists CorridorPico and PrivacyPico as separate devices, but both
+// are lutronPico switches. A pico switch group belongs to the PrivacyPico row
+// when its button count is "Privacy"; every other pico group counts toward the
+// non-privacy pico device row (CorridorPico), preserving the previous behavior.
+function picoDeviceMatchesSwitch(device: DeviceMaster, sw: SwitchEntry): boolean {
+  return isPrivacyPicoDevice(device)
+    ? isPrivacyPicoButtonCount(sw.buttonCount)
+    : !isPrivacyPicoButtonCount(sw.buttonCount);
+}
+
+function countPicoGroupsForDevice(switches: SwitchEntry[], device: DeviceMaster): number {
+  return new Set(
+    switches
+      .filter((sw) => sw.kind === "lutronPico" && picoDeviceMatchesSwitch(device, sw))
+      .map((sw) => switchGroupKey(sw)),
+  ).size;
+}
+
 function isHvacTstatDevice(device: DeviceMaster): boolean {
   const model = device.model.trim().toLowerCase();
   const control = device.control.trim().toLowerCase();
@@ -118,7 +153,7 @@ function countSwitchGroups(switches: SwitchEntry[], kind: SwitchKind): number {
   return new Set(
     switches
       .filter((sw) => sw.kind === kind)
-      .map((sw) => switchGroupKey(sw)),
+      .map((sw) => switchUnitKey(sw)),
   ).size;
 }
 
@@ -230,17 +265,40 @@ function createPduSwitch(device: DeviceMaster, kind: SwitchKind, switches: Switc
   };
 }
 
+// Privacy picos are created as a two-button group (M1 MUR / M2 DND), matching
+// what the Switch tab produces when the button count is set to "Privacy".
+function createPrivacyPicoRows(device: DeviceMaster, switches: SwitchEntry[]): SwitchEntry[] {
+  const base = createEmptySwitchEntry("lutronPico");
+  const shared = {
+    switchNumber: nextSwitchNumber(switches, "lutronPico", "Pico"),
+    switchName: device.model,
+    buttonCount: PICO_PRIVACY_BUTTON_COUNT,
+  };
+  return [
+    { ...base, ...shared, buttonLabel: "M1", buttonFunction: "MUR" },
+    {
+      ...createEmptySwitchEntry("lutronPico"),
+      ...shared,
+      switchGroupId: base.switchGroupId,
+      buttonLabel: "M2",
+      buttonFunction: "DND",
+    },
+  ];
+}
+
 function syncSwitchesForDevice(
   switches: SwitchEntry[],
   device: DeviceMaster,
   kind: SwitchKind,
   quantity: number,
 ): SwitchEntry[] {
+  const matches = (sw: SwitchEntry): boolean =>
+    sw.kind === kind && (kind !== "lutronPico" || picoDeviceMatchesSwitch(device, sw));
   const groups: string[] = [];
   const seen = new Set<string>();
   for (const sw of switches) {
-    if (sw.kind !== kind) continue;
-    const key = switchGroupKey(sw);
+    if (!matches(sw)) continue;
+    const key = switchUnitKey(sw);
     if (seen.has(key)) continue;
     seen.add(key);
     groups.push(key);
@@ -248,12 +306,16 @@ function syncSwitchesForDevice(
 
   if (quantity < groups.length) {
     const keep = new Set(groups.slice(0, quantity));
-    return switches.filter((sw) => sw.kind !== kind || keep.has(switchGroupKey(sw)));
+    return switches.filter((sw) => !matches(sw) || keep.has(switchUnitKey(sw)));
   }
 
   let next = [...switches];
   for (let index = groups.length; index < quantity; index += 1) {
-    next = [...next, createPduSwitch(device, kind, next)];
+    if (kind === "lutronPico" && isPrivacyPicoDevice(device)) {
+      next = [...next, ...createPrivacyPicoRows(device, next)];
+    } else {
+      next = [...next, createPduSwitch(device, kind, next)];
+    }
   }
   return next;
 }
@@ -368,9 +430,11 @@ export default function PduView({
       ? countAssignedDevices(roomType.deviceAssignments, device.model)
       : source === "HVAC"
         ? roomType.hvacAssignments.length
-        : switchKind
-        ? countSwitchGroups(roomType.switches, switchKind)
-        : manualQuantity(device.id);
+        : switchKind === "lutronPico"
+          ? countPicoGroupsForDevice(roomType.switches, device)
+          : switchKind
+            ? countSwitchGroups(roomType.switches, switchKind)
+            : manualQuantity(device.id);
     const vaPerUnit = pduPerUnit > 0
       ? 0
       : directVa > 0

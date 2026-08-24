@@ -47,6 +47,10 @@ export function isPrivacyPicoButtonCount(count: string): boolean {
   return normalizeToken(count) === normalizeToken(PICO_PRIVACY_BUTTON_COUNT);
 }
 
+export function isPrivacyPicoSwitch(sw: SwitchEntry): boolean {
+  return sw.kind === "lutronPico" && isPrivacyPicoButtonCount(sw.buttonCount);
+}
+
 export function picoButtonLabels(count: string): string[] {
   if (normalizeToken(count) === normalizeToken(PICO_CORRIDOR_BUTTON_COUNT)) return [PICO_CORRIDOR_BUTTON_LABEL];
   if (isPrivacyPicoButtonCount(count)) return ["M1", "M2"];

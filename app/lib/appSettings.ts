@@ -147,6 +147,23 @@ function normalizeDevice(raw: unknown): DeviceMaster | null {
   return device;
 }
 
+// CorridorPico shipped with pdu "0" before PrivacyPico existed; both special
+// picos are specified as -1 PDU. Migrate the stale default while keeping any
+// user-customized value.
+const SPECIAL_PICO_PDU_MODELS = new Set(['CorridorPico', 'PrivacyPico']);
+
+function normalizedDevicePdu(device: DeviceMaster, defaultDevice: DeviceMaster | undefined): string {
+  const stored = typeof device.pdu === 'string' ? device.pdu : defaultDevice?.pdu ?? '0';
+  if (
+    defaultDevice &&
+    SPECIAL_PICO_PDU_MODELS.has(device.model) &&
+    (stored.trim() === '' || stored.trim() === '0')
+  ) {
+    return defaultDevice.pdu;
+  }
+  return stored;
+}
+
 function mergeDefaultDevices(devices: DeviceMaster[]): DeviceMaster[] {
   const defaults = createDefaultDevices();
   const defaultsByModel = new Map(defaults.map((device) => [device.model, device]));
@@ -170,7 +187,7 @@ function mergeDefaultDevices(devices: DeviceMaster[]): DeviceMaster[] {
           typeof device.programmingCode === 'string' && device.programmingCode.trim() !== ''
             ? device.programmingCode
             : defaultDevice?.programmingCode ?? device.abbrev,
-        pdu: typeof device.pdu === 'string' ? device.pdu : defaultDevice?.pdu ?? '0',
+        pdu: normalizedDevicePdu(device, defaultDevice),
         watts: typeof device.watts === 'string' ? device.watts : defaultDevice?.watts ?? '',
       };
     });

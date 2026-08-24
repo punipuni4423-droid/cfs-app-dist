@@ -188,7 +188,8 @@ const DEFAULT_DEVICES_DATA: ReadonlyArray<
   ['Palladiom Tstat', 'TSTAT', 'TSTAT', '', '', 'fixed', '-1', ''],
   ['QSM', 'Sensor', 'QSM', '', '', 'fixed', '-3', ''],
   ['Palladiom Keypad', 'Keypad', 'PD', '', '', 'fixed', '-1', ''],
-  ['CorridorPico', 'Remote', 'CP', '', '', 'fixed', '0', ''],
+  ['CorridorPico', 'Remote', 'CP', '', '', 'fixed', '-1', ''],
+  ['PrivacyPico', 'Remote', 'PP', '', '', 'fixed', '-1', ''],
 ] as const;
 
 // Address/Zone enumeration per device model.

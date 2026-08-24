@@ -222,13 +222,15 @@ export default function CircuitsView({
     if (!target) return;
     const effectiveValue =
       field === "pcs" ? normalizePcsInput(target.fixture, value) : value;
-    // Group-level fields propagate to the entire circuit group.
-    // Internal # / Detail stay row-level because legacy CFS sheets often use
-    // one Designer # with multiple load rows.
+    // Group-level fields propagate to the entire circuit group. One circuit
+    // (Designer #) carries exactly one Designer #, Internal #, Dimming Type,
+    // Area, FFE, Energy Save, and Detail (2026-08-24).
     const propagateToGroup =
       (field === "designerNumber" ||
+        field === "internalNumber" ||
         field === "dimmingType" ||
-        field === "area") &&
+        field === "area" ||
+        field === "detail") &&
       target.circuitGroupId.trim() !== "";
     const targetGroupKey = circuitGroupKey(target);
     const targetDaliFixtureKey = daliFixtureKey(target);
@@ -332,10 +334,12 @@ export default function CircuitsView({
   ): void {
     const target = circuits.find((c) => c.id === id);
     if (!target) return;
+    const targetGroupKey = circuitGroupKey(target);
     commitCircuits(
       circuits.map((c) => {
         const shouldUpdate =
           c.id === id ||
+          (target.circuitGroupId.trim() !== "" && circuitGroupKey(c) === targetGroupKey) ||
           (isDaliCircuit(target) &&
             target.daliFixtureGroupId !== "" &&
             c.daliFixtureGroupId === target.daliFixtureGroupId);
@@ -374,7 +378,7 @@ export default function CircuitsView({
         area: sourceInList.area,
         fixture: sourceInList.fixture,
         pcs: index === 0 ? String(count) : "",
-        detail: existing?.detail || sourceInList.detail,
+        detail: sourceInList.detail,
         ffe: sourceInList.ffe,
         energySaving: sourceInList.energySaving,
       };
@@ -953,15 +957,20 @@ export default function CircuitsView({
                         </div>
                       </td>
                     ) : null}
-                    <td
-                      className={[internalDup ? "cell-duplicate" : "", revisionCellClass(c.id, ["internalNumber"])].filter(Boolean).join(" ")}
-                    >
-                      <AutoGrowTextarea
-                        value={c.internalNumber}
-                        onChange={(value) => update(c.id, "internalNumber", value)}
-                        disabled={!canEdit}
-                      />
-                    </td>
+                    {isHead ? (
+                      <td
+                        className={[internalDup ? "cell-duplicate" : "", revisionCellClass(c.id, ["internalNumber"])].filter(Boolean).join(" ")}
+                        rowSpan={groupVisibleRows}
+                      >
+                        <div className="rowspan-cell-content">
+                        <AutoGrowTextarea
+                          value={groupHead.internalNumber}
+                          onChange={(value) => update(c.id, "internalNumber", value)}
+                          disabled={!canEdit}
+                        />
+                        </div>
+                      </td>
+                    ) : null}
                     {isHead ? (
                       <td rowSpan={groupVisibleRows} className={revisionCellClass(c.id, ["dimmingType"])}>
                         <div className="rowspan-cell-content">
@@ -1084,49 +1093,63 @@ export default function CircuitsView({
                         <span className="rowspan-cell-content">{formatTotal(totalForGroup)}</span>
                       </td>
                     ) : null}
-                    <td
-                      className={`col-center ${revisionCellClass(c.id, ["ffe"])}`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={c.ffe}
-                        onChange={(e) => updateBoolean(c.id, 'ffe', e.target.checked)}
-                        aria-label="FFE"
-                        disabled={!canEdit}
-                      />
-                    </td>
-                    <td
-                      className={`col-center ${revisionCellClass(c.id, ["energySaving"])}`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={c.energySaving}
-                        onChange={(e) => updateBoolean(c.id, 'energySaving', e.target.checked)}
-                        aria-label="Energy Save"
-                        disabled={!canEdit}
-                      />
-                    </td>
-                    <td className={revisionCellClass(c.id, ["detail"])}>
-                      <div className="cell-with-clear">
-                        <Combobox
-                          value={c.detail}
-                          options={detailOptionsForArea(c.area || groupHead.area)}
-                          onChange={(value) => update(c.id, "detail", value)}
-                          ariaLabel="Detail"
+                    {isHead ? (
+                      <td
+                        className={`col-center ${revisionCellClass(c.id, ["ffe"])}`}
+                        rowSpan={groupVisibleRows}
+                      >
+                        <span className="rowspan-cell-content rowspan-cell-center">
+                        <input
+                          type="checkbox"
+                          checked={groupHead.ffe}
+                          onChange={(e) => updateBoolean(c.id, 'ffe', e.target.checked)}
+                          aria-label="FFE"
                           disabled={!canEdit}
                         />
-                        {c.detail.trim() ? (
-                          <button
-                            type="button"
-                            className="btn-clear-circuit"
-                            onClick={() => update(c.id, "detail", "")}
+                        </span>
+                      </td>
+                    ) : null}
+                    {isHead ? (
+                      <td
+                        className={`col-center ${revisionCellClass(c.id, ["energySaving"])}`}
+                        rowSpan={groupVisibleRows}
+                      >
+                        <span className="rowspan-cell-content rowspan-cell-center">
+                        <input
+                          type="checkbox"
+                          checked={groupHead.energySaving}
+                          onChange={(e) => updateBoolean(c.id, 'energySaving', e.target.checked)}
+                          aria-label="Energy Save"
+                          disabled={!canEdit}
+                        />
+                        </span>
+                      </td>
+                    ) : null}
+                    {isHead ? (
+                      <td className={revisionCellClass(c.id, ["detail"])} rowSpan={groupVisibleRows}>
+                        <div className="rowspan-cell-content">
+                        <div className="cell-with-clear">
+                          <Combobox
+                            value={groupHead.detail}
+                            options={detailOptionsForArea(groupHead.area)}
+                            onChange={(value) => update(c.id, "detail", value)}
+                            ariaLabel="Detail"
                             disabled={!canEdit}
-                          >
-                            Clear
-                          </button>
-                        ) : null}
-                      </div>
-                    </td>
+                          />
+                          {groupHead.detail.trim() ? (
+                            <button
+                              type="button"
+                              className="btn-clear-circuit"
+                              onClick={() => update(c.id, "detail", "")}
+                              disabled={!canEdit}
+                            >
+                              Clear
+                            </button>
+                          ) : null}
+                        </div>
+                        </div>
+                      </td>
+                    ) : null}
                     <td className="col-center">
                       <div className="table-actions">
                         {isHead ? (
