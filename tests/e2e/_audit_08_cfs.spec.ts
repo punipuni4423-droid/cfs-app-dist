@@ -27,6 +27,21 @@ const ROOM_NAME = 'AUDIT-08-Room';
 
 test.beforeEach(async ({ page }) => {
   await installLocalEditingMocks(page);
+  // Kill the draft-wins race: a stale browser draft written by the still-open
+  // project page (1.2s debounced autosave) would beat the seeded server state
+  // on reload. Tests never need drafts, so purge them before every load.
+  await page.addInitScript(() => {
+    try {
+      const doomed: string[] = [];
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('cfs-project-drafts')) doomed.push(key);
+      }
+      doomed.forEach((key) => localStorage.removeItem(key));
+    } catch {
+      // best effort
+    }
+  });
 });
 
 function shotPath(name: string): string {
@@ -293,6 +308,11 @@ async function seedCfsData(page: Page): Promise<{ areaIds: string[] }> {
       mkCircuit('D-3', 'L03', areaB.id, 'DALI', 'Spot B', false, true),
     ];
     project.circuits = circuits;
+    // The app normalizes a fresh room type to circuitIds: [] before any
+    // circuits exist; seeding circuits without updating circuitIds leaves the
+    // room scoped to zero circuits (Designer#/scene links all blank - the
+    // A2/C/H flake). Scope the room to the seeded circuits explicitly.
+    (room as { circuitIds?: string[] }).circuitIds = circuits.map((entry) => entry.id);
 
     // --- Device Assignments (circuitNumber == circuit.designerNumber) ---
     const mkAssign = (
@@ -445,6 +465,57 @@ async function seedCfsData(page: Page): Promise<{ areaIds: string[] }> {
       body: JSON.stringify({ projects }),
     });
   }, result.projects);
+
+  // The still-open project page can flush a stale autosave (1.2s debounce)
+  // AFTER the sync above and wipe the seeded circuits/assignments (the A2/C/H
+  // flake). Wait the debounce out, re-assert the seed, and verify the
+  // persisted structure actually holds everything the tests rely on.
+  let verified = false;
+  for (let attempt = 0; attempt < 5 && !verified; attempt += 1) {
+    await page.waitForTimeout(1800);
+    await page.evaluate(
+      async ({ projects, storageKey }) => {
+        localStorage.setItem(storageKey, JSON.stringify(projects));
+        const doomed: string[] = [];
+        for (let i = 0; i < localStorage.length; i += 1) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('cfs-project-drafts')) doomed.push(key);
+        }
+        doomed.forEach((key) => localStorage.removeItem(key));
+        await fetch('/api/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projects }),
+        });
+      },
+      { projects: result.projects, storageKey: STORAGE_KEY },
+    );
+    verified = await page.evaluate(
+      async ({ pn, rn }) => {
+        try {
+          const response = await fetch('/api/projects', { cache: 'no-store' });
+          const payload = await response.json();
+          const project = (payload.projects ?? []).find((item: { name?: string }) => item.name === pn);
+          if (!project || (project.circuits ?? []).length < 3) return false;
+          const room = (project.roomTypes ?? []).find((item: { name?: string }) => item.name === rn);
+          if (!room) return false;
+          return (
+            (room.circuitIds ?? []).length >= 3 &&
+            (room.deviceAssignments ?? []).length >= 4 &&
+            (room.scenes ?? []).length >= 1 &&
+            (room.roomScenes ?? []).length >= 2 &&
+            (room.switches ?? []).length >= 4
+          );
+        } catch {
+          return false;
+        }
+      },
+      { pn: PROJECT_NAME, rn: ROOM_NAME },
+    );
+  }
+  if (!verified) {
+    throw new Error('seedCfsData: seeded structure did not persist after retries');
+  }
 
   return { areaIds: result.areaIds };
 }
