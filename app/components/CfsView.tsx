@@ -2475,7 +2475,7 @@ export default function CfsView({
     link.href = url;
     link.download = `${safeExcelFilePart(projectName, "Project")}_${safeExcelFilePart(roomType.name, "Room")}_CFS_view.xlsx`;
     link.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function rowAreaAddressValues(row: CfsZoneRow): string[] {

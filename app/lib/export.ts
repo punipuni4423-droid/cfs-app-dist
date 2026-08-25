@@ -30,7 +30,7 @@ function triggerWorkbookDownload(buffer: ArrayBuffer, filename: string): void {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function exportRoomTypeToExcel(
