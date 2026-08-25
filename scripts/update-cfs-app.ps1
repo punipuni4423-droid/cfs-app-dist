@@ -414,7 +414,7 @@ try {
   Write-UpdateStatus -State "running" -Step "git-pull" -Message "Applying Git update." -Progress 40 -BackupPath $backupPath
   if ($behind -gt 0) {
     # An interrupted update can leave files the incoming commits ADD sitting
-    # untracked in the working tree, which aborts "pull --ff-only". Move such
+    # untracked in the working tree, which aborts the fast-forward update. Move such
     # files aside (kept under artifacts\self-update) instead of failing.
     $incomingAdded = @(& $gitExe -C $repoRoot diff --name-only --diff-filter=A "HEAD..@{u}" 2>$null)
     if (@($incomingAdded).Count -gt 0) {
@@ -435,7 +435,7 @@ try {
         }
       }
     }
-    Invoke-LoggedCommand -FilePath $gitExe -Arguments @("-C", $repoRoot, "pull", "--ff-only") -WorkingDirectory $repoRoot
+    Invoke-LoggedCommand -FilePath $gitExe -Arguments @("-C", $repoRoot, "merge", "--ff-only", "@{u}") -WorkingDirectory $repoRoot
   } else {
     Write-Log "No upstream commits to pull."
   }
