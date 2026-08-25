@@ -126,6 +126,7 @@ function isCurtainTarget(target: SettingTarget): boolean {
 function visibleButtonFunction(sw: SwitchEntry): string {
   const value = sw.buttonFunction.trim();
   if (!value) return "";
+  if (sw.kind === "pir" && value === "PIR") return "";
   if (
     (sw.kind === "lutronPd" || sw.kind === "lutronPico") &&
     value === sw.buttonLabel
@@ -362,11 +363,9 @@ export default function SwitchView({
   const hasBulkColumn = !isQsm;
   const colCount = (isCommand
     ? 10
-    : isPir
-      ? 9
-      : isQsm
-        ? 5
-    : 11 + (hasButtonCount ? 2 : 0) + (hasCciDeviceColumn ? 2 : 0) + (hasPriorityColumn ? 1 : 0)) +
+    : isQsm
+      ? 5
+      : 11 + (hasButtonCount ? 2 : 0) + (hasCciDeviceColumn ? 2 : 0) + (hasPriorityColumn ? 1 : 0)) +
     (hasBulkColumn ? 1 : 0);
 
   const priorityFunctionCounts = useMemo(() => {
@@ -456,6 +455,7 @@ export default function SwitchView({
       switchNumber: head.switchNumber,
       switchName: head.switchName,
       cciAssignment: head.cciAssignment,
+      allocation: activeKind === "pir" ? head.allocation : newRow.allocation,
       buttonCount: head.buttonCount,
       buttonLabel: buttonLabel ?? head.buttonLabel,
       buttonFunction: "",
@@ -1538,8 +1538,8 @@ export default function SwitchView({
                 )}
                 {hasButtonCount ? <col className="switch-col-button-count" /> : null}
                 {hasButtonCount ? <col className="switch-col-button-label" /> : null}
-                {!isCommand && !isPir ? <col className="switch-col-add" /> : null}
-                {!isPir ? <col className="switch-col-function" /> : null}
+                {!isCommand ? <col className="switch-col-add" /> : null}
+                <col className="switch-col-function" />
                 {hasPriorityColumn ? <col className="switch-col-priority" /> : null}
                 <col className="switch-col-condition" />
                 <col className="switch-col-bulk-select" />
@@ -1577,8 +1577,8 @@ export default function SwitchView({
                   )}
                   {hasButtonCount ? <th>Buttons</th> : null}
                   {hasButtonCount ? <th>Button</th> : null}
-                  {!isCommand && !isPir ? <th className="col-center">+</th> : null}
-                  {!isPir ? <th>{isCommand ? "Button" : "Function"}</th> : null}
+                  {!isCommand ? <th className="col-center">+</th> : null}
+                  <th>{isCommand ? "Button" : "Function"}</th>
                   {hasPriorityColumn ? <th className="col-center">Priority</th> : null}
                   <th>Trigger Condition</th>
                   <th className="col-center switch-bulk-select-header">
@@ -1902,7 +1902,7 @@ export default function SwitchView({
                               </td>
                             ) : null}
                             {isFirst ? (
-                              !hasButtonCount && !isCommand && !isPir ? (
+                              !hasButtonCount && !isCommand ? (
                               <td className="col-center" rowSpan={groupRowSpan}>
                                 <button
                                   type="button"
@@ -1929,15 +1929,13 @@ export default function SwitchView({
                                 </button>
                               </td>
                             ) : null}
-                            {!isPir ? (
-                              <td className={revisionCellClass(sw.id, ["buttonFunction"])}>
-                                <AutoGrowTextarea
-                                  value={visibleButtonFunction(sw)}
-                                  onChange={(value) => updateSwitch(sw.id, { buttonFunction: value })}
-                                  disabled={!canEdit}
-                                />
-                              </td>
-                            ) : null}
+                            <td className={revisionCellClass(sw.id, ["buttonFunction"])}>
+                              <AutoGrowTextarea
+                                value={visibleButtonFunction(sw)}
+                                onChange={(value) => updateSwitch(sw.id, { buttonFunction: value })}
+                                disabled={!canEdit}
+                              />
+                            </td>
                             {hasPriorityColumn ? (
                               <td className={`col-center ${revisionCellClass(sw.id, ["isPriorityFunction"])}`}>
                                 <label

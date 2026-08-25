@@ -249,6 +249,12 @@ function displayFunctionName(sw: SwitchEntry): string {
   return "Function";
 }
 
+function displayPirFunctionName(sw: SwitchEntry): string {
+  const value = sw.buttonFunction.trim();
+  if (!value || value === "PIR" || /^Function\s+\d+$/i.test(value)) return "";
+  return value;
+}
+
 function commandPirReference(index: number): string {
   return `PIR ${index}`;
 }
@@ -458,6 +464,13 @@ function pirAreaNumberSummary(sw: SwitchEntry, locations: LocationMaster[]): str
   const selectedLabel = pirInstanceLabel(sw, locations);
   if (selectedLabel) return selectedLabel;
   return "-";
+}
+
+function pirHeaderLabels(sw: SwitchEntry, locations: LocationMaster[]): string[] {
+  const labels = pirInstanceLabels(sw, locations);
+  if (labels.length > 0) return labels;
+  const fallback = pirAreaNumberSummary(sw, locations);
+  return fallback && fallback !== "-" ? [fallback] : [];
 }
 
 function isOffLikeDisplayValue(value: string): boolean {
@@ -1049,7 +1062,7 @@ export default function CfsView({
         const resolvedName = sw.kind === "pir" ? "" : displaySwitchName(sw);
         const groupKey = normalizedSwitchHeaderKey(sw, resolvedNumber, resolvedName);
         const pirButton = String(pirLogicNo);
-        const pirLabels = sw.kind === "pir" ? pirInstanceLabels(sw, locations) : undefined;
+        const pirLabels = sw.kind === "pir" ? pirHeaderLabels(sw, locations) : undefined;
         return {
           id: sw.id,
           category: "switch" as const,
@@ -1059,7 +1072,7 @@ export default function CfsView({
           switchNumber: resolvedNumber,
           switchName: resolvedName,
           button: sw.kind === "pir" ? pirButton : buttonGroupKey(sw),
-          functionName: sw.kind === "pir" ? pirAreaNumberSummary(sw, locations) : displayFunctionName(sw),
+          functionName: sw.kind === "pir" ? displayPirFunctionName(sw) : displayFunctionName(sw),
           condition: sw.condition.trim(),
           kind: sw.kind,
           source: sw,
@@ -1623,7 +1636,15 @@ export default function CfsView({
   // trigger-condition row). Merging is display-based on purpose: distinct
   // scenes/switches with identical labels read as one shared branch.
   const buttonHeaderGroups = useMemo(() => {
-    const groups: Array<{ key: string; colSpan: number; button: string; startsSwitchGroup: boolean; cols: FunctionColumn[] }> = [];
+    const groups: Array<{
+      key: string;
+      colSpan: number;
+      button: string;
+      kind: FunctionColumn["kind"];
+      pirLabels?: string[];
+      startsSwitchGroup: boolean;
+      cols: FunctionColumn[];
+    }> = [];
     let previousSwitchKey: string | null = null;
     for (const col of visibleFunctionColumns) {
       const startsSwitchGroup = col.switchGroupKey !== previousSwitchKey;
@@ -1638,6 +1659,8 @@ export default function CfsView({
           key,
           colSpan: 1,
           button: col.button,
+          kind: col.kind,
+          pirLabels: col.pirLabels,
           startsSwitchGroup,
           cols: [col],
         });
@@ -2099,8 +2122,8 @@ export default function CfsView({
       return (parts.length > 0 ? parts : ["-"]).join("\n");
     }
 
-    function pirHeaderExportText(group: { functionName: string; kind: FunctionColumn["kind"]; pirLabels?: string[]; key: string }): string {
-      if (group.kind !== "pir" || !group.pirLabels) return splitHeaderText(group.functionName || "-");
+    function pirButtonHeaderExportText(group: { button: string; kind: FunctionColumn["kind"]; pirLabels?: string[]; key: string }): string {
+      if (group.kind !== "pir" || !group.pirLabels) return splitHeaderText(group.button || "-");
       const labels = group.pirLabels;
       if (labels.length === 0) return "-";
       if (labels.length === 1) return splitHeaderText(labels[0]);
@@ -2335,7 +2358,7 @@ export default function CfsView({
       cells.push({
         row: 2,
         col: headerCol,
-        value: splitHeaderText(group.button || "-"),
+        value: pirButtonHeaderExportText(group),
         colSpan: group.colSpan,
         fill: headerFill,
         bold: true,
@@ -2348,7 +2371,7 @@ export default function CfsView({
       cells.push({
         row: 3,
         col: headerCol,
-        value: pirHeaderExportText(group),
+        value: splitHeaderText(group.functionName || "-"),
         colSpan: group.colSpan,
         fill: headerFill,
         bold: true,
@@ -4784,7 +4807,22 @@ export default function CfsView({
                   }`}
                   colSpan={group.colSpan}
                 >
-                  <HeaderSplitText value={group.button} />
+                  {group.kind === "pir" && group.pirLabels ? (
+                    <PirHeaderText
+                      labels={group.pirLabels}
+                      expanded={expandedPirHeaderKeys.has(group.key)}
+                      onToggle={() =>
+                        setExpandedPirHeaderKeys((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(group.key)) next.delete(group.key);
+                          else next.add(group.key);
+                          return next;
+                        })
+                      }
+                    />
+                  ) : (
+                    <HeaderSplitText value={group.button} />
+                  )}
                 </th>
               ))}
               <th className="cfs-scroll-end-inline-cell" aria-hidden="true" />
@@ -4802,22 +4840,7 @@ export default function CfsView({
                   }`}
                   colSpan={group.colSpan}
                 >
-                  {group.kind === "pir" && group.pirLabels ? (
-                    <PirHeaderText
-                      labels={group.pirLabels}
-                      expanded={expandedPirHeaderKeys.has(group.key)}
-                      onToggle={() =>
-                        setExpandedPirHeaderKeys((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(group.key)) next.delete(group.key);
-                          else next.add(group.key);
-                          return next;
-                        })
-                      }
-                    />
-                  ) : (
-                    <HeaderSplitText value={group.functionName || "-"} />
-                  )}
+                  <HeaderSplitText value={group.functionName || "-"} />
                 </th>
               ))}
               <th className="cfs-scroll-end-inline-cell" aria-hidden="true" />
