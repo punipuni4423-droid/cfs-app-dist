@@ -628,8 +628,7 @@ export default function CfsView({
   const inspectionDraftsTouchedRef = useRef(false);
   const pointerDraggedFunctionColumnGroupKeyRef = useRef("");
   const mouseDraggedFunctionColumnGroupKeyRef = useRef("");
-  const { settings: appSettings, setSettings: setAppSettings } = useAppSettings();
-  const showLinkedValueHighlight = appSettings.adminMode && appSettings.cfsLinkedValueHighlightEnabled;
+  const { settings: appSettings } = useAppSettings();
   const activeProgrammingNameSettings = useMemo(
     () => normalizeProgrammingNameSettings(programmingNameSettings),
     [programmingNameSettings],
@@ -2105,12 +2104,10 @@ export default function CfsView({
     };
 
     const headerFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFEEF3F5" } };
-    const border = {
-      top: { style: "thin" as const, color: { argb: "FFD7E0E5" } },
-      left: { style: "thin" as const, color: { argb: "FFD7E0E5" } },
-      bottom: { style: "thin" as const, color: { argb: "FFD7E0E5" } },
-      right: { style: "thin" as const, color: { argb: "FFD7E0E5" } },
-    };
+    // Border edges: thin matches the faint on-screen cell border; heavy matches
+    // the strong .cfs-switch-group-start rule (2px slate) used between switches.
+    const thinEdge = { style: "thin" as const, color: { argb: "FFD7E0E5" } };
+    const heavyEdge = { style: "medium" as const, color: { argb: "FF334155" } };
 
     function stackedText(values: string[], placeholder = "-"): string {
       const safeValues = values.length > 0 ? values : [placeholder];
@@ -2425,9 +2422,41 @@ export default function CfsView({
       maxColWidths.set(column, Math.min(34, Math.max(7, CFS_FUNCTION_COLUMN_WIDTH / 7)));
     });
 
+    // Heavy edges: switch-to-switch boundaries, the header row band (rows 1-4),
+    // the base-column band, and the outer table frame. ExcelJS shares one style
+    // per merged range, so borders are computed per cell REGION (row/colSpan),
+    // never by overwriting individual grid positions inside a merge.
+    const baseColumnCount = visibleBaseColumns.length;
+    const totalColumnCount = baseColumnCount + visibleFunctionColumns.length;
+    const lastBorderRow = 4 + Math.max(1, displayedRows.length);
+    const switchGroupStartCols = new Set<number>();
+    {
+      let groupStartCol = baseColumnCount + 1;
+      for (const group of switchHeaderGroups) {
+        switchGroupStartCols.add(groupStartCol);
+        groupStartCol += group.colSpan;
+      }
+    }
+
     for (const cell of cells) {
       const excelCell = worksheet.getCell(cell.row, cell.col);
       excelCell.value = cell.value;
+      const regionEndRow = cell.row + (cell.rowSpan ?? 1) - 1;
+      const regionEndCol = cell.col + (cell.colSpan ?? 1) - 1;
+      excelCell.border = {
+        top: cell.row === 1 ? heavyEdge : thinEdge,
+        bottom: regionEndRow === lastBorderRow || regionEndRow === 4 ? heavyEdge : thinEdge,
+        left:
+          cell.col === 1 || cell.col === baseColumnCount + 1 || switchGroupStartCols.has(cell.col)
+            ? heavyEdge
+            : thinEdge,
+        right:
+          regionEndCol === totalColumnCount ||
+          regionEndCol === baseColumnCount ||
+          switchGroupStartCols.has(regionEndCol + 1)
+            ? heavyEdge
+            : thinEdge,
+      };
       excelCell.alignment = {
         horizontal: cell.horizontal ?? "center",
         vertical: "middle",
@@ -2437,7 +2466,6 @@ export default function CfsView({
         bold: Boolean(cell.bold),
         color: { argb: cell.fontColor ?? "FF334155" },
       };
-      excelCell.border = border;
       if (cell.fill) excelCell.fill = cell.fill;
       const rowSpan = cell.rowSpan ?? 1;
       const colSpan = cell.colSpan ?? 1;
@@ -3692,17 +3720,6 @@ export default function CfsView({
     return values.some((value) => value.trim() !== "") ? values : ["-"];
   }
 
-  function hasLinkedValueCell(row: CfsZoneRow, col: FunctionColumn, values: string[]): boolean {
-    if (!col.roomScene && !col.source) return false;
-    const visibleValue = values.some((value) => {
-      const trimmed = value.trim();
-      return trimmed !== "" && trimmed !== "-";
-    });
-    if (!visibleValue) return false;
-    if (row.isBacklight) return Boolean(col.roomScene || col.source);
-    return rowTargetIds(row).length > 0;
-  }
-
   function hasRepairedLinkCell(row: CfsZoneRow, values: string[]): boolean {
     if (repairedLinkTargetIds.size === 0) return false;
     const visibleValue = values.some((value) => {
@@ -3885,7 +3902,6 @@ export default function CfsView({
   const hasHighlightLegend =
     showIndividualOverrideHighlight ||
     showAreaSceneHighlight ||
-    showLinkedValueHighlight ||
     repairedLinkTargetIds.size > 0 ||
     showFfeHighlight ||
     showEnergySavingHighlight ||
@@ -4408,22 +4424,6 @@ export default function CfsView({
               <span className="cfs-highlight-swatch cfs-highlight-swatch-inspection" aria-hidden="true" />
               Inspection Marks
             </label>
-            {appSettings.adminMode ? (
-              <label className="cfs-check">
-                <input
-                  type="checkbox"
-                  checked={showLinkedValueHighlight}
-                  onChange={(e) =>
-                    setAppSettings({
-                      ...appSettings,
-                      cfsLinkedValueHighlightEnabled: e.target.checked,
-                    })
-                  }
-                />
-                <span className="cfs-highlight-swatch cfs-highlight-swatch-linked" aria-hidden="true" />
-                Linked Values
-              </label>
-            ) : null}
             <label className="cfs-check">
               <input
                 type="checkbox"
@@ -4617,12 +4617,6 @@ export default function CfsView({
                 <span className="cfs-highlight-legend-chip">
                   <span className="cfs-highlight-swatch cfs-highlight-swatch-area-scene" aria-hidden="true" />
                   Area Scene Value
-                </span>
-              ) : null}
-              {showLinkedValueHighlight ? (
-                <span className="cfs-highlight-legend-chip">
-                  <span className="cfs-highlight-swatch cfs-highlight-swatch-linked" aria-hidden="true" />
-                  Linked Values
                 </span>
               ) : null}
               {repairedLinkTargetIds.size > 0 ? (
@@ -5092,7 +5086,6 @@ export default function CfsView({
                     {visibleFunctionColumns.map((col) => {
                       const values = functionValues(row, col);
                       const isAreaSceneValue = showAreaSceneHighlight && hasAreaSceneValueCell(row, col);
-                      const isLinkedValue = showLinkedValueHighlight && hasLinkedValueCell(row, col, values);
                       const isRepairedLink = hasRepairedLinkCell(row, values);
                       const isLinkIssueCell = hasLinkIssueFunctionCell(row, col);
                       const hasInspectionMark = showInspectionMarkHighlight && hasInspectionMarkForCell(row, col);
@@ -5128,8 +5121,6 @@ export default function CfsView({
                           style={backlightTint}
                           className={`cfs-function-cell${switchGroupStartColIds.has(col.id) ? " cfs-switch-group-start" : ""}${hasChangedFunctionCell(row, col) ? " revision-changed-cell" : ""}${
                             isAreaSceneValue ? " cfs-area-scene-value-cell" : ""
-                          }${
-                            isLinkedValue ? " cfs-linked-value-cell" : ""
                           }${
                             isRepairedLink ? " cfs-repaired-link-cell" : ""
                           }${

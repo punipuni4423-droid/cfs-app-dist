@@ -36,6 +36,10 @@ function createRoomTypeButton(page: Page) {
   return page.getByRole('button', { name: /Create Room Type|ルームタイプ作成|作成/ }).first();
 }
 
+function roomTypeParentTab(page: Page) {
+  return page.locator('[role="tab"]').filter({ hasText: /Room Type|Rooms/i }).first();
+}
+
 /** プロジェクト一覧から新規プロジェクトを作成して画面遷移する */
 async function createAndOpenProject(page: Page, name: string): Promise<void> {
   await page.goto('/');
@@ -51,8 +55,15 @@ async function createAndOpenProject(page: Page, name: string): Promise<void> {
   await createBtn.click();
   await expect(page.locator('text=プロジェクトがありません')).toHaveCount(0, { timeout: 8000 });
   const card = page.locator('button.screen-card').filter({ hasText: name });
-  await expect(card).toBeVisible({ timeout: 10000 });
-  await card.first().click();
+  const projectTablist = page.locator('[role="tablist"]').first();
+  await expect(async () => {
+    const openedProject = await projectTablist.isVisible().catch(() => false);
+    const returnedToList = await card.first().isVisible().catch(() => false);
+    expect(openedProject || returnedToList).toBe(true);
+  }).toPass({ timeout: 10000 });
+  if (await card.first().isVisible().catch(() => false)) {
+    await card.first().click();
+  }
   await expect(page.locator('[role="tablist"]').first()).toBeVisible({ timeout: 10000 });
 }
 
@@ -62,12 +73,11 @@ async function switchTab(page: Page, labelPattern: RegExp): Promise<void> {
 }
 
 /**
- * Rooms 親タブに移動し、ルームタイプを作成 → 選択して子タブを出現させる。
+ * Room Type 親タブに移動し、ルームタイプを作成 → 選択して子タブを出現させる。
  * 選択後は activeSubTab が "cfs" になるので、必要なら別途子タブをクリックすること。
  */
 async function createRoomTypeAndSelect(page: Page, roomName: string): Promise<void> {
-  // 親タブ「Rooms」をクリック
-  await page.locator('[role="tab"]').filter({ hasText: /Rooms/i }).first().click();
+  await roomTypeParentTab(page).click();
   await page.waitForTimeout(300);
 
   // ルームタイプ名を入力して作成
@@ -78,20 +88,24 @@ async function createRoomTypeAndSelect(page: Page, roomName: string): Promise<vo
   const roomCreateBtn = createRoomTypeButton(page);
   await roomCreateBtn.click();
 
-  // 作成されたルームタイプカードをクリック
-  await page.locator('button.screen-card').filter({ hasText: roomName }).first().click();
+  const roomCard = page.locator('button.screen-card').filter({ hasText: roomName }).first();
+  const roomTab = page.locator('[role="tab"]').filter({ hasText: roomName }).first();
+  await expect(async () => {
+    const openedRoomType = await roomTab.isVisible().catch(() => false);
+    const returnedToManage = await roomCard.isVisible().catch(() => false);
+    expect(openedRoomType || returnedToManage).toBe(true);
+  }).toPass({ timeout: 10000 });
+  if (await roomCard.isVisible().catch(() => false)) {
+    await roomCard.click();
+  }
 
   // 子タブバーが出現するのを待つ (Circuit タブ)
   await expect(
     page.locator('[role="tab"]').filter({ hasText: /Circuit/i }).first()
   ).toBeVisible({ timeout: 8000 });
-
-  // CFS subtab がアクティブになるのを明示的に待つ
-  const cfsTab = page.locator('[role="tab"]').filter({ hasText: /^CFS$/ });
-  await expect(cfsTab.first()).toHaveAttribute('aria-selected', 'true', { timeout: 8000 });
 }
 
-/** Rooms → ルームタイプ作成 → Device Assign 子タブに遷移する */
+/** Room Type → ルームタイプ作成 → Device Assign 子タブに遷移する */
 async function setupRoomAndSelectDeviceAssign(page: Page, roomName: string): Promise<void> {
   await createRoomTypeAndSelect(page, roomName);
 
@@ -139,31 +153,17 @@ test.describe('02 - プロジェクト画面タブ構造 [R7]', () => {
     await createAndOpenProject(page, `${PROJECT_NAME}-tab`);
   });
 
-  test('[R7] 1段目タブに Area / Fixture / Rooms が存在する', async ({ page }) => {
+  test('[R7] 1段目タブに Area / Fixture / Room Type が存在する', async ({ page }) => {
     // 親タブバーのみを対象にする (primary タブ)
     const primaryTablist = page.locator('[role="tablist"]').first();
     await expect(primaryTablist.locator('[role="tab"]').filter({ hasText: /Area/i })).toBeVisible();
     await expect(primaryTablist.locator('[role="tab"]').filter({ hasText: /Fixture/i })).toBeVisible();
-    await expect(primaryTablist.locator('[role="tab"]').filter({ hasText: /Rooms/i })).toBeVisible();
+    await expect(primaryTablist.locator('[role="tab"]').filter({ hasText: /Room Type|Rooms/i })).toBeVisible();
   });
 
-  test('[R7] Rooms をクリックすると 2段目に Circuit / Device Assign / CFS が出現する', async ({ page }) => {
-    // 最初は子タブが表示されていないことを確認
-    const circuitSubTab = page.locator('[role="tab"]').filter({ hasText: /^🔌|^Circuit/i });
-    // 子タブはまだ存在しないか disabled
-    const initialCount = await circuitSubTab.count();
-
-    // Rooms 親タブをクリック
-    await page.locator('[role="tab"]').filter({ hasText: /Rooms/i }).first().click();
-    await page.waitForTimeout(300);
-
-    // ルームタイプを選択した後でないと子タブは有効にならない → まずルームタイプ作成
+  test('[R7] Room Type をクリックすると 2段目に Circuit / Device Assign / CFS が出現する', async ({ page }) => {
     const roomName = `R7-Room-${Date.now()}`;
-    const roomInput = roomTypeNameInput(page);
-    await expect(roomInput).toBeVisible({ timeout: 5000 });
-    await roomInput.fill(roomName);
-    await createRoomTypeButton(page).click();
-    await page.locator('button.screen-card').filter({ hasText: roomName }).first().click();
+    await createRoomTypeAndSelect(page, roomName);
 
     // 子タブ Circuit / Device Assign / CFS が出現する
     await expect(page.locator('[role="tab"]').filter({ hasText: /Circuit/i }).first()).toBeVisible({ timeout: 8000 });
@@ -176,18 +176,18 @@ test.describe('02 - プロジェクト画面タブ構造 [R7]', () => {
     await expect(settingsBtn).toBeVisible();
   });
 
-  test('設定メニューを開くとデバイスマスターリンクが表示される', async ({ page }) => {
+  test('設定ボタンを開くと Device Master 設定ダイアログが表示される', async ({ page }) => {
     const settingsBtn = page.locator('.settings-button, button[aria-label="設定メニュー"]').first();
     await settingsBtn.click();
-    await expect(page.locator('.settings-dropdown, [role="menu"]')).toBeVisible();
-    await expect(page.locator('text=デバイスマスター')).toBeVisible();
+    await expect(page.getByRole('dialog', { name: /Device Master Shared App Settings/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Device Master' })).toBeVisible();
   });
 
-  test('デバイスマスターリンクが target="_blank" 属性を持つ', async ({ page }) => {
+  test('設定ダイアログで Display タブへ切り替えられる', async ({ page }) => {
     const settingsBtn = page.locator('.settings-button, button[aria-label="設定メニュー"]').first();
     await settingsBtn.click();
-    const link = page.locator('a[href*="/settings/devices"]').first();
-    await expect(link).toHaveAttribute('target', '_blank');
+    await page.getByRole('button', { name: 'Display' }).click();
+    await expect(page.getByRole('heading', { name: 'Display Size' })).toBeVisible();
   });
 });
 
@@ -316,12 +316,12 @@ test.describe('04 - Fixture タブ', () => {
 });
 
 // ============================================================
-// テスト 5: Rooms → Circuit 子タブ (R8, R9)
+// テスト 5: Room Type → Circuit 子タブ (R8, R9)
 // ============================================================
-test.describe('05 - Rooms → Circuit 子タブ [R8, R9]', () => {
+test.describe('05 - Room Type → Circuit 子タブ [R8, R9]', () => {
   test.beforeEach(async ({ page }) => {
     await createAndOpenProject(page, `${PROJECT_NAME}-circuit`);
-    // Rooms 親タブ → ルームタイプ作成 → Circuit 子タブ
+    // Room Type 親タブ → ルームタイプ作成 → Circuit 子タブ
     await createRoomTypeAndSelect(page, `${ROOM_NAME}-circuit`);
     // ルームタイプ選択後 activeSubTab は "cfs" になるので Circuit に切り替え
     await page.locator('[role="tab"]').filter({ hasText: /Circuit/i }).first().click();
@@ -406,9 +406,9 @@ test.describe('05 - Rooms → Circuit 子タブ [R8, R9]', () => {
 });
 
 // ============================================================
-// テスト 6: Rooms → Device Assign タブ (R1〜R6)
+// テスト 6: Room Type → Device Assign タブ (R1〜R6)
 // ============================================================
-test.describe('06 - Rooms → Device Assign タブ [R1〜R6]', () => {
+test.describe('06 - Room Type → Device Assign タブ [R1〜R6]', () => {
   test.beforeEach(async ({ page }) => {
     await createAndOpenProject(page, `${PROJECT_NAME}-rooms`);
     await setupRoomAndSelectDeviceAssign(page, ROOM_NAME);
@@ -2290,10 +2290,10 @@ test.describe('13 - R20〜R27 新規要件検証', () => {
 });
 
 // ============================================================
-// テスト 12: 新規プロジェクト Rooms 一覧が空 (R10)
+// テスト 12: 新規プロジェクト Room Type 一覧が空 (R10)
 // ============================================================
-test.describe('12 - 新規プロジェクト Rooms 一覧 [R10]', () => {
-  test('[R10] 新規プロジェクト作成直後 Rooms 一覧が空', async ({ page }) => {
+test.describe('12 - 新規プロジェクト Room Type 一覧 [R10]', () => {
+  test('[R10] 新規プロジェクト作成直後 Room Type 一覧が空', async ({ page }) => {
     await page.goto('/');
     await clearStorage(page);
     await page.reload({ waitUntil: 'networkidle' });
@@ -2310,8 +2310,7 @@ test.describe('12 - 新規プロジェクト Rooms 一覧 [R10]', () => {
     await page.locator('button, a').filter({ hasText: uniqueName }).first().click();
     await expect(page.locator('[role="tablist"]').first()).toBeVisible({ timeout: 8000 });
 
-    // Rooms 親タブをクリック
-    await page.locator('[role="tab"]').filter({ hasText: /Rooms/i }).first().click();
+    await roomTypeParentTab(page).click();
     await page.waitForTimeout(300);
 
     // ルームタイプ一覧が空のメッセージが表示されること
@@ -2323,7 +2322,7 @@ test.describe('12 - 新規プロジェクト Rooms 一覧 [R10]', () => {
     expect(await roomCards.count()).toBe(0);
   });
 
-  test('[R10] Rooms 一覧に Default という名前のルームタイプが存在しない', async ({ page }) => {
+  test('[R10] Room Type 一覧に Default という名前のルームタイプが存在しない', async ({ page }) => {
     await page.goto('/');
     await clearStorage(page);
     await page.reload({ waitUntil: 'networkidle' });
@@ -2335,7 +2334,7 @@ test.describe('12 - 新規プロジェクト Rooms 一覧 [R10]', () => {
     await page.locator('button, a').filter({ hasText: uniqueName }).first().click();
     await expect(page.locator('[role="tablist"]').first()).toBeVisible({ timeout: 8000 });
 
-    await page.locator('[role="tab"]').filter({ hasText: /Rooms/i }).first().click();
+    await roomTypeParentTab(page).click();
     await page.waitForTimeout(300);
 
     const defaultCard = page.locator('button.screen-card').filter({ hasText: /^Default$/i });

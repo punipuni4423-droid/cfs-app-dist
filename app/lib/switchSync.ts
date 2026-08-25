@@ -32,13 +32,18 @@ export function switchPriorityFunctionGroupKey(sw: SwitchEntry): string {
 
 export function normalizeSwitchPriorityFunctions(switches: SwitchEntry[]): SwitchEntry[] {
   const groupCounts = new Map<string, number>();
+  const selectedCounts = new Map<string, number>();
+  const lastSelectedIds = new Map<string, string>();
   for (const sw of switches) {
     if (!supportsPriorityFunction(sw)) continue;
     const key = switchPriorityFunctionGroupKey(sw);
     groupCounts.set(key, (groupCounts.get(key) ?? 0) + 1);
+    if (sw.isPriorityFunction === true) {
+      selectedCounts.set(key, (selectedCounts.get(key) ?? 0) + 1);
+      lastSelectedIds.set(key, sw.id);
+    }
   }
 
-  const selectedGroups = new Set<string>();
   let changed = false;
   const next = switches.map((sw) => {
     if (!supportsPriorityFunction(sw)) {
@@ -46,9 +51,12 @@ export function normalizeSwitchPriorityFunctions(switches: SwitchEntry[]): Switc
       return sw.isPriorityFunction ? { ...sw, isPriorityFunction: undefined } : sw;
     }
     const key = switchPriorityFunctionGroupKey(sw);
-    const canKeep = (groupCounts.get(key) ?? 0) > 1 && sw.isPriorityFunction === true && !selectedGroups.has(key);
-    if (canKeep) {
-      selectedGroups.add(key);
+    const groupCount = groupCounts.get(key) ?? 0;
+    if (groupCount > 1 && sw.isPriorityFunction === true) {
+      if ((selectedCounts.get(key) ?? 0) >= groupCount && lastSelectedIds.get(key) === sw.id) {
+        changed = true;
+        return { ...sw, isPriorityFunction: undefined };
+      }
       return sw;
     }
     if (sw.isPriorityFunction) {

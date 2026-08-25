@@ -53,13 +53,13 @@
 - InspectionModeで%を調整する場合は、通常のCFS表示に近いセルをクリックし、オーバーレイで現在値、入力欄、+/-1、+/-10、Raise/Lower/Uneffectedを操作します。On/Off照明とCCOはOn / Off / Blinking / 0.5 sec / Uneffectedをオーバーレイで選びます。Area Scene Nameを表示している場合はInspectionMode中もScene名と値を各セルに表示し、CCIとHVACはInspectionModeでは編集対象にしません。セル編集オーバーレイのOKは入力済みのドラフト値を保持して閉じ、Resetはそのセルを元の値へ戻して閉じます。InspectionMode開始前の値へ戻す場合は、InspectionModeツールバーのRevertでセッション全体を取り消します。
 - InspectionMode開始時に現Revisionへ未保存のDraft差分がある場合は、新Revisionとして保存してから開始するか確認します。InspectionMode終了時は完了確認を表示し、Save New Revision & FinishまたはFinish Current Revisionで未反映Draftを含めて保存します。完了後はInspection Mark highlightをONにして検査指摘箇所を追えるようにし、HighlightsのInspection Marksで表示/非表示を切り替えます。通常のSave as New RevisionではInspection Markをリセットします。
 - InspectionModeは確認・検査のためのモードです。通常のCFS確認やExcel出力時はOFFに戻して見た目を確認します。
-- HighlightsのLinked Valuesは、通常非表示です。SettingsのDisplayでAdmin ModeとCFS Linked Values fillをONにした場合だけ、CFS上でScene / Switch / Commandなどの値が連動している機能セルを薄いシアンで示します。常時の線表示ではなく、必要な時だけ連動セルを探すために使います。
+- Highlights の Linked Values（連動セルの薄いシアン塗りつぶし）は 2026-08-25 に廃止した。値の入った機能セルがほぼすべて枠付きになり実用に耐えなかったため、機能ごと削除している。連動関係の確認は Link Map を使う。
 - Link MapのCurrent Linksは現在のプロジェクトデータから実際に成立しているリンク、All Rulesはデータ有無に関係なくCFSで守るべき連動ルールを表示します。Overviewでは固定レーン型のDependency mapで、タブ群ごとの役割、代表ノード、連動ルートの件数、警告状態を確認します。
 - Link Mapで警告やエラーが出た場合、WarningsでIssue内容とRepair hintを確認します。通常のCFSタブやサブタブにはリンク未接続の赤い警告表示を出さず、必要時だけLink Mapで診断します。意図したアップデートによる差分でない場合は、Scene / Switch / Device Assign / HVACの参照元を確認してから修正します。
 - Backlight Logicの対象側はBy SceneまたはBaseを有効な対象として扱います。Palladiom Backlight Assignmentは未設定時にBy Sceneを既定として扱い、Uneffectedは選択肢に出しません。By Sceneは対象指定用の状態であり、CFSには表示値として出さず、BaseやMaster Onなど実際のBacklight Scene名だけを表示します。Switch番号、名称、CCI割当、Functionなどが空の未入力行はBacklight警告対象にしません。
 - 各タブのCopy/Deleteは、文字ボタンではなくアイコンボタンを基本とします。誤操作を避けるため、ホバー説明とアクセシビリティラベルは残します。
 - Switch / CCI / Palladiom / Pico / PIRでは、Function行だけを消す操作とスイッチ全体を消す操作を列で分けます。Row列のマイナスは該当Function行の削除、Switch列のゴミ箱はスイッチ/CCI/Palladiom/Pico/PIR全体の削除、コピーはCopy Switchです。Switch列はスイッチ単位で行結合して中央配置します。最後の1行は行削除ではなく全体削除で扱います。
-- Switchで同一ボタンに複数Functionを持たせる場合、Priorityは任意選択です。同一ボタン内で1つだけ選択でき、選択したFunctionはCFSのTrigger Conditionセルが自動でハイライトされます。このハイライトはCFSのHighlightsメニュー項目ではありません。
+- Switchで同一ボタンに複数Functionを持たせる場合、Priorityは任意選択です。同一ボタン内で複数選択できますが、少なくとも1つのFunctionは未チェックのままにします。選択したFunctionはCFSのTrigger Conditionセルが自動でハイライトされます。このハイライトはCFSのHighlightsメニュー項目ではありません。
 - UI更新のPlan時は、変更対象ごとに検査項目を先に列挙します。最低限、表示、操作意味、既存データ保護、CFS/Link Map/Export影響、アクセシビリティラベル、ブラウザコンソール、該当タブのスクロール/固定見出しを評価対象に含めます。
 - Circuit / Device Assign / Switchのような行数が増える表は、大きめのリサイズ可能な作業領域を使い、表内スクロール時も見出し行を固定して確認できる状態を維持します。CFSのように横方向の固定Base列が必要な巨大表は、個別の固定列設計を優先します。
 - WarningsにStale HVAC targetが出て、復旧候補が一意に判定できる場合は、Repair Stale HVACで現行HVAC targetへ置換します。復旧直後はRepaired LinksとしてCFS上の該当セルだけをハイライトし、想定通り値が出ているか確認します。

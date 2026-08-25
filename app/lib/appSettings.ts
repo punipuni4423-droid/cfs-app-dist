@@ -19,7 +19,6 @@ export interface AppSettings {
   displayScale: number;
   wattPerPdu: number;
   adminMode: boolean;
-  cfsLinkedValueHighlightEnabled: boolean;
   cfsLinkMapEnabled: boolean;
 }
 
@@ -84,9 +83,6 @@ function isAppSettings(value: unknown): value is AppSettings {
     !('wattPerPdu' in v) || typeof v.wattPerPdu === 'number';
   const adminModeOk =
     !('adminMode' in v) || typeof v.adminMode === 'boolean';
-  const linkedValueHighlightOk =
-    !('cfsLinkedValueHighlightEnabled' in v) ||
-    typeof v.cfsLinkedValueHighlightEnabled === 'boolean';
   const linkMapOk =
     !('cfsLinkMapEnabled' in v) || typeof v.cfsLinkMapEnabled === 'boolean';
   return (
@@ -97,7 +93,6 @@ function isAppSettings(value: unknown): value is AppSettings {
     displayScaleOk &&
     wattPerPduOk &&
     adminModeOk &&
-    linkedValueHighlightOk &&
     linkMapOk
   );
 }
@@ -110,7 +105,6 @@ function defaults(): AppSettings {
     displayScale: 1,
     wattPerPdu: DEFAULT_WATT_PER_PDU,
     adminMode: false,
-    cfsLinkedValueHighlightEnabled: false,
     cfsLinkMapEnabled: false,
   };
 }
@@ -260,10 +254,6 @@ function normalizeSettings(parsed: unknown): AppSettings {
     displayScale,
     wattPerPdu,
     adminMode: typeof p.adminMode === 'boolean' ? p.adminMode : DEFAULT_SETTINGS.adminMode,
-    cfsLinkedValueHighlightEnabled:
-      typeof p.cfsLinkedValueHighlightEnabled === 'boolean'
-        ? p.cfsLinkedValueHighlightEnabled
-        : DEFAULT_SETTINGS.cfsLinkedValueHighlightEnabled,
     cfsLinkMapEnabled:
       typeof p.cfsLinkMapEnabled === 'boolean'
         ? p.cfsLinkMapEnabled

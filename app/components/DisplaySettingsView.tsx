@@ -3,11 +3,9 @@
 interface DisplaySettingsViewProps {
   displayScale: number;
   adminMode: boolean;
-  cfsLinkedValueHighlightEnabled: boolean;
   cfsLinkMapEnabled: boolean;
   onChange: (next: number) => void;
   onAdminModeChange: (next: boolean) => void;
-  onCfsLinkedValueHighlightChange: (next: boolean) => void;
   onCfsLinkMapChange: (next: boolean) => void;
 }
 
@@ -23,11 +21,9 @@ function clampScale(value: number): number {
 export default function DisplaySettingsView({
   displayScale,
   adminMode,
-  cfsLinkedValueHighlightEnabled,
   cfsLinkMapEnabled,
   onChange,
   onAdminModeChange,
-  onCfsLinkedValueHighlightChange,
   onCfsLinkMapChange,
 }: DisplaySettingsViewProps) {
   const value = clampScale(displayScale);
@@ -118,18 +114,6 @@ export default function DisplaySettingsView({
               <span>
                 <strong>Admin Mode</strong>
                 <small>Show administrator-only controls.</small>
-              </span>
-            </label>
-            <label className={`settings-toggle-row${adminMode ? "" : " is-disabled"}`}>
-              <input
-                type="checkbox"
-                checked={adminMode && cfsLinkedValueHighlightEnabled}
-                disabled={!adminMode}
-                onChange={(event) => onCfsLinkedValueHighlightChange(event.target.checked)}
-              />
-              <span>
-                <strong>CFS Linked Values fill</strong>
-                <small>Highlight linked function cells in CFS.</small>
               </span>
             </label>
             <label className={`settings-toggle-row${adminMode ? "" : " is-disabled"}`}>

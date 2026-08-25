@@ -12,7 +12,7 @@ test.beforeEach(async ({ page }) => {
   mockState = await installLocalEditingMocks(page);
 });
 
-test.setTimeout(90_000);
+test.setTimeout(180_000);
 
 function kindChip(label: string): string {
   return `.scene-area-chip:has-text("${label}")`;

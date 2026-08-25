@@ -43,13 +43,8 @@ export default function AppSettingsPanel({ embedded = false }: AppSettingsPanelP
     setSettings({
       ...settings,
       adminMode: next,
-      cfsLinkedValueHighlightEnabled: next ? settings.cfsLinkedValueHighlightEnabled : false,
       cfsLinkMapEnabled: next ? settings.cfsLinkMapEnabled : false,
     });
-  }
-
-  function setCfsLinkedValueHighlight(next: boolean): void {
-    setSettings({ ...settings, cfsLinkedValueHighlightEnabled: next });
   }
 
   function setCfsLinkMap(next: boolean): void {
@@ -154,11 +149,9 @@ export default function AppSettingsPanel({ embedded = false }: AppSettingsPanelP
         <DisplaySettingsView
           displayScale={settings.displayScale}
           adminMode={settings.adminMode}
-          cfsLinkedValueHighlightEnabled={settings.cfsLinkedValueHighlightEnabled}
           cfsLinkMapEnabled={settings.cfsLinkMapEnabled}
           onChange={setDisplayScale}
           onAdminModeChange={setAdminMode}
-          onCfsLinkedValueHighlightChange={setCfsLinkedValueHighlight}
           onCfsLinkMapChange={setCfsLinkMap}
         />
       )}

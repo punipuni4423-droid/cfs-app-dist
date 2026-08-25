@@ -662,7 +662,18 @@ function makePriorityFunctionProject(name: string, roomName: string) {
         buttonFunction: "Welcome",
         condition: "Press",
       };
-      return [first, second];
+      const third = {
+        ...createEmptySwitchEntry("lutronPd"),
+        id: "priority-switch-away",
+        switchGroupId: groupId,
+        switchNumber: "SW1",
+        switchName: "Entrance",
+        buttonCount: "1",
+        buttonLabel: "M1",
+        buttonFunction: "Away",
+        condition: "Press",
+      };
+      return [first, second, third];
     })(),
   };
 
@@ -1015,7 +1026,6 @@ async function seedRevisionHighlightSettings(page: Page): Promise<void> {
     displayScale: 1,
     wattPerPdu: 3.3,
     adminMode: false,
-    cfsLinkedValueHighlightEnabled: false,
     cfsLinkMapEnabled: false,
   };
   await page.addInitScript(({ settingsKey, settings }) => {
@@ -1835,7 +1845,7 @@ test.describe("Protected CFS behaviors", () => {
     }
   });
 
-  test("Switch priority function is single-choice and highlights only the selected CFS trigger", async ({ page }) => {
+  test("Switch priority function allows multiple choices but requires one unchecked function", async ({ page }) => {
     const projectName = `Protected-Priority-${Date.now()}`;
     const roomName = `Room-${Date.now()}`;
     await page.goto("about:blank");
@@ -1848,30 +1858,49 @@ test.describe("Protected CFS behaviors", () => {
     await page.getByRole("tab", { name: "Switch", exact: true }).click();
     await page.getByRole("tab", { name: "Palladiom", exact: true }).click();
     const priorityChecks = page.locator(".switch-priority-check input");
-    await expect(priorityChecks).toHaveCount(2);
+    await expect(priorityChecks).toHaveCount(3);
     await expect(priorityChecks.nth(0)).toBeEnabled();
     await expect(priorityChecks.nth(1)).toBeEnabled();
+    await expect(priorityChecks.nth(2)).toBeEnabled();
 
     await priorityChecks.nth(0).check();
     await expect(priorityChecks.nth(0)).toBeChecked();
     await expect(priorityChecks.nth(1)).not.toBeChecked();
+    await expect(priorityChecks.nth(2)).not.toBeChecked();
 
     await priorityChecks.nth(1).check();
+    await expect(priorityChecks.nth(0)).toBeChecked();
+    await expect(priorityChecks.nth(1)).toBeChecked();
+    await expect(priorityChecks.nth(2)).not.toBeChecked();
+
+    const dialogMessagePromise = new Promise<string>((resolve) => {
+      page.once("dialog", async (dialog) => {
+        const message = dialog.message();
+        await dialog.accept();
+        resolve(message);
+      });
+    });
+    await priorityChecks.nth(2).click();
+    expect(await dialogMessagePromise).toContain("少なくとも1つのFunctionを未チェック");
+    await expect(priorityChecks.nth(0)).toBeChecked();
+    await expect(priorityChecks.nth(1)).toBeChecked();
+    await expect(priorityChecks.nth(2)).not.toBeChecked();
+
+    await priorityChecks.nth(0).uncheck();
     await expect(priorityChecks.nth(0)).not.toBeChecked();
     await expect(priorityChecks.nth(1)).toBeChecked();
+    await expect(priorityChecks.nth(2)).not.toBeChecked();
 
-    await priorityChecks.nth(1).uncheck();
-    await expect(priorityChecks.nth(0)).not.toBeChecked();
-    await expect(priorityChecks.nth(1)).not.toBeChecked();
-
-    await priorityChecks.nth(1).check();
+    await priorityChecks.nth(2).check();
     await expect(priorityChecks.nth(0)).not.toBeChecked();
     await expect(priorityChecks.nth(1)).toBeChecked();
+    await expect(priorityChecks.nth(2)).toBeChecked();
 
     await page.getByRole("tab", { name: "CFS", exact: true }).click();
     const highlightedTriggerCells = page.locator(".cfs-matrix-table thead th.cfs-priority-trigger-cell");
-    await expect(highlightedTriggerCells).toHaveCount(1);
-    await expect(highlightedTriggerCells.first()).toContainText("Press");
+    await expect(highlightedTriggerCells).toHaveCount(2);
+    await expect(highlightedTriggerCells.nth(0)).toContainText("Press");
+    await expect(highlightedTriggerCells.nth(1)).toContainText("Press");
     await expect(page.locator(".cfs-filter-menu-trigger").filter({ hasText: "Highlights" })).toBeVisible();
     await page.locator(".cfs-filter-menu-trigger").filter({ hasText: "Highlights" }).click();
     await expect(page.locator(".cfs-filter-list-portal").last()).not.toContainText("Priority");

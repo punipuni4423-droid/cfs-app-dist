@@ -145,8 +145,7 @@
         <li>Circuit / Device Assign / Switchの表は大きめのリサイズ可能な作業領域で表示し、表内スクロール時も見出し行を固定して確認します。</li>
         <li>CFS表は横方向の右端列を固定Base列の直後まで、縦方向の最下行を固定ヘッダーの直下までスクロールできます。右端の機能列やBacklight Logicなどの最終行を、固定列・見出しと並べて確認します。</li>
         <li>InspectionModeでは、CFSの見た目を保ったままセルをクリックしてドラフト編集します。%セルはオーバーレイで現在値、入力欄、+/-1、+/-10、Raise/Lower/Uneffectedを表示します。On/Off照明とCCOはOn / Off / Blinking / 0.5 sec / Uneffectedをオーバーレイで選び、CCIとHVACはInspectionModeでは編集対象にしません。Linkedは参照元のArea Scene値を調整し、Unlinkはセル単位のOverrideとして調整します。セル編集オーバーレイのOKは入力済みのドラフト値を保持して閉じ、Resetはそのセルを元の値へ戻して閉じます。InspectionMode開始前の値へ戻す場合は、InspectionModeツールバーのRevertでセッション全体を取り消します。InspectionModeを終了する時は、確認ダイアログで新Revisionとして保存するか、現在のRevisionのまま完了するかを選びます。保存済みInspection MarkはHighlightsのInspection Marksで表示/非表示を切り替えられ、通常のSave as New Revisionでは一度リセットされます。</li>
-        <li>Linked Valuesの塗りつぶしは通常非表示です。SettingsのDisplayでAdmin ModeをONにし、CFS Linked Values fillをONにした場合だけ、Scene / Switch / Commandなどと連動しているCFSの機能セルが薄いシアンで表示されます。</li>
-        <li>通常確認やExcel出力前は、InspectionModeをOFFにして表示状態を確認します。</li>
+                <li>通常確認やExcel出力前は、InspectionModeをOFFにして表示状態を確認します。</li>
         <li>Link Mapは通常非表示です。SettingsのDisplayでAdmin ModeとCFS Link MapをONにした場合だけ、CFSタブにLink Mapボタンが表示されます。Overviewは固定レーン型のDependency mapで、Source Data、Scene Values、System Logic、CFS Output、Inspection Finishの流れを確認します。各レーンの代表ノードや連動ルートカードをクリックすると、Current Links、All Rules、Warningsで現状リンク、期待ルール、警告、スナップショット署名を確認できます。通常のCFSタブやサブタブにはリンク未接続の赤い警告表示を出さず、必要時だけLink Mapで診断します。</li>
         <li>BacklightのLink Map警告では、参照先グループが存在しない場合と、グループは存在するがBacklight対象ではない場合を分けて表示します。CFS Backlight Logicに出す場合は、対象側をBy SceneまたはBaseに設定します。By Sceneは対象指定用の状態であり、CFSには値として表示せず、BaseやMaster Onなど実際のBacklight Scene名だけを表示します。Switch番号、名称、CCI割当、Functionなどが空の未入力行はBacklight警告対象にしません。</li>
         <li>WarningsにStale HVAC targetが出た場合は、旧HVAC IDをArea Sceneが参照している可能性があります。復旧候補が一意に判定できる場合はRepair Stale HVACで現行HVAC targetへ置換し、復旧直後のRepaired Linksハイライトで該当セルを確認します。</li>

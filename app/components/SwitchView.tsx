@@ -663,11 +663,23 @@ export default function SwitchView({
 
   function updatePriorityFunction(row: SwitchEntry, checked: boolean): void {
     const targetKey = switchPriorityFunctionGroupKey(row);
+    if (checked) {
+      const groupRows = switches.filter(
+        (sw) => supportsPriorityFunction(sw) && switchPriorityFunctionGroupKey(sw) === targetKey,
+      );
+      const checkedCount = groupRows.filter((sw) => (sw.id === row.id ? true : sw.isPriorityFunction === true)).length;
+      if (groupRows.length > 1 && checkedCount >= groupRows.length) {
+        window.alert(
+          "同じボタン内では、少なくとも1つのFunctionを未チェックのままにしてください。すべてのFunctionをPriorityにすることはできません。",
+        );
+        return;
+      }
+    }
     commitSwitches(
       switches.map((sw) => {
-        if (switchPriorityFunctionGroupKey(sw) !== targetKey) return sw;
-        const isSelected = checked && sw.id === row.id;
-        return { ...sw, isPriorityFunction: isSelected ? true : undefined };
+        if (!supportsPriorityFunction(sw) || switchPriorityFunctionGroupKey(sw) !== targetKey) return sw;
+        if (sw.id !== row.id) return sw;
+        return { ...sw, isPriorityFunction: checked ? true : undefined };
       }),
     );
   }
@@ -1942,7 +1954,7 @@ export default function SwitchView({
                                   className={`switch-priority-check${sw.isPriorityFunction ? " is-selected" : ""}`}
                                   title={
                                     hasPriorityFunctionChoice(sw)
-                                      ? "Prioritize this function when this button has multiple functions."
+                                      ? "Prioritize this function when this button has multiple functions. At least one function on the same button must remain unchecked."
                                       : "Available when the same button has multiple function rows."
                                   }
                                 >

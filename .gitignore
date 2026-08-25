@@ -40,6 +40,7 @@
 .DS_Store
 *.pem
 *.log
+*.tmp.mjs
 audit_output.json
 
 # debug

@@ -2661,6 +2661,11 @@ body.cfs-top-ui-collapsed .project-screen-shell > .collaboration-bar {
   width: 13rem;
 }
 
+.revision-table th:nth-child(3),
+.revision-table td:nth-child(3) {
+  width: 9rem;
+}
+
 .revision-table th:last-child,
 .revision-table td:last-child {
   width: 8.5rem;
@@ -2697,6 +2702,7 @@ body.cfs-top-ui-collapsed .project-screen-shell > .collaboration-bar {
   background: #f8fafc;
   color: var(--color-text-secondary);
   font-size: 0.78rem;
+  overflow-x: auto;
 }
 
 .revision-metadata-input:focus,
@@ -2712,34 +2718,269 @@ body.cfs-top-ui-collapsed .project-screen-shell > .collaboration-bar {
   color: var(--color-text-muted);
 }
 
-.revision-note-groups {
+.revision-diff-panel {
   display: grid;
-  gap: 0.65rem;
-  max-width: 100%;
+  gap: 0.6rem;
 }
 
-.revision-note-group {
-  display: grid;
-  gap: 0.25rem;
+.revision-diff-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-border);
 }
 
-.revision-note-tab {
-  color: var(--color-accent);
-  font-weight: 900;
+.revision-diff-compare {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
-.revision-note-items {
-  display: grid;
+.revision-diff-compare label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.revision-diff-compare-label {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.revision-diff-select {
+  min-height: 1.75rem;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.revision-diff-arrow {
+  color: var(--color-text-muted);
+}
+
+.revision-diff-target {
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.revision-diff-counts {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.revision-diff-count {
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.revision-diff-count.total {
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+}
+
+.revision-diff-count.changed {
+  background: rgba(0, 128, 128, 0.12);
+  color: #0f6d6d;
+}
+
+.revision-diff-count.added {
+  background: rgba(22, 128, 74, 0.12);
+  color: #15803d;
+}
+
+.revision-diff-count.removed {
+  background: rgba(190, 40, 40, 0.1);
+  color: #b91c1c;
+}
+
+.revision-diff-filters {
+  display: flex;
   gap: 0.2rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
 }
 
-.revision-note-items li {
-  padding-left: 0.8rem;
-  border-left: 3px solid var(--color-border);
-  line-height: 1.45;
+.revision-diff-chip {
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 0.74rem;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.revision-diff-chip:hover {
+  background: var(--color-surface-hover);
+}
+
+.revision-diff-chip.is-active {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.revision-diff-actions {
+  display: flex;
+  gap: 0.3rem;
+  margin-left: auto;
+}
+
+.revision-diff-empty {
+  padding: 0.4rem 0;
+  color: var(--color-text-secondary);
+}
+
+.revision-diff-groups {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.revision-diff-group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.revision-diff-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.1rem 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent);
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.revision-diff-caret {
+  font-size: 0.65rem;
+}
+
+.revision-diff-group-count {
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.revision-diff-jump {
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.revision-diff-jump:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.revision-diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  font-size: 0.78rem;
+}
+
+.revision-diff-table th,
+.revision-diff-table td {
+  padding: 0.25rem 0.45rem;
+  border: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.revision-diff-table thead th {
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.revision-diff-target-cell {
+  width: 32%;
+  background: #fbfdfd;
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.revision-diff-field-cell {
+  width: 22%;
+  color: var(--color-text-secondary);
+}
+
+.revision-diff-before {
+  width: 23%;
+  color: #b91c1c;
+  text-decoration: line-through;
+  text-decoration-color: rgba(185, 28, 28, 0.45);
+}
+
+.revision-diff-after {
+  width: 23%;
+  color: #15803d;
+  font-weight: 600;
+}
+
+.revision-diff-rowchange {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.revision-diff-badge {
+  display: inline-block;
+  padding: 0.02rem 0.35rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.revision-diff-badge.added {
+  background: rgba(22, 128, 74, 0.12);
+  color: #15803d;
+}
+
+.revision-diff-badge.removed {
+  background: rgba(190, 40, 40, 0.1);
+  color: #b91c1c;
+}
+
+.revision-diff-more {
+  justify-self: start;
+  margin-top: 0.25rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.revision-diff-more:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 
 .edit-finish-dialog.revision-batch-dialog {
@@ -5586,25 +5827,9 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   box-shadow: inset 0 0 0 1px #ca8a04;
 }
 
-.cfs-linked-value-cell {
-  box-shadow: inset 0 0 0 1px #0891b2;
-}
-
 .cfs-repaired-link-cell {
   background: #fef3c7 !important;
   box-shadow: inset 0 0 0 2px #f59e0b;
-}
-
-.cfs-linked-value-cell.cfs-individual-override-cell {
-  box-shadow:
-    inset 0 0 0 1px #ca8a04,
-    inset 0 0 0 2px #0891b2;
-}
-
-.cfs-linked-value-cell.cfs-repaired-link-cell {
-  box-shadow:
-    inset 0 0 0 1px #0891b2,
-    inset 0 0 0 3px #f59e0b;
 }
 
 .cfs-area-color-row > td {
@@ -5618,13 +5843,6 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
     inset 0 0.28rem 0 var(--row-area-top-color, transparent),
     inset 0 -0.28rem 0 var(--row-area-bottom-color, transparent),
     inset 0 0 0 1px #ca8a04;
-}
-
-.cfs-area-color-row .cfs-linked-value-cell {
-  box-shadow:
-    inset 0 0.28rem 0 var(--row-area-top-color, transparent),
-    inset 0 -0.28rem 0 var(--row-area-bottom-color, transparent),
-    inset 0 0 0 1px #0891b2;
 }
 
 .cfs-area-color-row .cfs-repaired-link-cell {
@@ -5647,22 +5865,6 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
     inset 0 -0.28rem 0 var(--row-area-bottom-color, transparent),
     inset 0 0 0 1px #ca8a04,
     inset 0 0 0 2px #e7c84f;
-}
-
-.cfs-area-color-row .cfs-linked-value-cell.cfs-individual-override-cell {
-  box-shadow:
-    inset 0 0.28rem 0 var(--row-area-top-color, transparent),
-    inset 0 -0.28rem 0 var(--row-area-bottom-color, transparent),
-    inset 0 0 0 1px #ca8a04,
-    inset 0 0 0 2px #0891b2;
-}
-
-.cfs-area-color-row .cfs-linked-value-cell.cfs-repaired-link-cell {
-  box-shadow:
-    inset 0 0.28rem 0 var(--row-area-top-color, transparent),
-    inset 0 -0.28rem 0 var(--row-area-bottom-color, transparent),
-    inset 0 0 0 1px #0891b2,
-    inset 0 0 0 3px #f59e0b;
 }
 
 .cfs-link-error-row > td,
@@ -5711,10 +5913,6 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 
 .cfs-highlight-swatch-area-scene {
   background: #f3e8ff;
-}
-
-.cfs-highlight-swatch-linked {
-  background: #ccfbf1;
 }
 
 .cfs-highlight-swatch-repaired {
