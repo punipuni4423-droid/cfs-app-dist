@@ -17,6 +17,7 @@ import type {
   Scene,
   SwitchEntry,
 } from "../types";
+import { valuesDiffer } from "./canonicalJson";
 
 /**
  * Snapshot stored on every RoomTypeRevision. Revisions keep the full room-type
@@ -403,7 +404,7 @@ export function buildRevisionChangeEntries(
         [...Object.keys(beforeItem ?? {}), ...Object.keys(afterItem ?? {})].filter((key) => key !== "id"),
       );
       const fields = Array.from(keys).filter(
-        (key) => JSON.stringify(beforeItem?.[key]) !== JSON.stringify(afterItem?.[key]),
+        (key) => valuesDiffer(beforeItem?.[key], afterItem?.[key]),
       );
       if (!beforeItem && afterItem) fields.unshift("__added");
       if (beforeItem && !afterItem) fields.unshift("__removed");
@@ -560,7 +561,7 @@ export function buildRevisionChangeEntries(
       push({ ...base, before: next.previousValue || NOT_SET, after: next.value || "Uneffected", kind: "added" });
     } else if (previous && !next) {
       push({ ...base, before: previous.value || previous.previousValue || NOT_SET, after: "Mark cleared", kind: "removed" });
-    } else if (previous && next && JSON.stringify(previous) !== JSON.stringify(next)) {
+    } else if (previous && next && valuesDiffer(previous, next)) {
       push({
         ...base,
         before: previous.value || previous.previousValue || NOT_SET,
@@ -639,7 +640,7 @@ export function buildRevisionChangeEntries(
       rowLabel: "Row display / order",
       kind: "changed" as RevisionChangeKind,
     };
-    if (JSON.stringify(beforeRowDisplay.order) !== JSON.stringify(afterRowDisplay.order)) {
+    if (valuesDiffer(beforeRowDisplay.order, afterRowDisplay.order)) {
       push({
         ...rowDisplayBase,
         field: "order",
@@ -648,7 +649,7 @@ export function buildRevisionChangeEntries(
         after: afterRowDisplay.order.join(", ") || NOT_SET,
       });
     }
-    if (JSON.stringify(beforeRowDisplay.hidden) !== JSON.stringify(afterRowDisplay.hidden)) {
+    if (valuesDiffer(beforeRowDisplay.hidden, afterRowDisplay.hidden)) {
       push({
         ...rowDisplayBase,
         field: "hidden",
@@ -775,7 +776,7 @@ export function groupRevisionChangeEntries(entries: readonly RevisionChangeEntry
       groupByKey.set(label, group);
       groups.push(group);
     }
-    const rowKey = `${label} ${entry.rowId}`;
+    const rowKey = `${label}\u0000${entry.rowId}`;
     let row = rowByKey.get(rowKey);
     if (!row) {
       row = { rowId: entry.rowId, rowLabel: entry.rowLabel, entries: [] };

@@ -1,5 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { createDefaultLocations, createNewRoomType } from "../../app/lib/constants";
+import { canonicalJson, valuesDiffer } from "../../app/lib/canonicalJson";
+import { ensureRoomScenes } from "../../app/lib/roomScenes";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
 type LocalEditingMockState = Awaited<ReturnType<typeof installLocalEditingMocks>>;
@@ -108,6 +110,84 @@ function makeRoomLevelSettingsProject(name: string, roomName: string) {
   };
 }
 
+function makeKeyOrderOnlyProject(name: string, roomName: string) {
+  const now = new Date().toISOString();
+  const [bedroom, ...otherLocations] = createDefaultLocations();
+  const location = { ...bedroom, id: AREA_ID, name: "Bedroom", number: "1", code: "BM" };
+  const circuits = [circuit("key-order-circuit-1", "KO-A", "Downlight")];
+  const baseRoomType = createNewRoomType(roomName);
+  const roomScenes = ensureRoomScenes(baseRoomType.roomScenes);
+  const backlightLevels = [{ key: "base", name: "Base", mode: "Manual", active: "100", inactive: "20" }];
+  const cfsRowDisplay = { order: ["lighting", "cco", "curtain", "hvac", "backlight"], hidden: [] };
+  const normalSnapshot = snapshot(circuits, [], { backlightLevels, cfsRowDisplay, roomScenes });
+  const reorderedSnapshot = JSON.stringify({
+    switches: [],
+    scenes: [],
+    roomScenes,
+    backlightLevels: [{ key: "base", mode: "Manual", name: "Base", active: "100", inactive: "20" }],
+    cfsRowDisplay: { hidden: [], order: ["lighting", "cco", "curtain", "hvac", "backlight"] },
+    inspectionMarks: [],
+    pduDeviceCounts: [],
+    curtainAssignments: [],
+    hvacSeasons: [],
+    hvacAssignments: [],
+    deviceAssignments: [],
+    rows: [],
+    dryContacts: [],
+    circuits,
+  });
+
+  const roomType = {
+    ...baseRoomType,
+    id: "key-order-room-type",
+    name: roomName,
+    updatedAt: now,
+    circuitIds: circuits.map((row) => row.id),
+    dryContacts: [],
+    rows: [],
+    deviceAssignments: [],
+    hvacAssignments: [],
+    hvacSeasons: [],
+    curtainAssignments: [],
+    backlightLevels,
+    cfsRowDisplay,
+    scenes: [],
+    roomScenes,
+    switches: [],
+    pduDeviceCounts: [],
+    inspectionMarks: [],
+    revision: "1.01",
+    revisions: [
+      {
+        id: "key-order-rev-1",
+        revision: "1.00",
+        savedAt: "2026-08-20T01:00:00.000Z",
+        savedBy: "Tester",
+        snapshot: normalSnapshot,
+        note: "",
+      },
+      {
+        id: "key-order-rev-2",
+        revision: "1.01",
+        savedAt: "2026-08-21T01:00:00.000Z",
+        savedBy: "Tester",
+        snapshot: reorderedSnapshot,
+        note: "",
+      },
+    ],
+  };
+
+  return {
+    id: "key-order-project",
+    name,
+    updatedAt: now,
+    locations: [location, ...otherLocations],
+    fixtures: [],
+    circuits,
+    roomTypes: [roomType],
+  };
+}
+
 /**
  * Three revisions so the panel can be checked for: cell-level before/after,
  * tab grouping, a non-adjacent comparison base, and legacy notes that stored
@@ -201,6 +281,12 @@ async function openRevisionManager(
 }
 
 test.describe("Revision diff panel", () => {
+  test("canonical JSON comparisons ignore object key order and keep array order meaningful", () => {
+    expect(valuesDiffer({ a: 1, b: { c: 2, d: 3 } }, { b: { d: 3, c: 2 }, a: 1 })).toBe(false);
+    expect(valuesDiffer([1, 2], [2, 1])).toBe(true);
+    expect(canonicalJson(undefined)).toBeUndefined();
+  });
+
   test("shows the memo and a cell-level diff grouped by tab", async ({ page }) => {
     const projectName = `RevisionDiff-${Date.now()}`;
     const roomName = `Room-${Date.now()}`;
@@ -304,6 +390,20 @@ test.describe("Revision diff panel", () => {
     const hiddenRow = panel.locator("tbody tr").filter({ hasText: "Hidden rows" }).first();
     await expect(hiddenRow.locator(".revision-diff-before")).toHaveText("None");
     await expect(hiddenRow.locator(".revision-diff-after")).toHaveText("curtain");
+  });
+
+  test("does not report revision changes when only JSON object key order differs", async ({ page }) => {
+    const projectName = `RevisionDiffKeyOrder-${Date.now()}`;
+    const roomName = `Room-${Date.now()}`;
+    await openRevisionManager(page, projectName, roomName, makeKeyOrderOnlyProject);
+
+    const latestRow = page.locator(".revision-table > tbody > tr").first();
+    await expect(latestRow.locator(".revision-metadata-input").first()).toHaveValue("1.01");
+    await expect(latestRow.locator(".revision-diff-empty")).toHaveText("No data changes from the previous revision.");
+    await expect(latestRow.locator(".revision-diff-group")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Turn on update highlights" }).click();
+    await expect(page.locator(".revision-changed-cell")).toHaveCount(0);
   });
 
   test("jumps to the tab a change belongs to", async ({ page }) => {

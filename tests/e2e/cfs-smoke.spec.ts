@@ -797,20 +797,10 @@ test.describe('07 - CFS タブ [R9]', () => {
     }
   });
 
-  test('CFS タブが表示され ＋行追加ボタンが存在する', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await expect(addBtn).toBeVisible({ timeout: 5000 });
-  });
-
-  test('[R9] CFS タブの「行を追加」ボタンがテーブル全幅', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await expect(addBtn).toBeVisible({ timeout: 5000 });
-
-    const btnWidth = await addBtn.evaluate((el) => el.getBoundingClientRect().width);
-    const table = page.locator('table.matrix-table').first();
-    const tableWidth = await table.evaluate((el) => el.getBoundingClientRect().width);
-
-    expect(btnWidth).toBeGreaterThan(tableWidth * 0.85);
+  test('CFS タブは表示ビューとして開き、行追加ボタンを持たない', async ({ page }) => {
+    await expect(page.getByRole('tab', { name: 'CFS', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('table.cfs-matrix-table')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.btn-add-row')).toHaveCount(0);
   });
 
   test('CFS テーブルに 15 列以上が存在する (ヘッダ確認)', async ({ page }) => {
@@ -819,24 +809,9 @@ test.describe('07 - CFS タブ [R9]', () => {
     expect(count).toBeGreaterThanOrEqual(15);
   });
 
-  test('行追加で行が増える', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await expect(addBtn).toBeVisible({ timeout: 5000 });
-    await addBtn.click();
-    await expect(page.locator('tbody input').first()).toBeVisible({ timeout: 5000 });
-  });
-
-  test('CFS の Device プルダウンが操作可能', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const deviceSelect = page.locator('tbody tr').last().locator('select').first();
-    if (await deviceSelect.count() > 0) {
-      await expect(deviceSelect).toBeEnabled();
-      const optionCount = await deviceSelect.locator('option').count();
-      expect(optionCount).toBeGreaterThan(1);
-    }
+  test('CFS タブには表示用テーブルだけがあり、Device 入力プルダウンを直接持たない', async ({ page }) => {
+    await expect(page.locator('table.cfs-matrix-table')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('table.cfs-matrix-table tbody select')).toHaveCount(0);
   });
 });
 
@@ -849,7 +824,7 @@ test.describe('08 - デバイスマスター設定画面', () => {
     expect(res?.status()).toBe(200);
   });
 
-  test('デフォルト 7 デバイスが input value として存在する', async ({ page }) => {
+  test('デフォルト 7 デバイスが読み取り専用表示として存在する', async ({ page }) => {
     await page.goto('/settings/devices');
     await page.waitForLoadState('networkidle');
 
@@ -860,8 +835,8 @@ test.describe('08 - デバイスマスター設定画面', () => {
 
     for (const name of defaultDevices) {
       await expect(
-        page.locator(`input[value="${name}"]`).first()
-      ).toBeAttached({ timeout: 8000 });
+        page.locator('tbody tr').filter({ hasText: name }).locator('span.cell-readonly').filter({ hasText: name }).first()
+      ).toBeVisible({ timeout: 8000 });
     }
   });
 
@@ -869,13 +844,12 @@ test.describe('08 - デバイスマスター設定画面', () => {
     await page.goto('/settings/devices');
     await page.waitForLoadState('networkidle');
 
-    const badge = page.locator('text=既定').first();
+    const badge = page.locator('.muted-pill').filter({ hasText: 'Default' }).first();
     await expect(badge).toBeVisible({ timeout: 5000 });
 
     const mqseRow = page.locator('tr').filter({ hasText: 'MQSE-4S1-D' }).first();
     if (await mqseRow.count() > 0) {
-      const deleteBtn = mqseRow.locator('button').filter({ hasText: /削除/ });
-      expect(await deleteBtn.count()).toBe(0);
+      await expect(mqseRow.getByRole('button', { name: 'Delete Device' })).toHaveCount(0);
     }
   });
 
@@ -894,7 +868,7 @@ test.describe('08 - デバイスマスター設定画面', () => {
     }).toPass({ timeout: 5000 });
 
     const lastRow = page.locator('tbody tr').last();
-    const deleteBtn = lastRow.locator('button').filter({ hasText: /削除/ }).first();
+    const deleteBtn = lastRow.getByRole('button', { name: 'Delete Device' }).first();
     await expect(deleteBtn).toBeVisible();
 
     page.once('dialog', (d) => d.accept());

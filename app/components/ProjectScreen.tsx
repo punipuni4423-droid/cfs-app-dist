@@ -45,6 +45,7 @@ import {
   type RevisionChangeEntry,
   type RevisionSnapshot,
 } from "../lib/revisionChanges";
+import { canonicalJson, valuesDiffer } from "../lib/canonicalJson";
 import RevisionDiffPanel, { type RevisionBaseOption } from "./RevisionDiffPanel";
 import TabsBar, { type TabDef } from "./TabsBar";
 import LocationsView from "./LocationsView";
@@ -711,12 +712,12 @@ export default function ProjectScreen({
   }
 
   function revisionSnapshotsEqual(before: RevisionSnapshot, after: RevisionSnapshot): boolean {
-    return JSON.stringify(before) === JSON.stringify(after);
+    return !valuesDiffer(before, after);
   }
 
   const changedIds = useCallback(<T extends { id: string },>(before: T[] = [], after: T[] = []): string[] => {
-    const beforeById = new Map(before.map((item) => [item.id, JSON.stringify(item)]));
-    const afterById = new Map(after.map((item) => [item.id, JSON.stringify(item)]));
+    const beforeById = new Map(before.map((item) => [item.id, canonicalJson(item)]));
+    const afterById = new Map(after.map((item) => [item.id, canonicalJson(item)]));
     const ids = new Set([...beforeById.keys(), ...afterById.keys()]);
     return Array.from(ids).filter((id) => beforeById.get(id) !== afterById.get(id));
   }, []);
@@ -765,7 +766,7 @@ export default function ProjectScreen({
         ...Object.keys(afterItem ?? {}),
       ].filter((key) => key !== "id"));
       const fields = Array.from(keys).filter(
-        (key) => JSON.stringify(beforeItem?.[key]) !== JSON.stringify(afterItem?.[key]),
+        (key) => valuesDiffer(beforeItem?.[key], afterItem?.[key]),
       );
       if (!beforeItem && afterItem) fields.unshift("__added");
       if (beforeItem && !afterItem) fields.unshift("__removed");
@@ -845,8 +846,10 @@ export default function ProjectScreen({
       if (!rowForKind || !predicate(rowForKind)) return;
       const changed = fields.some(
         (field) =>
-          JSON.stringify((beforeRow as unknown as Record<string, unknown> | undefined)?.[field]) !==
-          JSON.stringify((afterRow as unknown as Record<string, unknown> | undefined)?.[field]),
+          valuesDiffer(
+            (beforeRow as unknown as Record<string, unknown> | undefined)?.[field],
+            (afterRow as unknown as Record<string, unknown> | undefined)?.[field],
+          ),
       );
       if (changed) groups.add(switchGroupId(rowForKind));
     });
@@ -857,7 +860,7 @@ export default function ProjectScreen({
   const hasBacklightLogicChange = useCallback((before: RevisionSnapshot, after: RevisionSnapshot): boolean => {
     const beforeLevels = before.backlightLevels ?? backlightLevelsFromSwitches(before.switches);
     const afterLevels = after.backlightLevels ?? backlightLevelsFromSwitches(after.switches);
-    if (JSON.stringify(beforeLevels) !== JSON.stringify(afterLevels)) return true;
+    if (valuesDiffer(beforeLevels, afterLevels)) return true;
     const beforeSwitches = before.switches ?? [];
     const afterSwitches = after.switches ?? [];
     const afterById = new Map(afterSwitches.map((sw) => [sw.id, sw]));
@@ -865,7 +868,7 @@ export default function ProjectScreen({
       if (beforeRow.kind !== "lutronPd") return false;
       const afterRow = afterById.get(beforeRow.id);
       if (!afterRow || afterRow.kind !== "lutronPd") return false;
-      return JSON.stringify(beforeRow.backlightLevels ?? []) !== JSON.stringify(afterRow.backlightLevels ?? []);
+      return valuesDiffer(beforeRow.backlightLevels ?? [], afterRow.backlightLevels ?? []);
     });
   }, []);
 
@@ -922,9 +925,10 @@ export default function ProjectScreen({
     const backlightCount =
       (hasBacklightLogicChange(before, after) ? 1 : 0) +
       backlightAssignmentChangeCount(before.switches, after.switches);
-    const cfsRowDisplayChanged =
-      JSON.stringify(before.cfsRowDisplay ?? createDefaultCfsRowDisplaySettings()) !==
-      JSON.stringify(after.cfsRowDisplay ?? createDefaultCfsRowDisplaySettings());
+    const cfsRowDisplayChanged = valuesDiffer(
+      before.cfsRowDisplay ?? createDefaultCfsRowDisplaySettings(),
+      after.cfsRowDisplay ?? createDefaultCfsRowDisplaySettings(),
+    );
     const sections: RevisionSectionChange[] = [
       { tabIds: ["circuit", "cfs"], label: "Project circuits", count: changedIds(before.circuits, after.circuits).length },
       { tabIds: ["circuit", "cfs"], label: "Dry Contact", count: changedIds(before.dryContacts, after.dryContacts).length },
@@ -1062,9 +1066,10 @@ export default function ProjectScreen({
     const cfsRowFields = changedFields(before.rows, after.rows);
     const pduDeviceCountFields = changedPduDeviceFields(before.pduDeviceCounts, after.pduDeviceCounts);
     const backlightLogicChanged = hasBacklightLogicChange(before, after);
-    const cfsRowDisplayChanged =
-      JSON.stringify(before.cfsRowDisplay ?? createDefaultCfsRowDisplaySettings()) !==
-      JSON.stringify(after.cfsRowDisplay ?? createDefaultCfsRowDisplaySettings());
+    const cfsRowDisplayChanged = valuesDiffer(
+      before.cfsRowDisplay ?? createDefaultCfsRowDisplaySettings(),
+      after.cfsRowDisplay ?? createDefaultCfsRowDisplaySettings(),
+    );
     return {
       circuitIds: Object.keys(circuitFields),
       dryContactIds: Object.keys(dryContactFields),
@@ -1434,7 +1439,7 @@ export default function ProjectScreen({
     const latestSnapshot = parseRevisionSnapshot(latest.snapshot);
     if (!latestSnapshot) return true;
     const currentSnapshot = createRevisionSnapshot(rt, circuitsForRoomType(sourceProject, rt));
-    return JSON.stringify(currentSnapshot) !== JSON.stringify(latestSnapshot);
+    return valuesDiffer(currentSnapshot, latestSnapshot);
   }, []);
 
   const roomTypeHasRevisionDraft = useCallback((rt: RoomType): boolean => {
