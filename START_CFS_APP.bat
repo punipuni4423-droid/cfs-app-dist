@@ -65,10 +65,24 @@ if errorlevel 1 (
 )
 
 :node_ready
-set "STANDALONE_SERVER=%APP_ROOT%\runtime\server.js"
-if exist "%STANDALONE_SERVER%" (
-  call :set_status "Using bundled CFS runtime."
-  goto :runtime_ready
+set "UPDATED_STANDALONE_SERVER=%APP_ROOT%\.next\standalone\server.js"
+set "BUNDLED_RUNTIME_SERVER=%APP_ROOT%\runtime\server.js"
+set "STANDALONE_SERVER="
+if exist "%UPDATED_STANDALONE_SERVER%" (
+  call :is_root_build_current
+  if not errorlevel 1 (
+    set "STANDALONE_SERVER=%UPDATED_STANDALONE_SERVER%"
+    call :set_status "Using updated CFS build."
+    goto :runtime_ready
+  )
+  call :set_status "Existing CFS build is stale. Rebuilding before launch."
+)
+if not exist "%UPDATED_STANDALONE_SERVER%" (
+  if exist "%BUNDLED_RUNTIME_SERVER%" (
+    set "STANDALONE_SERVER=%BUNDLED_RUNTIME_SERVER%"
+    call :set_status "Using bundled CFS runtime."
+    goto :runtime_ready
+  )
 )
 
 call :has_supported_node_with_npm
@@ -86,13 +100,17 @@ if not exist node_modules (
   )
 )
 
-if not exist .next\BUILD_ID (
-  call :set_status "Building CFS for the first launch."
+if not exist "%UPDATED_STANDALONE_SERVER%" (
+  call :set_status "Building CFS for launch."
   call npm.cmd run build
   if errorlevel 1 (
     call :set_status "CFS build failed. See the start log."
     exit /b 1
   )
+)
+if exist "%UPDATED_STANDALONE_SERVER%" (
+  set "STANDALONE_SERVER=%UPDATED_STANDALONE_SERVER%"
+  call :set_status "Using built CFS standalone runtime."
 )
 
 :runtime_ready
@@ -186,6 +204,18 @@ if errorlevel 1 exit /b 1
 where npm.cmd >nul 2>nul
 if errorlevel 1 exit /b 1
 exit /b 0
+
+:is_root_build_current
+if not exist "%APP_ROOT%\.cfs-build-info.json" exit /b 1
+if not defined CFS_GIT_EXE exit /b 1
+set "CURRENT_GIT_SHA="
+set "BUILD_GIT_SHA="
+for /f "usebackq delims=" %%i in (`"%CFS_GIT_EXE%" -C "%APP_ROOT%" rev-parse HEAD 2^>nul`) do set "CURRENT_GIT_SHA=%%i"
+if not defined CURRENT_GIT_SHA exit /b 1
+for /f "usebackq delims=" %%i in (`powershell.exe -NoProfile -NonInteractive -Command "try { (Get-Content -LiteralPath '%APP_ROOT%\.cfs-build-info.json' -Raw | ConvertFrom-Json).gitSha } catch { '' }"`) do set "BUILD_GIT_SHA=%%i"
+if not defined BUILD_GIT_SHA exit /b 1
+if /I "%BUILD_GIT_SHA%"=="%CURRENT_GIT_SHA%" exit /b 0
+exit /b 1
 
 :is_cfs_running
 if exist "%APP_ROOT%\scripts\test-cfs-instance.ps1" (
