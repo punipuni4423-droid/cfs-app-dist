@@ -16,6 +16,7 @@
  * シードし (実スキーマを使用)、reload して CFS サブタブを検証する。
  */
 import { test, expect, type Locator, type Page } from '@playwright/test';
+import ExcelJS from 'exceljs';
 import * as fs from 'fs';
 import * as path from 'path';
 import { STORAGE_KEY } from '../../app/lib/constants';
@@ -24,6 +25,8 @@ import { installLocalEditingMocks } from './support/secure-sharing-mock';
 const SHOT_DIR = path.join('test-results', 'audit-08');
 const PROJECT_NAME = 'AUDIT-08-Cfs';
 const ROOM_NAME = 'AUDIT-08-Room';
+const SECOND_ROOM_NAME = 'AUDIT-08-Room-B';
+const EMPTY_ROOM_NAME = 'AUDIT-08-Empty';
 
 test.beforeEach(async ({ page }) => {
   await installLocalEditingMocks(page);
@@ -520,6 +523,121 @@ async function seedCfsData(page: Page): Promise<{ areaIds: string[] }> {
   return { areaIds: result.areaIds };
 }
 
+async function seedAdditionalRoomType(page: Page, roomName: string): Promise<void> {
+  const result = await page.evaluate(
+    async ({ storageKey, pn, sourceRoomName, nextRoomName }) => {
+      type ProjectShell = {
+        name: string;
+        roomTypes: Array<Record<string, unknown>>;
+      };
+      type ProjectsArray = ProjectShell[];
+      const parseProjects = (raw: string | null): ProjectsArray => {
+        if (!raw) return [];
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? (parsed as ProjectsArray) : [];
+        } catch {
+          return [];
+        }
+      };
+      let projects = parseProjects(localStorage.getItem(storageKey));
+      if (projects.length === 0) {
+        try {
+          const response = await fetch('/api/projects');
+          const payload = await response.json();
+          projects = Array.isArray(payload.projects) ? (payload.projects as ProjectsArray) : [];
+        } catch {
+          projects = [];
+        }
+      }
+      const project = projects.find((item) => item.name === pn);
+      if (!project) return { ok: false, reason: 'project not found' };
+      const sourceRoom = project.roomTypes.find((item) => item.name === sourceRoomName);
+      if (!sourceRoom) return { ok: false, reason: 'source room not found' };
+      const clone = JSON.parse(JSON.stringify(sourceRoom)) as Record<string, unknown>;
+      clone.id = crypto.randomUUID();
+      clone.name = nextRoomName;
+      project.roomTypes = [
+        ...project.roomTypes.filter((item) => item.name !== nextRoomName),
+        clone,
+      ];
+      localStorage.setItem(storageKey, JSON.stringify(projects));
+      await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projects }),
+      });
+      return { ok: true, reason: '' };
+    },
+    { storageKey: STORAGE_KEY, pn: PROJECT_NAME, sourceRoomName: ROOM_NAME, nextRoomName: roomName },
+  );
+
+  if (!result.ok) {
+    throw new Error(`seedAdditionalRoomType failed: ${result.reason}`);
+  }
+}
+
+async function seedEmptyRoomType(page: Page, roomName: string): Promise<void> {
+  const result = await page.evaluate(
+    async ({ storageKey, pn, sourceRoomName, nextRoomName }) => {
+      type ProjectShell = {
+        name: string;
+        roomTypes: Array<Record<string, unknown>>;
+      };
+      type ProjectsArray = ProjectShell[];
+      const parseProjects = (raw: string | null): ProjectsArray => {
+        if (!raw) return [];
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? (parsed as ProjectsArray) : [];
+        } catch {
+          return [];
+        }
+      };
+      let projects = parseProjects(localStorage.getItem(storageKey));
+      if (projects.length === 0) {
+        try {
+          const response = await fetch('/api/projects');
+          const payload = await response.json();
+          projects = Array.isArray(payload.projects) ? (payload.projects as ProjectsArray) : [];
+        } catch {
+          projects = [];
+        }
+      }
+      const project = projects.find((item) => item.name === pn);
+      if (!project) return { ok: false, reason: 'project not found' };
+      const sourceRoom = project.roomTypes.find((item) => item.name === sourceRoomName);
+      if (!sourceRoom) return { ok: false, reason: 'source room not found' };
+      const clone = JSON.parse(JSON.stringify(sourceRoom)) as Record<string, unknown>;
+      clone.id = crypto.randomUUID();
+      clone.name = nextRoomName;
+      clone.circuitIds = [];
+      clone.deviceAssignments = [];
+      clone.scenes = [];
+      clone.roomScenes = [];
+      clone.switches = [];
+      clone.backlights = [];
+      clone.inspectionMarks = [];
+      project.roomTypes = [
+        ...project.roomTypes.filter((item) => item.name !== nextRoomName),
+        clone,
+      ];
+      localStorage.setItem(storageKey, JSON.stringify(projects));
+      await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projects }),
+      });
+      return { ok: true, reason: '' };
+    },
+    { storageKey: STORAGE_KEY, pn: PROJECT_NAME, sourceRoomName: ROOM_NAME, nextRoomName: roomName },
+  );
+
+  if (!result.ok) {
+    throw new Error(`seedEmptyRoomType failed: ${result.reason}`);
+  }
+}
+
 /** CFS サブタブを開く */
 async function openCfsTab(page: Page): Promise<void> {
   const cfsTab = page.locator('[role="tab"]').filter({ hasText: /^CFS$/ }).first();
@@ -540,7 +658,10 @@ async function openCfsMenu(page: Page, label: string | RegExp): Promise<Locator>
 
 /** CFS ビューの UI 設定 (トグル/フィルタ) を初期化する。各テスト間の状態漏れを防ぐ。 */
 async function resetCfsPrefs(page: Page): Promise<void> {
-  await page.evaluate(() => localStorage.removeItem('cfs-view-preferences-v1'));
+  await page.evaluate(() => {
+    localStorage.removeItem('cfs-view-preferences-v1');
+    localStorage.removeItem('cfs-view-preferences-v2');
+  });
 }
 
 /**
@@ -548,7 +669,10 @@ async function resetCfsPrefs(page: Page): Promise<void> {
  * 再ナビゲートして CFS タブを開く。テスト間で状態を共有しない (独立性のため)。
  * dev サーバーが不安定なため per-test 分離 + リトライで耐性を持たせる。
  */
-async function setupAndOpenCfs(page: Page): Promise<void> {
+async function setupAndOpenCfs(
+  page: Page,
+  options: { includeSecondRoom?: boolean; includeEmptyRoom?: boolean } = {},
+): Promise<void> {
   // createProject 後は既にプロジェクト画面内 (openProject 不要)
   await createProject(page, PROJECT_NAME);
   await gotoRoomTypeTab(page);
@@ -569,6 +693,12 @@ async function setupAndOpenCfs(page: Page): Promise<void> {
   }
   await waitForRoomPersisted(page, PROJECT_NAME, ROOM_NAME);
   await seedCfsData(page);
+  if (options.includeSecondRoom) {
+    await seedAdditionalRoomType(page, SECOND_ROOM_NAME);
+  }
+  if (options.includeEmptyRoom) {
+    await seedEmptyRoomType(page, EMPTY_ROOM_NAME);
+  }
   // CFS view prefs を初期化してから再ナビゲート (トグル/フィルタを既定に)
   await resetCfsPrefs(page);
   await gotoRootRobust(page);
@@ -825,15 +955,25 @@ test.describe('AUDIT-08 CFS 統合ビュー', () => {
   test('G. Excel エクスポートでファイルがダウンロードされる', async ({ page }) => {
     await setupAndOpenCfs(page);
 
-    const exportBtn = page.locator('button').filter({ hasText: /Excel Export/ }).first();
+    // T-23: 単一「Excel Export」ボタン → スコープ選択メニュー(This Room Type / All Rooms)
+    const exportBtn = page.getByRole('button', { name: /^Excel Export$/ }).first();
     await expect(exportBtn).toBeVisible();
     await expect(exportBtn).toBeEnabled();
     await shot(page, '11-before-export');
 
-    // クリック直後の disabled / ローディング状態を観察 (実装にdisabledは無い想定 → アノマリ記録)
-    const downloadPromise = page.waitForEvent('download', { timeout: 20000 });
+    // メニューが開き、Esc でキャンセルできる
     await exportBtn.click();
-    // クリック直後 (await なし) のボタン状態をサンプリング
+    const exportMenu = page.getByRole('menu', { name: 'Excel export scope' });
+    await expect(exportMenu).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(exportMenu).not.toBeVisible();
+
+    // 再度開いて「This Room Type」を選択 → 従来の単一 RoomType エクスポート
+    await exportBtn.click();
+    await expect(exportMenu).toBeVisible();
+    const downloadPromise = page.waitForEvent('download', { timeout: 20000 });
+    await exportMenu.getByRole('menuitem', { name: 'This Room Type' }).click();
+    // 選択直後 (await なし) のボタン状態をサンプリング
     const disabledDuring = await exportBtn.isDisabled().catch(() => false);
     const textDuring = ((await exportBtn.textContent().catch(() => '')) ?? '').trim();
     test.info().annotations.push({
@@ -856,6 +996,61 @@ test.describe('AUDIT-08 CFS 統合ビュー', () => {
     const head = fs.readFileSync(savePath).subarray(0, 2).toString('latin1');
     expect(head).toBe('PK');
     await shot(page, '12-after-export');
+  });
+
+  test('G2. Project Excel で全 RoomType が 1 ブックの複数シートとして出力される', async ({ page }) => {
+    await setupAndOpenCfs(page, { includeSecondRoom: true, includeEmptyRoom: true });
+
+    // T-23: 単一「Excel Export」ボタン → メニューから「All Rooms」を選択
+    const exportBtn = page.getByRole('button', { name: /^Excel Export$/ }).first();
+    await expect(exportBtn).toBeVisible();
+    await expect(exportBtn).toBeEnabled();
+    const areasMenu = await openCfsMenu(page, 'Area');
+    await areasMenu.locator('button').filter({ hasText: /^Hide all$/ }).first().click();
+    await shot(page, '11b-before-project-export');
+
+    await exportBtn.click();
+    const exportMenu = page.getByRole('menu', { name: 'Excel export scope' });
+    await expect(exportMenu).toBeVisible();
+    const downloadPromise = page.waitForEvent('download', { timeout: 20000 });
+    await exportMenu.getByRole('menuitem', { name: 'All Rooms' }).click();
+    const download = await downloadPromise;
+    const suggested = download.suggestedFilename();
+    test.info().annotations.push({ type: 'download', description: `filename=${suggested}` });
+    expect(suggested).toMatch(/_CFS_ALL\.xlsx$/);
+
+    const savePath = path.join(SHOT_DIR, suggested);
+    fs.mkdirSync(SHOT_DIR, { recursive: true });
+    await download.saveAs(savePath);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(savePath);
+    const sheetNames = workbook.worksheets.map((sheet) => sheet.name);
+    test.info().annotations.push({ type: 'sheets', description: sheetNames.join(', ') });
+    expect(sheetNames).toEqual([ROOM_NAME, SECOND_ROOM_NAME, EMPTY_ROOM_NAME]);
+    expect(workbook.worksheets[0].rowCount).toBeGreaterThan(5);
+    expect(workbook.worksheets[1].rowCount).toBeGreaterThan(5);
+    expect(String(workbook.worksheets[0].getCell('A5').value ?? '')).not.toContain('Enter Circuit');
+    expect(String(workbook.worksheets[1].getCell('A5').value ?? '')).not.toContain('Enter Circuit');
+    expect(String(workbook.worksheets[2].getCell('A5').value ?? '')).toContain('Enter Circuit');
+
+    for (const sheet of workbook.worksheets) {
+      const view = sheet.views[0] as { state?: string; xSplit?: number; ySplit?: number } | undefined;
+      expect(view?.state).toBe('frozen');
+      expect(view?.ySplit).toBe(4);
+      expect(Number(view?.xSplit ?? 0)).toBeGreaterThan(0);
+      expect(sheet.getCell('A1').border?.top?.style).toBe('medium');
+      expect(sheet.getCell('A1').border?.left?.style).toBe('medium');
+      const merges = ((sheet as unknown as { model: { merges?: string[] } }).model.merges ?? []);
+      expect(merges.length).toBeGreaterThan(0);
+    }
+
+    for (const sheet of workbook.worksheets.slice(0, 2)) {
+      const view = sheet.views[0] as { xSplit?: number } | undefined;
+      const firstFunctionCol = Number(view?.xSplit ?? 0) + 1;
+      expect(sheet.getCell(1, firstFunctionCol).border?.left?.style).toBe('medium');
+      expect(sheet.getCell(1, firstFunctionCol).border?.top?.style).toBe('medium');
+    }
   });
 
   test('H. ハイライトトグル (Individual Override / FFE / Energy Saving) が機能する', async ({ page }) => {

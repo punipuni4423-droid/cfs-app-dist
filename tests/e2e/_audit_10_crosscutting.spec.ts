@@ -4,7 +4,9 @@
  *       リロード後のデータ整合性、設定(列表示/番号モード等)の永続化。
  *
  * 対象: http://localhost:3014
- * Storage: cfs-projects-v14 (プロジェクト), cfs-view-preferences-v1 (CFS UI 設定)
+ * Storage: cfs-projects-v14 (プロジェクト), cfs-view-preferences-v2 (CFS UI 設定。
+ *          { global, byProject: { [projectId]: ... } } でプロジェクト単位保存。
+ *          旧 cfs-view-preferences-v1 は読み取り専用の移行元として残置)
  *
  * 本スペックはアプリ本体を変更しない。観察と検証のみ。
  *
@@ -107,6 +109,7 @@ async function resetStorage(page: Page): Promise<void> {
   await gotoRootWithRetry(page);
   await page.evaluate(() => {
     localStorage.removeItem("cfs-view-preferences-v1");
+    localStorage.removeItem("cfs-view-preferences-v2");
   });
   await gotoRootWithRetry(page);
 }
@@ -747,22 +750,31 @@ test.describe("AUDIT-10-D 永続化 / リロード整合性", () => {
     await page.locator('[role="tab"]').filter({ hasText: /^CFS$/i }).first().click();
     await page.waitForTimeout(400);
 
-    // 番号モードボタンを探す
-    const internalBtn = page.locator(".cfs-segmented button", { hasText: /Internal#/ }).first();
-    const internalVisible = await internalBtn.isVisible({ timeout: 5000 }).catch(() => false);
+    // 番号モードのセグメントは Display メニュー (ポータル) 内にある
+    const displayMenu = cfsMenuTrigger(page, "Display");
+    const displayVisible = await displayMenu.isVisible({ timeout: 5000 }).catch(() => false);
 
-    if (!internalVisible) {
+    if (!displayVisible) {
       test.info().annotations.push({
         type: "cfs-prefs-note",
-        description: "CFS セグメントボタン (Internal#) が見つからず、このテストをスキップ",
+        description: "CFS Display メニューが見つからず、このテストをスキップ",
       });
-      test.skip(true, "CFS segmented button not found");
+      test.skip(true, "CFS Display menu not found");
       return;
     }
 
+    await displayMenu.click();
+    const displayPanel = page.locator(".cfs-filter-list-portal").last();
+    await expect(displayPanel).toBeVisible({ timeout: 3000 });
+    const internalBtn = displayPanel
+      .locator('.cfs-segmented[aria-label="Number display"] button', { hasText: /Internal#/ })
+      .first();
+    await expect(internalBtn).toBeVisible({ timeout: 3000 });
     await internalBtn.click();
     await page.waitForTimeout(200);
     await expect(internalBtn).toHaveClass(/is-active/);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
 
     // Base Columns メニューを開き、先頭のチェックを外して 1 列非表示にする
     const baseColMenu = cfsMenuTrigger(page, "Base");
@@ -782,28 +794,37 @@ test.describe("AUDIT-10-D 永続化 / リロード整合性", () => {
 
     // 永続化が走るのを少し待つ
     await page.waitForTimeout(500);
-    const prefsRaw = await page.evaluate(() => localStorage.getItem("cfs-view-preferences-v1"));
+    const prefsRaw = await page.evaluate(() => localStorage.getItem("cfs-view-preferences-v2"));
     test.info().annotations.push({
       type: "cfs-prefs-saved",
       description: prefsRaw
-        ? `cfs-view-preferences-v1 あり: ${prefsRaw.slice(0, 200)}`
-        : "cfs-view-preferences-v1 なし",
+        ? `cfs-view-preferences-v2 あり: ${prefsRaw.slice(0, 200)}`
+        : "cfs-view-preferences-v2 なし",
     });
 
     if (prefsRaw) {
-      const prefs = JSON.parse(prefsRaw);
-      expect(prefs.numberMode).toBe("internal");
+      // v2 はプロジェクト単位保存: global(シード)と byProject の当該エントリ両方に反映される
+      const prefs = JSON.parse(prefsRaw) as {
+        global?: { numberMode?: string };
+        byProject?: Record<string, { numberMode?: string }>;
+      };
+      expect(prefs.global?.numberMode).toBe("internal");
+      const projectEntries = Object.values(prefs.byProject ?? {});
+      expect(projectEntries.length).toBeGreaterThan(0);
+      expect(projectEntries.some((entry) => entry.numberMode === "internal")).toBe(true);
 
       // リロード後もlocalStorageが保持されているか
       await gotoRootWithRetry(page);
       await page.waitForTimeout(800);
-      const prefsAfter = await page.evaluate(() => localStorage.getItem("cfs-view-preferences-v1"));
-      const prefsAfterParsed = JSON.parse(prefsAfter ?? "{}");
+      const prefsAfter = await page.evaluate(() => localStorage.getItem("cfs-view-preferences-v2"));
+      const prefsAfterParsed = JSON.parse(prefsAfter ?? "{}") as {
+        global?: { numberMode?: string };
+      };
       test.info().annotations.push({
         type: "cfs-prefs-after-reload",
-        description: `リロード後 numberMode="${prefsAfterParsed.numberMode}"`,
+        description: `リロード後 global.numberMode="${prefsAfterParsed.global?.numberMode}"`,
       });
-      expect(prefsAfterParsed.numberMode).toBe("internal");
+      expect(prefsAfterParsed.global?.numberMode).toBe("internal");
     }
     await shot(page, "D4-cfs-prefs-after-reload");
   });

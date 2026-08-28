@@ -131,7 +131,7 @@ test.describe("Circuit group single-value fields", () => {
     );
     expect(circuits.map((c) => c.internalNumber)).toEqual(["IN-01", "IN-01"]);
 
-    // FFE checkbox appears once per group and syncs to both rows.
+    // FFE checkbox (restored by T-25) appears once per group and syncs to both rows.
     const ffeBoxes = table.locator('input[aria-label="FFE"]');
     await expect(ffeBoxes).toHaveCount(1);
     await ffeBoxes.first().check();

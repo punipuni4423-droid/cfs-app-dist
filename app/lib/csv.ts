@@ -1,5 +1,5 @@
 import type { CircuitEntry, FixtureMaster, LocationMaster } from '../types';
-import { createEmptyCircuitEntry } from './constants';
+import { FIXTURE_TYPE_OPTIONS, createEmptyCircuitEntry } from './constants';
 import { createAppId } from './id';
 
 type CsvPrimitive = string | number | boolean | null | undefined;
@@ -232,7 +232,8 @@ export async function csvToFixtures(text: string): Promise<FixtureMaster[]> {
       return {
         id: createAppId(),
         fixture,
-        fixtureType: fixtureType === 'Indirect' ? 'Indirect' : 'DL',
+        // The Type column carries FFE / Night Lamp as first-class fixture types.
+        fixtureType: FIXTURE_TYPE_OPTIONS.includes(fixtureType) ? fixtureType : 'DL',
         powerMode,
         watt,
         powerFactor: powerFactor || '0.7',

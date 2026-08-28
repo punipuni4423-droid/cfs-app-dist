@@ -125,6 +125,8 @@ export const DIMMING_TYPE_OPTIONS: readonly string[] = [
 export const FIXTURE_TYPE_OPTIONS: readonly string[] = [
   'DL',
   'Indirect',
+  'FFE',
+  'Night Lamp',
 ] as const;
 
 export const HVAC_PROTOCOL_OPTIONS: readonly HvacAssignment['protocol'][] = [

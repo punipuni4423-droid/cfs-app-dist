@@ -1558,14 +1558,14 @@ textarea:disabled {
   table-layout: fixed;
 }
 
+/* Group-shared (rowspan) cells sit on the vertical center of their merged
+   region — single rows (T-27) and multi-row "+" groups (T-29) alike — so every
+   column lines up next to the tall pcs stepper. */
 .lighting-circuits-table td[rowspan] {
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 .lighting-circuits-table .rowspan-cell-content {
-  position: sticky;
-  top: 2.35rem;
-  z-index: 1;
   display: block;
 }
 
@@ -5797,6 +5797,13 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 
 .cfs-area-scene-value-cell .cfs-scene-name-line {
   font-weight: 900;
+}
+
+/* Long area-scene names wrap across multiple lines; without this the stack's
+   fixed max-height clips the value line (%, On/Off) out of view. Table cell
+   height acts as a minimum, so only rows that actually need it grow (T-21). */
+.cfs-area-scene-value-cell .cfs-cell-stack {
+  max-height: none;
 }
 
 /* Off / 0% values render in blue so unlit states stand out (2026-08-24). */

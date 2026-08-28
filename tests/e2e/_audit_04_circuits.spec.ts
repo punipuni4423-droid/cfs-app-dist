@@ -197,49 +197,75 @@ test.describe("AUDIT-04 回路マトリクス (CircuitsView)", () => {
     await shot(page, "01-row-edited");
   });
 
-  test("02 FFE / 省エネ チェックボックス列", async ({ page }) => {
+  test("02 FFE は器具Type連動 / 省エネ チェックボックス列", async ({ page }) => {
     await createAndOpenProject(page, "AUDIT-04-Cir-02");
+
+    // Type=FFE の器具を登録 (T-22: FFE はチェックボックスではなく Fixture Type)
+    await registerFixtureWithVa(page, "FX-FFE");
+    const typeSelect = page
+      .locator("tbody tr")
+      .last()
+      .locator("select")
+      .filter({ has: page.locator("option", { hasText: /^FFE$/ }) })
+      .first();
+    await typeSelect.selectOption("FFE");
+    await page.waitForTimeout(200);
+
     await openCircuitTab(page, "Room-02");
 
     await page.locator(".btn-add-row").first().click();
     await page.waitForTimeout(300);
 
-    // FFE チェックボックス
+    // FFE チェックボックス列は T-25 で復活: 手動トグル可能
     const ffe = page.locator('tbody input[aria-label="FFE"]').first();
     await expect(ffe).toBeVisible({ timeout: 5000 });
     expect(await ffe.isChecked()).toBe(false);
     await ffe.check();
     expect(await ffe.isChecked()).toBe(true);
+    await ffe.uncheck();
+    expect(await ffe.isChecked()).toBe(false);
 
-    // 省エネ チェックボックス (aria-label="Energy Save")
+    // 省エネ チェックボックス (aria-label="Energy Save") は従来どおり
     const eco = page.locator('tbody input[aria-label="Energy Save"]').first();
     await expect(eco).toBeVisible();
     await eco.check();
     expect(await eco.isChecked()).toBe(true);
-    await shot(page, "02-checkboxes-on");
+    await shot(page, "02-energy-save-on");
 
-    // 永続化確認: 保存 (1.2秒 debounce) が完了してから "Back to Project List" で戻り再選択
-    await page.waitForTimeout(2000); // saveTimer が flush されるのを待つ
-    // "Back to Project List" ボタンをクリック
-    const backBtn = page.locator("a, button").filter({ hasText: /Back to Project List/i }).first();
-    await expect(backBtn).toBeVisible({ timeout: 5000 });
-    await backBtn.click();
-    // プロジェクト一覧が表示されるのを待つ
-    const projectCard = page.locator("button.screen-card").filter({ hasText: "AUDIT-04-Cir-02" });
-    await expect(projectCard.first()).toBeVisible({ timeout: 10000 });
-    await projectCard.first().click();
-    await expect(page.locator('[role="tablist"]').first()).toBeVisible({ timeout: 10000 });
+    // 器具Type連動 (T-24): Type=FFE の器具を選ぶと ON(手動チェックと共存)
+    const fixtureSelect = page
+      .locator("tbody select")
+      .filter({ has: page.locator('option[value="FX-FFE"]') })
+      .first();
+    await fixtureSelect.selectOption("FX-FFE");
 
-    // ルームタイプタブをクリック
-    const roomTab2 = page.locator('[role="tab"]').filter({ hasText: "Room-02" });
-    await expect(roomTab2.first()).toBeVisible({ timeout: 8000 });
-    await roomTab2.first().click();
-    await page.locator('[role="tab"]').filter({ hasText: /^Circuit$/ }).first().click();
-    await page.waitForTimeout(400);
+    const readCircuitFfe = () =>
+      page.evaluate((projectName: string) => {
+        for (const key of ["cfs-project-drafts-v2", "cfs-projects-v14"]) {
+          try {
+            const parsed = JSON.parse(window.localStorage.getItem(key) ?? "[]") as Array<{
+              name?: string;
+              circuits?: Array<{ ffe?: boolean }>;
+            }>;
+            const project = Array.isArray(parsed)
+              ? parsed.find((candidate) => candidate.name === projectName)
+              : undefined;
+            if (project?.circuits && project.circuits.length > 0) {
+              return project.circuits.map((c) => c.ffe === true);
+            }
+          } catch {
+            // ignore parse errors and fall through
+          }
+        }
+        return null;
+      }, "AUDIT-04-Cir-02");
 
-    const ffeAfter = page.locator('tbody input[aria-label="FFE"]').first();
-    await expect(ffeAfter).toBeVisible({ timeout: 5000 });
-    expect(await ffeAfter.isChecked()).toBe(true);
+    await expect.poll(readCircuitFfe, { timeout: 5000 }).toEqual([true]);
+    await shot(page, "02-ffe-auto-on-by-fixture-type");
+
+    // 非FFE器具 (未選択) に変えると OFF
+    await fixtureSelect.selectOption("");
+    await expect.poll(readCircuitFfe, { timeout: 5000 }).toEqual([false]);
   });
 
   test("03 ワット(VA)自動計算", async ({ page }) => {

@@ -289,6 +289,19 @@ export default function CircuitsView({
               id,
             );
       }
+      // Fixture Type transitions drive FFE alongside the manual checkbox:
+      // selecting a Type=FFE fixture turns FFE on; switching away FROM a
+      // Type=FFE fixture turns it off. Any other transition leaves the stored
+      // (possibly manually set) value alone. Propagates to group + DALI block.
+      const previousType = fixtures.find((f) => f.fixture === target.fixture)?.fixtureType;
+      const selectedType = fixtures.find((f) => f.fixture === effectiveValue)?.fixtureType;
+      const nextFfe =
+        selectedType === "FFE" ? true : previousType === "FFE" ? false : null;
+      const finalTarget = next.find((c) => c.id === id);
+      if (finalTarget && nextFfe !== null && finalTarget.ffe !== nextFfe) {
+        const shouldUpdate = booleanPropagationPredicate(finalTarget);
+        next = next.map((c) => (shouldUpdate(c) ? { ...c, ffe: nextFfe } : c));
+      }
     }
 
     commitCircuits(next);
@@ -329,6 +342,18 @@ export default function CircuitsView({
     return result;
   }
 
+  // FFE / Energy Save propagate to the whole circuit group plus the DALI
+  // fixture block (same rule as the checkbox column, 2026-08-24).
+  function booleanPropagationPredicate(target: CircuitEntry): (c: CircuitEntry) => boolean {
+    const targetGroupKey = circuitGroupKey(target);
+    return (c) =>
+      c.id === target.id ||
+      (target.circuitGroupId.trim() !== "" && circuitGroupKey(c) === targetGroupKey) ||
+      (isDaliCircuit(target) &&
+        target.daliFixtureGroupId !== "" &&
+        c.daliFixtureGroupId === target.daliFixtureGroupId);
+  }
+
   function updateBoolean(
     id: string,
     field: 'ffe' | 'energySaving',
@@ -336,17 +361,9 @@ export default function CircuitsView({
   ): void {
     const target = circuits.find((c) => c.id === id);
     if (!target) return;
-    const targetGroupKey = circuitGroupKey(target);
+    const shouldUpdate = booleanPropagationPredicate(target);
     commitCircuits(
-      circuits.map((c) => {
-        const shouldUpdate =
-          c.id === id ||
-          (target.circuitGroupId.trim() !== "" && circuitGroupKey(c) === targetGroupKey) ||
-          (isDaliCircuit(target) &&
-            target.daliFixtureGroupId !== "" &&
-            c.daliFixtureGroupId === target.daliFixtureGroupId);
-        return shouldUpdate ? { ...c, [field]: value } : c;
-      }),
+      circuits.map((c) => (shouldUpdate(c) ? { ...c, [field]: value } : c)),
     );
   }
 

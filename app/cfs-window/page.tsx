@@ -131,8 +131,10 @@ function CfsWindowContent() {
         <CfsView
           key={view.roomType.id}
           projectName={snapshot.projectName}
+          projectId={projectId}
           roomType={view.roomType}
           circuits={view.circuits}
+          projectRoomTypeEntries={snapshot.roomTypeEntries ?? []}
           devices={snapshot.devices}
           locations={snapshot.locations}
           programmingNameSettings={snapshot.programmingNameSettings}

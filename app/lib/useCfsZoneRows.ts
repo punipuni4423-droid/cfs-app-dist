@@ -101,6 +101,9 @@ function compareAreaOrder(
 }
 
 export function rowZoneValues(row: CfsZoneRow): string[] {
+  // Curtain rows never carry a zone/address; without this guard they would
+  // fall back to "Reserved", which is wrong for Lutron Curtain assignments.
+  if (row.isCurtain) return [];
   return [row.address || row.zone || "Reserved"];
 }
 

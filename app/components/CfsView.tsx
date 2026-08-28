@@ -58,6 +58,7 @@ import {
   type FunctionColumnGroup,
   type MergeInfo,
 } from "../lib/cfsTableModel";
+import { appendCfsSheet, loadExcelJs, type CfsExcelHeaderGroups, type CfsExcelSheetModel } from "../lib/cfsExcelExport";
 import { cfsTargetsForRow, type CfsResolvedTarget } from "../lib/cfsTargets";
 import { analyzeStaleHvacLinks, repairStaleHvacLinks } from "../lib/staleHvacLinkRepair";
 import {
@@ -87,10 +88,19 @@ import { normalizeBacklightLevels } from "../lib/constants";
 import CfsBaseColumnMenu from "./CfsBaseColumnMenu";
 import CfsFilterMenu from "./CfsFilterMenu";
 
-interface CfsViewProps {
-  projectName: string;
+interface CfsProjectExcelRoomTypeEntry {
   roomType: RoomType;
   circuits: CircuitEntry[];
+}
+
+interface CfsViewProps {
+  projectName: string;
+  // Keys the per-project display preferences in localStorage. When empty the
+  // view falls back to the shared (global seed) preferences only.
+  projectId?: string;
+  roomType: RoomType;
+  circuits: CircuitEntry[];
+  projectRoomTypeEntries?: CfsProjectExcelRoomTypeEntry[];
   devices: DeviceMaster[];
   locations: LocationMaster[];
   onScenesChange?: (next: Scene[]) => void;
@@ -229,8 +239,92 @@ const INSPECTION_PERCENT_PRESET_VALUES = [
 const INSPECTION_PERCENT_STEPS = [-10, -1, 1, 10] as const;
 const INSPECTION_PERCENT_QUICK_VALUES = ["Raise", "Lower", "Uneffected"] as const;
 
-const CFS_PREFS_KEY = "cfs-view-preferences-v1";
+// v1 stored one global blob shared by every project. v2 keeps display state
+// per project under byProject, with a shared seed under global for projects
+// opened for the first time. v1 is kept untouched as a rollback-safe
+// migration source for the seed settings.
+const CFS_LEGACY_PREFS_KEY = "cfs-view-preferences-v1";
+const CFS_PREFS_KEY = "cfs-view-preferences-v2";
 const SHOW_CFS_LINK_ISSUE_SURFACE = false;
+
+// Settings that are meaningful across projects (used as the first-open seed).
+interface CfsStoredSeedPrefs {
+  sortMode?: CfsSortMode;
+  sortByLocation?: boolean;
+  numberMode?: "designer" | "internal";
+  hideReservedRows?: boolean;
+  showIndividualOverrideHighlight?: boolean;
+  showAreaColorHighlight?: boolean;
+  showAreaSceneNames?: boolean;
+  showAreaSceneHighlight?: boolean;
+  showFfeHighlight?: boolean;
+  showEnergySavingHighlight?: boolean;
+  showInspectionMarkHighlight?: boolean;
+  showBacklightColorHighlight?: boolean;
+  showCciRows?: boolean;
+  hiddenBaseColumns?: BaseColumnKey[];
+  baseColumnOrder?: BaseColumnKey[];
+  functionColumnGroupOrder?: string[];
+}
+
+// Per-project entry: seed settings plus project-id-based state that must
+// never leak into other projects.
+interface CfsStoredProjectPrefs extends CfsStoredSeedPrefs {
+  selectedAreaIds?: string[];
+  hiddenDeviceKeys?: string[];
+  // Function-column hide state persists at the group level only. Per-column
+  // ids are room-type-local UUIDs, so they stay session-only (T-16).
+  hiddenFunctionColumnGroups?: string[];
+  viewerCfsRowDisplayByRoom?: Record<string, unknown>;
+}
+
+interface CfsStoredPrefsV2 {
+  global?: CfsStoredSeedPrefs;
+  byProject?: Record<string, CfsStoredProjectPrefs>;
+}
+
+function readStoredCfsPrefsV2(): CfsStoredPrefsV2 | null {
+  try {
+    const raw = window.localStorage.getItem(CFS_PREFS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CfsStoredPrefsV2;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function readLegacyCfsPrefsSeed(): CfsStoredSeedPrefs | null {
+  try {
+    const raw = window.localStorage.getItem(CFS_LEGACY_PREFS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CfsStoredProjectPrefs;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    // Project-id-based v1 state (areas, devices, function-column ids) cannot
+    // be attributed to a project, so only the seed settings migrate.
+    return {
+      sortMode: parsed.sortMode,
+      sortByLocation: parsed.sortByLocation,
+      numberMode: parsed.numberMode,
+      hideReservedRows: parsed.hideReservedRows,
+      showIndividualOverrideHighlight: parsed.showIndividualOverrideHighlight,
+      showAreaColorHighlight: parsed.showAreaColorHighlight,
+      showAreaSceneNames: parsed.showAreaSceneNames,
+      showAreaSceneHighlight: parsed.showAreaSceneHighlight,
+      showFfeHighlight: parsed.showFfeHighlight,
+      showEnergySavingHighlight: parsed.showEnergySavingHighlight,
+      showInspectionMarkHighlight: parsed.showInspectionMarkHighlight,
+      showBacklightColorHighlight: parsed.showBacklightColorHighlight,
+      showCciRows: parsed.showCciRows,
+      hiddenBaseColumns: parsed.hiddenBaseColumns,
+      baseColumnOrder: parsed.baseColumnOrder,
+      functionColumnGroupOrder: parsed.functionColumnGroupOrder,
+    };
+  } catch {
+    return null;
+  }
+}
 
 function displaySwitchNumber(sw: SwitchEntry): string {
   return sw.switchNumber.trim() || "-";
@@ -360,7 +454,7 @@ function PirHeaderText({
   );
 }
 
-function buildMergeInfo(rows: CfsZoneRow[], keyFor: (row: CfsZoneRow) => string): Map<string, MergeInfo> {
+function buildMergeInfo(rows: readonly CfsZoneRow[], keyFor: (row: CfsZoneRow) => string): Map<string, MergeInfo> {
   const map = new Map<string, MergeInfo>();
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
@@ -550,10 +644,387 @@ function cloneInspectionData<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function safeExcelSheetName(value: string, fallback: string, usedNames: Set<string>): string {
+  const cleaned =
+    value
+      .trim()
+      .replace(/[\[\]:*?\/\\]/g, "_")
+      .replace(/\s+/g, " ") || fallback;
+  const base = (cleaned || "Sheet").slice(0, 31);
+  let candidate = base;
+  let suffix = 2;
+  while (usedNames.has(candidate.toLowerCase())) {
+    const suffixText = ` (${suffix})`;
+    candidate = `${base.slice(0, Math.max(1, 31 - suffixText.length))}${suffixText}`;
+    suffix += 1;
+  }
+  usedNames.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function buildPirGroupNumbersFor(switches: readonly SwitchEntry[]): Map<string, number> {
+  const map = new Map<string, number>();
+  let index = 1;
+  for (const sw of switches) {
+    if (sw.kind !== "pir") continue;
+    const key = switchGroupId(sw);
+    if (map.has(key)) continue;
+    map.set(key, index);
+    index += 1;
+  }
+  return map;
+}
+
+function buildSwitchRowsByNumberFor(switches: readonly SwitchEntry[]): Map<string, SwitchEntry[]> {
+  const map = new Map<string, SwitchEntry[]>();
+  for (const sw of switches) {
+    if (sw.kind === "command" || sw.kind === "qsm") continue;
+    const key = sw.switchNumber.trim();
+    if (!key) continue;
+    map.set(key, [...(map.get(key) ?? []), sw]);
+  }
+  return map;
+}
+
+function buildSwitchByCommandReferenceFor(
+  switches: readonly SwitchEntry[],
+  pirGroupNumbers: ReadonlyMap<string, number>,
+): Map<string, SwitchEntry> {
+  const map = new Map<string, SwitchEntry>();
+  for (const sw of switches) {
+    if (sw.kind === "command" || sw.kind === "qsm") continue;
+    const groupId = switchGroupId(sw);
+    if (!map.has(groupId)) map.set(groupId, sw);
+    const number = sw.switchNumber.trim();
+    if (number && !map.has(number)) map.set(number, sw);
+    if (sw.kind === "pir") {
+      const pirIndex = pirGroupNumbers.get(groupId);
+      if (pirIndex) {
+        const reference = commandPirReference(pirIndex);
+        if (!map.has(reference)) map.set(reference, sw);
+        const compactReference = reference.replace(/\s+/g, "");
+        if (!map.has(compactReference)) map.set(compactReference, sw);
+      }
+    }
+  }
+  return map;
+}
+
+function buildFunctionColumnsForRoomType(roomType: RoomType, locations: LocationMaster[]): FunctionColumn[] {
+  const pirGroupNumbers = buildPirGroupNumbersFor(roomType.switches);
+  const switchRowsByNumber = buildSwitchRowsByNumberFor(roomType.switches);
+  const switchByCommandReference = buildSwitchByCommandReferenceFor(roomType.switches, pirGroupNumbers);
+
+  const sceneColumns: FunctionColumn[] = sortRoomScenesByGroup(roomType.roomScenes)
+    .filter((scene) =>
+      scene.sceneType.trim() ||
+      scene.triggerCondition.trim() ||
+      scene.settings.length > 0 ||
+      (scene.areaSceneSelections ?? []).some((selection) => selection.sceneId.trim() !== ""),
+    )
+    .map((scene) => {
+      const groupKey = normalizedColumnGroupKey("scene", "Scene");
+      return {
+        id: `scene:${scene.id}`,
+        category: "scene",
+        switchGroupKey: groupKey,
+        buttonKey: `${groupKey}\u0000${scene.phase}`,
+        switchNumber: "Scene",
+        switchName: "",
+        button: roomSceneButtonLabel(scene),
+        functionName: isPmsScene(scene) ? roomScenePmsFunctionName(scene) : roomSceneFunctionName(scene),
+        condition: roomSceneConditionLabel(scene),
+        kind: "scene",
+        roomScene: scene,
+      };
+    });
+
+  const commandColumns: FunctionColumn[] = roomType.switches
+    .filter((sw) => sw.kind === "command" && Boolean(sw.switchName.trim() || sw.buttonFunction.trim()))
+    .map((sw) => {
+      const groupKey = normalizedColumnGroupKey("command", "Command");
+      const commandReference = sw.switchNumber.trim();
+      const referencedRows = switchRowsByNumber.get(commandReference) ?? [];
+      const referencedSwitch = referencedRows[0] ?? switchByCommandReference.get(commandReference);
+      const switchNumber = referencedSwitch ? displaySwitchNumber(referencedSwitch) : sw.switchNumber.trim() || "-";
+      const switchName = referencedSwitch ? displaySwitchName(referencedSwitch) : "-";
+      const buttonLabel =
+        referencedSwitch?.kind === "pir"
+          ? parsePirSelections(sw.buttonLabel)
+              .map((value) => pirInstanceValueLabel(value, locations, parsePirAreaNumbers(referencedSwitch.allocation)))
+              .filter(Boolean)
+              .join(" / ")
+          : sw.buttonLabel.trim();
+      return {
+        id: sw.id,
+        category: "command" as const,
+        switchGroupKey: groupKey,
+        buttonKey: `${groupKey}\u0000${switchNumber}\u0000${switchName}`,
+        switchNumber: "Command",
+        switchName: "",
+        button: `${switchNumber} / ${switchName}`,
+        functionName: sw.switchName.trim() || displayFunctionName(sw),
+        condition: formatButtonCondition(buttonLabel, sw.condition),
+        kind: "command",
+        source: sw,
+      };
+    });
+
+  const switchColumns: FunctionColumn[] = roomType.switches
+    .filter((sw) => sw.kind !== "command" && sw.kind !== "qsm" && Boolean(sw.switchNumber.trim() || sw.switchName.trim()))
+    .map((sw, sourceOrder) => {
+      const pirLogicNo = pirGroupNumbers.get(switchGroupId(sw)) ?? 1;
+      const resolvedNumber = sw.kind === "pir" ? "PIR" : displaySwitchNumber(sw);
+      const resolvedName = sw.kind === "pir" ? "" : displaySwitchName(sw);
+      const groupKey = normalizedSwitchHeaderKey(sw, resolvedNumber, resolvedName);
+      const pirButton = String(pirLogicNo);
+      const pirLabels = sw.kind === "pir" ? pirHeaderLabels(sw, locations) : undefined;
+      return {
+        id: sw.id,
+        category: "switch" as const,
+        sourceOrder,
+        switchGroupKey: groupKey,
+        buttonKey: `${groupKey}\u0000${sw.kind === "pir" ? pirButton : buttonGroupKey(sw)}`,
+        switchNumber: resolvedNumber,
+        switchName: resolvedName,
+        button: sw.kind === "pir" ? pirButton : buttonGroupKey(sw),
+        functionName: sw.kind === "pir" ? displayPirFunctionName(sw) : displayFunctionName(sw),
+        condition: sw.condition.trim(),
+        kind: sw.kind,
+        source: sw,
+        pirLabels,
+      };
+    })
+    .sort((a, b) => {
+      if (a.kind === "pir" && b.kind !== "pir") return 1;
+      if (a.kind !== "pir" && b.kind === "pir") return -1;
+      const switchCompare = `${a.switchNumber} ${a.switchName}`.localeCompare(
+        `${b.switchNumber} ${b.switchName}`,
+        "en",
+        { numeric: true },
+      );
+      if (switchCompare !== 0) return switchCompare;
+      const buttonCompare = a.button.localeCompare(b.button, "en", { numeric: true });
+      if (buttonCompare !== 0) return buttonCompare;
+      return (a.sourceOrder ?? 0) - (b.sourceOrder ?? 0);
+    });
+
+  return [...sceneColumns, ...commandColumns, ...switchColumns];
+}
+
+function buildFunctionColumnGroupsFor(columns: readonly FunctionColumn[]): FunctionColumnGroup[] {
+  const groups: FunctionColumnGroup[] = [];
+  for (const col of columns) {
+    const current = groups.find((group) => group.key === col.switchGroupKey);
+    if (current) {
+      current.columns.push(col);
+      continue;
+    }
+    groups.push({
+      key: col.switchGroupKey,
+      label: [col.switchNumber, col.switchName].filter(Boolean).join(" ") || col.switchNumber || col.switchName || "-",
+      kind: col.kind,
+      columns: [col],
+    });
+  }
+  return groups;
+}
+
+function orderFunctionColumnGroupsFor(
+  groups: readonly FunctionColumnGroup[],
+  groupOrder: readonly string[],
+): FunctionColumnGroup[] {
+  const byKey = new Map(groups.map((group) => [group.key, group]));
+  const ordered = groupOrder.map((key) => byKey.get(key)).filter((group): group is FunctionColumnGroup => Boolean(group));
+  const orderedKeys = new Set(ordered.map((group) => group.key));
+  return [...ordered, ...groups.filter((group) => !orderedKeys.has(group.key))];
+}
+
+function hiddenFunctionColumnIdsFor(
+  groups: readonly FunctionColumnGroup[],
+  hiddenGroupKeys: ReadonlySet<string>,
+): Set<string> {
+  const hidden = new Set<string>();
+  for (const group of groups) {
+    if (!hiddenGroupKeys.has(group.key)) continue;
+    for (const col of group.columns) hidden.add(col.id);
+  }
+  return hidden;
+}
+
+function buildExcelHeaderGroupsFor(columns: readonly FunctionColumn[]): CfsExcelHeaderGroups {
+  const switchGroupsWithKeys: Array<CfsExcelHeaderGroups["switchGroups"][number] & { key: string }> = [];
+  for (const col of columns) {
+    const current = switchGroupsWithKeys.at(-1);
+    if (current && current.key === col.switchGroupKey) {
+      current.colSpan += 1;
+    } else {
+      switchGroupsWithKeys.push({
+        key: col.switchGroupKey,
+        colSpan: 1,
+        switchNumber: col.switchNumber,
+        switchName: col.switchName,
+        kind: col.kind,
+      });
+    }
+  }
+  const switchGroups = switchGroupsWithKeys.map(({ colSpan, switchNumber, switchName, kind }) => ({
+    colSpan,
+    switchNumber,
+    switchName,
+    kind,
+  }));
+
+  const buttonGroups: Array<CfsExcelHeaderGroups["buttonGroups"][number]> = [];
+  for (const col of columns) {
+    const key = `${col.switchGroupKey}\u0000${col.button.trim() || "-"}`;
+    const current = buttonGroups.at(-1);
+    if (current && current.key === key) {
+      current.colSpan += 1;
+    } else {
+      buttonGroups.push({
+        key,
+        colSpan: 1,
+        button: col.button,
+        kind: col.kind,
+        pirLabels: col.pirLabels,
+      });
+    }
+  }
+
+  const functionNameGroupsWithKeys: Array<{ key: string; colSpan: number; functionName: string }> = [];
+  for (const col of columns) {
+    const key = `${col.switchGroupKey}\u0000${col.button.trim() || "-"}\u0000${col.functionName.trim() || "-"}\u0000${(col.pirLabels ?? []).join("|")}`;
+    const current = functionNameGroupsWithKeys.at(-1);
+    if (current && current.key === key) {
+      current.colSpan += 1;
+    } else {
+      functionNameGroupsWithKeys.push({
+        key,
+        colSpan: 1,
+        functionName: col.functionName,
+      });
+    }
+  }
+  const functionNameGroups = functionNameGroupsWithKeys.map(({ colSpan, functionName }) => ({ colSpan, functionName }));
+
+  const conditionGroupsWithKeys: Array<{ key: string; colSpan: number; condition: string; cols: FunctionColumn[] }> = [];
+  for (const col of columns) {
+    const key = `${col.switchGroupKey}\u0000${col.button.trim() || "-"}\u0000${col.functionName.trim() || "-"}\u0000${(col.pirLabels ?? []).join("|")}\u0000${col.condition.trim() || "-"}`;
+    const current = conditionGroupsWithKeys.at(-1);
+    if (current && current.key === key) {
+      current.colSpan += 1;
+      current.cols.push(col);
+    } else {
+      conditionGroupsWithKeys.push({
+        key,
+        colSpan: 1,
+        condition: col.condition,
+        cols: [col],
+      });
+    }
+  }
+  const conditionGroups = conditionGroupsWithKeys.map(({ colSpan, condition, cols }) => ({ colSpan, condition, cols }));
+
+  return { switchGroups, buttonGroups, functionNameGroups, conditionGroups };
+}
+
+function buildDaliGroupMergeInfoFor(rows: readonly CfsZoneRow[]): Map<string, MergeInfo> {
+  const map = new Map<string, MergeInfo>();
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (!row.isDali) {
+      map.set(row.id, { isFirst: true, rowSpan: 1 });
+      continue;
+    }
+    const key = `${row.device}\u0000${row.deviceNum}\u0000${row.group || ""}`;
+    const prev = rows[index - 1];
+    const prevKey = prev?.isDali ? `${prev.device}\u0000${prev.deviceNum}\u0000${prev.group || ""}` : "";
+    if (index > 0 && prevKey === key) {
+      map.set(row.id, { isFirst: false, rowSpan: 0 });
+      continue;
+    }
+    let rowSpan = 1;
+    for (let nextIndex = index + 1; nextIndex < rows.length; nextIndex += 1) {
+      const next = rows[nextIndex];
+      const nextKey = next.isDali ? `${next.device}\u0000${next.deviceNum}\u0000${next.group || ""}` : "";
+      if (nextKey !== key) break;
+      rowSpan += 1;
+    }
+    map.set(row.id, { isFirst: true, rowSpan });
+  }
+  return map;
+}
+
+function buildBacklightMergeInfoFor(rows: readonly CfsZoneRow[]): Map<string, MergeInfo> {
+  const map = new Map<string, MergeInfo>();
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (!row.isBacklight) {
+      map.set(row.id, { isFirst: true, rowSpan: 1 });
+      continue;
+    }
+    const prev = rows[index - 1];
+    if (index > 0 && prev?.isBacklight) {
+      map.set(row.id, { isFirst: false, rowSpan: 0 });
+      continue;
+    }
+    let rowSpan = 1;
+    for (let nextIndex = index + 1; nextIndex < rows.length; nextIndex += 1) {
+      if (!rows[nextIndex].isBacklight) break;
+      rowSpan += 1;
+    }
+    map.set(row.id, { isFirst: true, rowSpan });
+  }
+  return map;
+}
+
+function buildExcelMergeInfoFor(rows: readonly CfsZoneRow[], numberMode: "designer" | "internal"): CfsExcelSheetModel["mergeInfo"] {
+  return {
+    device: buildMergeInfo(rows, (row) => `${row.device}\u0000${row.deviceNum}`),
+    dimming: buildMergeInfo(rows, (row) => `${row.device}\u0000${row.deviceNum}\u0000${rowDimmingValues(row).join("|")}`),
+    designer: buildMergeInfo(rows, (row) => `${row.device}\u0000${row.deviceNum}\u0000${rowNumberValues(row, numberMode).join("|")}`),
+    zone: buildMergeInfo(rows, (row) => `${row.device}\u0000${row.deviceNum}\u0000${row.group}\u0000${rowZoneValues(row).join("|")}`),
+    daliGroup: buildDaliGroupMergeInfoFor(rows),
+    backlight: buildBacklightMergeInfoFor(rows),
+  };
+}
+
+function buildBacklightConditionNameMap(roomType: Pick<RoomType, "backlightLevels" | "switches">): Map<string, string> {
+  const names = new Map<string, string>();
+  for (const sw of roomType.switches) {
+    if (sw.kind !== "lutronPd") continue;
+    for (const level of normalizeBacklightLevels(sw.backlightLevels)) {
+      names.set(level.key, level.name);
+      names.set(level.name, level.name);
+    }
+  }
+  for (const level of normalizeBacklightLevels(roomType.backlightLevels)) {
+    names.set(level.key, level.name);
+    names.set(level.name, level.name);
+  }
+  names.set("masterOn", names.get("masterOn") || "Bright");
+  names.set("Master On", names.get("masterOn") || "Bright");
+  return names;
+}
+
+function displayBacklightConditionFromMap(
+  namesByValue: ReadonlyMap<string, string>,
+  value: string,
+  source?: SwitchEntry,
+): string {
+  const trimmed = value.trim();
+  const normalized = normalizeBacklightCondition(value, source);
+  if (!normalized) return "";
+  return namesByValue.get(trimmed) ?? namesByValue.get(normalized) ?? normalized;
+}
+
 export default function CfsView({
   projectName,
+  projectId = "",
   roomType,
   circuits,
+  projectRoomTypeEntries,
   devices,
   locations,
   onScenesChange,
@@ -591,9 +1062,34 @@ export default function CfsView({
   const [showFfeHighlight, setShowFfeHighlight] = useState(true);
   const [showEnergySavingHighlight, setShowEnergySavingHighlight] = useState(true);
   const [showCciRows, setShowCciRows] = useState(false);
+  const [isProjectExcelExporting, setIsProjectExcelExporting] = useState(false);
+  const [showExcelExportMenu, setShowExcelExportMenu] = useState(false);
+  const excelExportMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showExcelExportMenu) return;
+    function handlePointerDown(event: MouseEvent): void {
+      if (!excelExportMenuRef.current?.contains(event.target as Node)) {
+        setShowExcelExportMenu(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") setShowExcelExportMenu(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showExcelExportMenu]);
   const [hiddenDeviceKeys, setHiddenDeviceKeys] = useState<Set<string>>(new Set());
   const [hiddenBaseColumns, setHiddenBaseColumns] = useState<Set<BaseColumnKey>>(new Set());
   const [hiddenFunctionColumns, setHiddenFunctionColumns] = useState<Set<string>>(new Set());
+  // Persisted group-level hide state, keyed by the normalized group key so a
+  // group hidden in one room type stays hidden in every room type that shares
+  // the same switch number + name (or scene/command category).
+  const [hiddenFunctionColumnGroupKeys, setHiddenFunctionColumnGroupKeys] = useState<Set<string>>(new Set());
   const [baseColumnOrder, setBaseColumnOrder] = useState<BaseColumnKey[]>([]);
   const [functionColumnGroupOrder, setFunctionColumnGroupOrder] = useState<string[]>([]);
   const [viewerCfsRowDisplayByRoom, setViewerCfsRowDisplayByRoom] = useState<Record<string, CfsRowDisplaySettings>>({});
@@ -621,6 +1117,13 @@ export default function CfsView({
   const [repairedLinkTargetIds, setRepairedLinkTargetIds] = useState<Set<string>>(new Set());
   const [lastHvacRepairSummary, setLastHvacRepairSummary] = useState<{ count: number; skipped: number } | null>(null);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
+  // Guards the save effect so it never writes another project's state into
+  // byProject[projectId] while a project switch is still loading.
+  const loadedPrefsProjectIdRef = useRef<string | null>(null);
+  // Marks which project/room-type pair already had its hidden group keys
+  // expanded into per-column state, so data edits inside a room type never
+  // clobber session-only per-column hides.
+  const appliedHiddenFunctionGroupsKeyRef = useRef("");
   const tableRef = useRef<HTMLTableElement | null>(null);
   const cfsMatrixScrollRef = useRef<HTMLDivElement | null>(null);
   const inspectionPopoverRef = useRef<HTMLDivElement | null>(null);
@@ -937,51 +1440,6 @@ export default function CfsView({
     return Array.from(map.entries()).map(([id, label]) => ({ id, label }));
   }, [allZoneRowsForFilters]);
 
-  const pirGroupNumbers = useMemo(() => {
-    const map = new Map<string, number>();
-    let index = 1;
-    for (const sw of roomType.switches) {
-      if (sw.kind !== "pir") continue;
-      const key = switchGroupId(sw);
-      if (map.has(key)) continue;
-      map.set(key, index);
-      index += 1;
-    }
-    return map;
-  }, [roomType.switches]);
-
-  const switchByCommandReference = useMemo(() => {
-    const map = new Map<string, SwitchEntry>();
-    for (const sw of roomType.switches) {
-      if (sw.kind === "command" || sw.kind === "qsm") continue;
-      const groupId = switchGroupId(sw);
-      if (!map.has(groupId)) map.set(groupId, sw);
-      const number = sw.switchNumber.trim();
-      if (number && !map.has(number)) map.set(number, sw);
-      if (sw.kind === "pir") {
-        const pirIndex = pirGroupNumbers.get(groupId);
-        if (pirIndex) {
-          const reference = commandPirReference(pirIndex);
-          if (!map.has(reference)) map.set(reference, sw);
-          const compactReference = reference.replace(/\s+/g, "");
-          if (!map.has(compactReference)) map.set(compactReference, sw);
-        }
-      }
-    }
-    return map;
-  }, [pirGroupNumbers, roomType.switches]);
-
-  const switchRowsByNumber = useMemo(() => {
-    const map = new Map<string, SwitchEntry[]>();
-    for (const sw of roomType.switches) {
-      if (sw.kind === "command" || sw.kind === "qsm") continue;
-      const key = sw.switchNumber.trim();
-      if (!key) continue;
-      map.set(key, [...(map.get(key) ?? []), sw]);
-    }
-    return map;
-  }, [roomType.switches]);
-
   // Palette order follows the room type's Area Scene registration order so
   // every distinct scene name gets a distinct color (same name = same color
   // across areas). Hash fallback only covers names not registered here.
@@ -997,132 +1455,27 @@ export default function CfsView({
     return map;
   }, [roomType.scenes]);
 
-  const functionColumns = useMemo<FunctionColumn[]>(() => {
-    const sceneColumns: FunctionColumn[] = sortRoomScenesByGroup(roomType.roomScenes)
-      .filter((scene) =>
-        scene.sceneType.trim() ||
-        scene.triggerCondition.trim() ||
-        scene.settings.length > 0 ||
-        (scene.areaSceneSelections ?? []).some((selection) => selection.sceneId.trim() !== ""),
-      )
-      .map((scene) => {
-        const groupKey = normalizedColumnGroupKey("scene", "Scene");
-        return {
-          id: `scene:${scene.id}`,
-          category: "scene",
-          switchGroupKey: groupKey,
-          buttonKey: `${groupKey}\u0000${scene.phase}`,
-          switchNumber: "Scene",
-          switchName: "",
-          button: roomSceneButtonLabel(scene),
-          functionName: isPmsScene(scene) ? roomScenePmsFunctionName(scene) : roomSceneFunctionName(scene),
-          condition: roomSceneConditionLabel(scene),
-          kind: "scene",
-          roomScene: scene,
-        };
-      });
-
-    const commandColumns: FunctionColumn[] = roomType.switches
-      .filter((sw) => sw.kind === "command" && Boolean(sw.switchName.trim() || sw.buttonFunction.trim()))
-      .map((sw) => {
-        const groupKey = normalizedColumnGroupKey("command", "Command");
-        const commandReference = sw.switchNumber.trim();
-        const referencedRows = switchRowsByNumber.get(commandReference) ?? [];
-        const referencedSwitch = referencedRows[0] ?? switchByCommandReference.get(commandReference);
-        const switchNumber = referencedSwitch ? displaySwitchNumber(referencedSwitch) : sw.switchNumber.trim() || "-";
-        const switchName = referencedSwitch ? displaySwitchName(referencedSwitch) : "-";
-        const buttonLabel =
-          referencedSwitch?.kind === "pir"
-            ? parsePirSelections(sw.buttonLabel)
-                .map((value) => pirInstanceValueLabel(value, locations, parsePirAreaNumbers(referencedSwitch.allocation)))
-                .filter(Boolean)
-                .join(" / ")
-            : sw.buttonLabel.trim();
-        return {
-          id: sw.id,
-          category: "command" as const,
-          switchGroupKey: groupKey,
-          buttonKey: `${groupKey}\u0000${switchNumber}\u0000${switchName}`,
-          switchNumber: "Command",
-          switchName: "",
-          button: `${switchNumber} / ${switchName}`,
-          functionName: sw.switchName.trim() || displayFunctionName(sw),
-          condition: formatButtonCondition(buttonLabel, sw.condition),
-          kind: "command",
-          source: sw,
-        };
-      });
-
-    const switchColumns: FunctionColumn[] = roomType.switches
-      .filter((sw) => sw.kind !== "command" && sw.kind !== "qsm" && Boolean(sw.switchNumber.trim() || sw.switchName.trim()))
-      .map((sw, sourceOrder) => {
-        const pirLogicNo = pirGroupNumbers.get(switchGroupId(sw)) ?? 1;
-        const resolvedNumber = sw.kind === "pir" ? "PIR" : displaySwitchNumber(sw);
-        const resolvedName = sw.kind === "pir" ? "" : displaySwitchName(sw);
-        const groupKey = normalizedSwitchHeaderKey(sw, resolvedNumber, resolvedName);
-        const pirButton = String(pirLogicNo);
-        const pirLabels = sw.kind === "pir" ? pirHeaderLabels(sw, locations) : undefined;
-        return {
-          id: sw.id,
-          category: "switch" as const,
-          sourceOrder,
-          switchGroupKey: groupKey,
-          buttonKey: `${groupKey}\u0000${sw.kind === "pir" ? pirButton : buttonGroupKey(sw)}`,
-          switchNumber: resolvedNumber,
-          switchName: resolvedName,
-          button: sw.kind === "pir" ? pirButton : buttonGroupKey(sw),
-          functionName: sw.kind === "pir" ? displayPirFunctionName(sw) : displayFunctionName(sw),
-          condition: sw.condition.trim(),
-          kind: sw.kind,
-          source: sw,
-          pirLabels,
-        };
-      })
-      .sort((a, b) => {
-        if (a.kind === "pir" && b.kind !== "pir") return 1;
-        if (a.kind !== "pir" && b.kind === "pir") return -1;
-        const switchCompare = `${a.switchNumber} ${a.switchName}`.localeCompare(
-          `${b.switchNumber} ${b.switchName}`,
-          "en",
-          { numeric: true },
-        );
-        if (switchCompare !== 0) return switchCompare;
-        const buttonCompare = a.button.localeCompare(b.button, "en", { numeric: true });
-        if (buttonCompare !== 0) return buttonCompare;
-        return (a.sourceOrder ?? 0) - (b.sourceOrder ?? 0);
-      });
-
-    return [...sceneColumns, ...commandColumns, ...switchColumns];
-  }, [locations, pirGroupNumbers, roomType.roomScenes, roomType.switches, switchByCommandReference, switchRowsByNumber]);
+  const functionColumns = useMemo<FunctionColumn[]>(
+    () => buildFunctionColumnsForRoomType(roomType, locations),
+    [locations, roomType],
+  );
 
   useEffect(() => {
+    loadedPrefsProjectIdRef.current = null;
+    appliedHiddenFunctionGroupsKeyRef.current = "";
     try {
-      const raw = window.localStorage.getItem(CFS_PREFS_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as {
-        sortMode?: CfsSortMode;
-        sortByLocation?: boolean;
-        numberMode?: "designer" | "internal";
-        hideReservedRows?: boolean;
-        showIndividualOverrideHighlight?: boolean;
-        showAreaColorHighlight?: boolean;
-        showAreaSceneNames?: boolean;
-        showAreaSceneHighlight?: boolean;
-        showFfeHighlight?: boolean;
-        showEnergySavingHighlight?: boolean;
-        showInspectionMarkHighlight?: boolean;
-        showCciRows?: boolean;
-        selectedAreaIds?: string[];
-        hiddenDeviceKeys?: string[];
-        hiddenBaseColumns?: BaseColumnKey[];
-        hiddenFunctionColumns?: string[];
-        baseColumnOrder?: BaseColumnKey[];
-        functionColumnGroupOrder?: string[];
-        viewerCfsRowDisplayByRoom?: Record<string, unknown>;
-        showBacklightColorHighlight?: boolean;
-      };
+      const stored = readStoredCfsPrefsV2();
+      // First open of a project (or an empty projectId) falls back to the
+      // shared seed: v2 global first, then the legacy v1 blob.
+      const seed = stored?.global ?? readLegacyCfsPrefsSeed();
+      const projectPrefs = projectId ? stored?.byProject?.[projectId] : undefined;
+      const parsed: CfsStoredProjectPrefs = projectPrefs ?? seed ?? {};
+      // Every state is reset explicitly so switching projects never carries
+      // the previous project's display state over.
       if (parsed.numberMode === "designer" || parsed.numberMode === "internal") {
         setNumberMode(parsed.numberMode);
+      } else {
+        setNumberMode("designer");
       }
       if (
         parsed.sortMode === "device" ||
@@ -1133,6 +1486,8 @@ export default function CfsView({
         setSortMode(parsed.sortMode);
       } else if (parsed.sortByLocation) {
         setSortMode("area");
+      } else {
+        setSortMode("device");
       }
       setHideReservedRows(Boolean(parsed.hideReservedRows));
       setShowIndividualOverrideHighlight(parsed.showIndividualOverrideHighlight !== false);
@@ -1143,12 +1498,17 @@ export default function CfsView({
       setShowEnergySavingHighlight(parsed.showEnergySavingHighlight !== false);
       setShowInspectionMarkHighlight(parsed.showInspectionMarkHighlight !== false);
       setShowCciRows(parsed.showCciRows === true);
-      if (Array.isArray(parsed.selectedAreaIds)) setSelectedAreaIds(new Set(parsed.selectedAreaIds));
-      if (Array.isArray(parsed.hiddenDeviceKeys)) setHiddenDeviceKeys(new Set(parsed.hiddenDeviceKeys));
-      if (Array.isArray(parsed.hiddenBaseColumns)) setHiddenBaseColumns(new Set(parsed.hiddenBaseColumns));
-      if (Array.isArray(parsed.hiddenFunctionColumns)) setHiddenFunctionColumns(new Set(parsed.hiddenFunctionColumns));
-      if (Array.isArray(parsed.baseColumnOrder)) setBaseColumnOrder(parsed.baseColumnOrder);
-      if (Array.isArray(parsed.functionColumnGroupOrder)) setFunctionColumnGroupOrder(parsed.functionColumnGroupOrder);
+      setSelectedAreaIds(new Set(Array.isArray(parsed.selectedAreaIds) ? parsed.selectedAreaIds : []));
+      setHiddenDeviceKeys(new Set(Array.isArray(parsed.hiddenDeviceKeys) ? parsed.hiddenDeviceKeys : []));
+      setHiddenBaseColumns(new Set(Array.isArray(parsed.hiddenBaseColumns) ? parsed.hiddenBaseColumns : []));
+      // Per-column ids are session-only; the persisted group keys are
+      // expanded into column ids once the current room type's groups exist.
+      setHiddenFunctionColumns(new Set());
+      setHiddenFunctionColumnGroupKeys(
+        new Set(Array.isArray(parsed.hiddenFunctionColumnGroups) ? parsed.hiddenFunctionColumnGroups : []),
+      );
+      setBaseColumnOrder(Array.isArray(parsed.baseColumnOrder) ? parsed.baseColumnOrder : []);
+      setFunctionColumnGroupOrder(Array.isArray(parsed.functionColumnGroupOrder) ? parsed.functionColumnGroupOrder : []);
       setShowBacklightColorHighlight(parsed.showBacklightColorHighlight !== false);
       if (
         parsed.viewerCfsRowDisplayByRoom &&
@@ -1160,52 +1520,70 @@ export default function CfsView({
           next[key] = normalizeCfsRowDisplaySettings(value);
         }
         setViewerCfsRowDisplayByRoom(next);
+      } else {
+        setViewerCfsRowDisplayByRoom({});
       }
     } catch {
       // Ignore invalid saved UI preferences.
     } finally {
+      loadedPrefsProjectIdRef.current = projectId;
       setPrefsLoaded(true);
     }
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
-    if (!prefsLoaded) return;
+    if (!prefsLoaded || loadedPrefsProjectIdRef.current !== projectId) return;
     try {
-      window.localStorage.setItem(
-        CFS_PREFS_KEY,
-        JSON.stringify({
-          sortMode,
-          numberMode,
-          hideReservedRows,
-          showIndividualOverrideHighlight,
-          showAreaColorHighlight,
-          showAreaSceneNames,
-          showAreaSceneHighlight,
-          showFfeHighlight,
-          showEnergySavingHighlight,
-          showInspectionMarkHighlight,
-          showCciRows,
-          selectedAreaIds: Array.from(selectedAreaIds),
-          hiddenDeviceKeys: Array.from(hiddenDeviceKeys),
-          hiddenBaseColumns: Array.from(hiddenBaseColumns),
-          hiddenFunctionColumns: Array.from(hiddenFunctionColumns),
-          baseColumnOrder,
-          functionColumnGroupOrder,
-          viewerCfsRowDisplayByRoom,
-          showBacklightColorHighlight,
-        }),
-      );
+      const seedPrefs: CfsStoredSeedPrefs = {
+        sortMode,
+        numberMode,
+        hideReservedRows,
+        showIndividualOverrideHighlight,
+        showAreaColorHighlight,
+        showAreaSceneNames,
+        showAreaSceneHighlight,
+        showFfeHighlight,
+        showEnergySavingHighlight,
+        showInspectionMarkHighlight,
+        showBacklightColorHighlight,
+        showCciRows,
+        hiddenBaseColumns: Array.from(hiddenBaseColumns),
+        baseColumnOrder,
+        functionColumnGroupOrder,
+      };
+      // Read-modify-write keeps other projects' entries intact.
+      const stored = readStoredCfsPrefsV2();
+      const next: CfsStoredPrefsV2 = {
+        // global always tracks the latest used settings as the next seed.
+        global: seedPrefs,
+        byProject: {
+          ...(stored?.byProject ?? {}),
+          ...(projectId
+            ? {
+                [projectId]: {
+                  ...seedPrefs,
+                  selectedAreaIds: Array.from(selectedAreaIds),
+                  hiddenDeviceKeys: Array.from(hiddenDeviceKeys),
+                  hiddenFunctionColumnGroups: Array.from(hiddenFunctionColumnGroupKeys),
+                  viewerCfsRowDisplayByRoom,
+                },
+              }
+            : {}),
+        },
+      };
+      window.localStorage.setItem(CFS_PREFS_KEY, JSON.stringify(next));
     } catch {
       // Non-critical UI preference save.
     }
   }, [
+    projectId,
     showBacklightColorHighlight,
     baseColumnOrder,
     functionColumnGroupOrder,
     hiddenDeviceKeys,
     hideReservedRows,
     hiddenBaseColumns,
-    hiddenFunctionColumns,
+    hiddenFunctionColumnGroupKeys,
     numberMode,
     prefsLoaded,
     selectedAreaIds,
@@ -1320,37 +1698,39 @@ export default function CfsView({
   }, [baseColumnOrder]);
   const visibleBaseColumns = orderedBaseColumns.filter((col) => !hiddenBaseColumns.has(col.key));
   const visibleBaseColumnWidth = visibleBaseColumns.reduce((sum, col) => sum + col.minWidth, 0);
-  const functionColumnGroups = useMemo<FunctionColumnGroup[]>(() => {
-    const groups: FunctionColumnGroup[] = [];
-    for (const col of functionColumns) {
-      const current = groups.find((group) => group.key === col.switchGroupKey);
-      if (current) {
-        current.columns.push(col);
-        continue;
-      }
-      groups.push({
-        key: col.switchGroupKey,
-        label: [col.switchNumber, col.switchName].filter(Boolean).join(" ") || col.switchNumber || col.switchName || "-",
-        kind: col.kind,
-        columns: [col],
-      });
-    }
-    return groups;
-  }, [functionColumns]);
-  const orderedFunctionColumnGroups = useMemo(() => {
-    const byKey = new Map(functionColumnGroups.map((group) => [group.key, group]));
-    const ordered = functionColumnGroupOrder
-      .map((key) => byKey.get(key))
-      .filter((group): group is FunctionColumnGroup => Boolean(group));
-    const orderedKeys = new Set(ordered.map((group) => group.key));
-    return [...ordered, ...functionColumnGroups.filter((group) => !orderedKeys.has(group.key))];
-  }, [functionColumnGroupOrder, functionColumnGroups]);
+  const functionColumnGroups = useMemo<FunctionColumnGroup[]>(
+    () => buildFunctionColumnGroupsFor(functionColumns),
+    [functionColumns],
+  );
+  const orderedFunctionColumnGroups = useMemo(
+    () => orderFunctionColumnGroupsFor(functionColumnGroups, functionColumnGroupOrder),
+    [functionColumnGroupOrder, functionColumnGroups],
+  );
   const orderedFunctionColumns = useMemo(
     () => orderedFunctionColumnGroups.flatMap((group) => group.columns),
     [orderedFunctionColumnGroups],
   );
   const visibleFunctionColumns = orderedFunctionColumns.filter((col) => !hiddenFunctionColumns.has(col.id));
   const hiddenFunctionColumnList = orderedFunctionColumns.filter((col) => hiddenFunctionColumns.has(col.id));
+
+  // Expands the persisted group keys into per-column hidden state when the
+  // project prefs finish loading or the room type changes. Groups whose key
+  // does not exist in the current room type are left untouched in storage but
+  // apply nothing here. Session-only per-column hides reset at this boundary.
+  useEffect(() => {
+    if (!prefsLoaded || loadedPrefsProjectIdRef.current !== projectId) return;
+    const applyKey = `${projectId} ${roomType.id}`;
+    if (appliedHiddenFunctionGroupsKeyRef.current === applyKey) return;
+    appliedHiddenFunctionGroupsKeyRef.current = applyKey;
+    setHiddenFunctionColumns(() => {
+      const next = new Set<string>();
+      for (const group of functionColumnGroups) {
+        if (!hiddenFunctionColumnGroupKeys.has(group.key)) continue;
+        for (const col of group.columns) next.add(col.id);
+      }
+      return next;
+    });
+  }, [prefsLoaded, projectId, roomType.id, functionColumnGroups, hiddenFunctionColumnGroupKeys]);
   const displaySortedRows =
     sortMode === "programmingName"
       ? zoneRows
@@ -1912,13 +2292,34 @@ export default function CfsView({
     commitCfsRowDisplay({ ...activeCfsRowDisplay, order });
   }
 
-  function toggleFunctionColumn(id: string): void {
-    setHiddenFunctionColumns((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+  // Single entry point for user-driven hide changes: updates the per-column
+  // set and keeps the persisted group keys in sync for the current room
+  // type's groups only, so keys owned by other room types survive.
+  function commitHiddenFunctionColumns(next: Set<string>): void {
+    setHiddenFunctionColumns(next);
+    setHiddenFunctionColumnGroupKeys((prevKeys) => {
+      let changed = false;
+      const nextKeys = new Set(prevKeys);
+      for (const group of functionColumnGroups) {
+        const allHidden = group.columns.length > 0 && group.columns.every((col) => next.has(col.id));
+        if (allHidden) {
+          if (!nextKeys.has(group.key)) {
+            nextKeys.add(group.key);
+            changed = true;
+          }
+        } else if (nextKeys.delete(group.key)) {
+          changed = true;
+        }
+      }
+      return changed ? nextKeys : prevKeys;
     });
+  }
+
+  function toggleFunctionColumn(id: string): void {
+    const next = new Set(hiddenFunctionColumns);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    commitHiddenFunctionColumns(next);
   }
 
   function functionColumnDetailLabel(col: FunctionColumn): string {
@@ -1929,15 +2330,13 @@ export default function CfsView({
   }
 
   function toggleFunctionColumnGroup(group: FunctionColumnGroup): void {
-    setHiddenFunctionColumns((prev) => {
-      const next = new Set(prev);
-      const allVisible = group.columns.every((col) => !next.has(col.id));
-      for (const col of group.columns) {
-        if (allVisible) next.add(col.id);
-        else next.delete(col.id);
-      }
-      return next;
-    });
+    const next = new Set(hiddenFunctionColumns);
+    const allVisible = group.columns.every((col) => !next.has(col.id));
+    for (const col of group.columns) {
+      if (allVisible) next.add(col.id);
+      else next.delete(col.id);
+    }
+    commitHiddenFunctionColumns(next);
   }
 
   function toggleFunctionColumnGroupCollapsed(key: string): void {
@@ -2084,416 +2483,505 @@ export default function CfsView({
     };
   }, [moveFunctionColumnGroup]);
 
-  async function exportVisibleCfsToExcel(): Promise<void> {
-    const ExcelJSModule = await import("exceljs");
-    const ExcelJS = ExcelJSModule.default ?? ExcelJSModule;
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet("CFS View");
+  const projectCfsExportEntries = useMemo<CfsProjectExcelRoomTypeEntry[]>(() => {
+    const sourceEntries =
+      projectRoomTypeEntries && projectRoomTypeEntries.length > 0 ? projectRoomTypeEntries : [{ roomType, circuits }];
+    const seen = new Set<string>();
+    const entries: CfsProjectExcelRoomTypeEntry[] = [];
+    for (const entry of sourceEntries) {
+      const key = entry.roomType.id || `${entry.roomType.name}\u0000${entries.length}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      entries.push(entry);
+    }
+    return entries.length > 0 ? entries : [{ roomType, circuits }];
+  }, [circuits, projectRoomTypeEntries, roomType]);
 
-    type ExcelFill = { type: "pattern"; pattern: "solid"; fgColor: { argb: string } };
-    type ExcelCellModel = {
-      row: number;
-      col: number;
-      value: string | number;
-      rowSpan?: number;
-      colSpan?: number;
-      fill?: ExcelFill;
-      bold?: boolean;
-      fontColor?: string;
-      horizontal?: "left" | "center";
+  function buildCurrentCfsExcelSheetModel(): CfsExcelSheetModel {
+    return {
+      visibleBaseColumns,
+      visibleFunctionColumns,
+      displayedRows,
+      headerGroups: {
+        switchGroups: switchHeaderGroups,
+        buttonGroups: buttonHeaderGroups,
+        functionNameGroups: functionNameHeaderGroups,
+        conditionGroups: conditionHeaderGroups,
+      },
+      mergeInfo: {
+        device: deviceMergeInfo,
+        dimming: dimmingMergeInfo,
+        designer: designerMergeInfo,
+        zone: zoneMergeInfo,
+        daliGroup: daliGroupMergeInfo,
+        backlight: backlightMergeInfo,
+      },
+      highlights: {
+        ffe: showFfeHighlight,
+        energySaving: showEnergySavingHighlight,
+        areaScene: showAreaSceneHighlight,
+        individualOverride: showIndividualOverrideHighlight,
+        inspectionMark: showInspectionMarkHighlight,
+      },
+      expandedPirHeaderKeys,
+      resolvers: {
+        baseValues,
+        functionValues,
+        baseColumnLabel,
+        hasChangedBaseCell,
+        hasChangedFunctionCell,
+        hasAreaSceneValueCell,
+        hasSceneDifferentOverride,
+        hasInspectionMarkForCell,
+        isPriorityTriggerColumn,
+      },
     };
+  }
 
-    const headerFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFEEF3F5" } };
-    // Border edges: thin matches the faint on-screen cell border; heavy matches
-    // the strong .cfs-switch-group-start rule (2px slate) used between switches.
-    const thinEdge = { style: "thin" as const, color: { argb: "FFD7E0E5" } };
-    const heavyEdge = { style: "medium" as const, color: { argb: "FF334155" } };
+  function buildProjectCfsExcelSheetModel(entry: CfsProjectExcelRoomTypeEntry): CfsExcelSheetModel {
+    const targetRoomType = entry.roomType;
+    const targetCircuits = entry.circuits;
+    const isActiveEntry = targetRoomType.id === roomType.id;
+    const targetSharedCfsRowDisplay = normalizeCfsRowDisplaySettings(targetRoomType.cfsRowDisplay);
+    const targetCfsRowDisplay = isActiveEntry
+      ? activeCfsRowDisplay
+      : canEdit
+        ? targetSharedCfsRowDisplay
+        : normalizeCfsRowDisplaySettings(
+            viewerCfsRowDisplayByRoom[`${projectName}\u0000${targetRoomType.id}`] ?? targetSharedCfsRowDisplay,
+          );
+    const targetAreaAddressByAssignmentCircuit = buildAreaAddressAssignmentMap(
+      targetRoomType.deviceAssignments,
+      targetCircuits,
+      locations,
+    );
+    const targetPalladiomBySceneTargets = new Map<string, SwitchEntry>();
+    for (const sw of targetRoomType.switches) {
+      if (sw.kind !== "lutronPd") continue;
+      if (!isPalladiomBacklightTarget(sw)) continue;
+      const key = switchGroupId(sw);
+      if (!targetPalladiomBySceneTargets.has(key)) targetPalladiomBySceneTargets.set(key, sw);
+    }
+    const targetRows = buildCfsZoneRows({
+      roomType: targetRoomType,
+      circuits: targetCircuits,
+      locations,
+      locationById,
+      areaAddressByAssignmentCircuit: targetAreaAddressByAssignmentCircuit,
+      palladiomBySceneTargets: targetPalladiomBySceneTargets,
+      selectedAreaIds: new Set<string>(),
+      hiddenDeviceKeys: new Set<string>(),
+      showCciRows,
+      sortMode,
+      rowKindOrder: targetCfsRowDisplay.order,
+      hiddenRowKinds: new Set(targetCfsRowDisplay.hidden),
+    });
+    const targetSortedRows =
+      sortMode === "programmingName"
+        ? targetRows
+            .map((row, index) => ({
+              row,
+              index,
+              label: rowProgrammingNameValuesForEntry(row).find((value) => value.trim()) ?? "",
+            }))
+            .sort((a, b) => {
+              const aMissing = !a.label;
+              const bMissing = !b.label;
+              if (aMissing !== bMissing) return aMissing ? 1 : -1;
+              const labelCompare = a.label.localeCompare(b.label, "en", { numeric: true });
+              if (labelCompare !== 0) return labelCompare;
+              return a.index - b.index;
+            })
+            .map((item) => item.row)
+        : targetRows;
+    const targetDisplayedRows = hideReservedRows
+      ? targetSortedRows.filter((row) => !isReservedCfsRow(row))
+      : targetSortedRows;
+    const targetFunctionColumns = buildFunctionColumnsForRoomType(targetRoomType, locations);
+    const targetFunctionColumnGroups = buildFunctionColumnGroupsFor(targetFunctionColumns);
+    const orderedTargetFunctionColumnGroups = orderFunctionColumnGroupsFor(
+      targetFunctionColumnGroups,
+      functionColumnGroupOrder,
+    );
+    const hiddenTargetFunctionColumns = hiddenFunctionColumnIdsFor(
+      targetFunctionColumnGroups,
+      hiddenFunctionColumnGroupKeys,
+    );
+    const targetVisibleFunctionColumns = orderedTargetFunctionColumnGroups
+      .flatMap((group) => group.columns)
+      .filter((col) => !hiddenTargetFunctionColumns.has(col.id));
+    const targetScenesById = new Map(targetRoomType.scenes.map((scene) => [scene.id, scene]));
+    const targetBacklightConditionNameByValue = buildBacklightConditionNameMap(targetRoomType);
+    const targetInspectionMarksByKey = new Map(
+      (targetRoomType.inspectionMarks ?? []).map((mark) => [inspectionDraftKey(mark.sourceType, mark.sourceId, mark.targetId), mark]),
+    );
 
-    function stackedText(values: string[], placeholder = "-"): string {
-      const safeValues = values.length > 0 ? values : [placeholder];
-      return safeValues.map((value) => stripSceneNameLinePrefix(value) || placeholder).join("\n");
+    function rowAreaAddressValuesForEntry(row: CfsZoneRow): string[] {
+      return row.circuits.map((item) => item.areaAddress || "-");
     }
 
-    function splitHeaderText(value: string): string {
-      const parts = value.trim().split(/\s+\/\s+/).map((part) => part.trim()).filter(Boolean);
-      return (parts.length > 0 ? parts : ["-"]).join("\n");
+    function programmingAreaTokenForEntry(item: CfsZoneRow["circuits"][number]): string {
+      const location = locationById.get(item.locationId);
+      return normalizeProgrammingToken(location?.code || item.location || "");
     }
 
-    function pirButtonHeaderExportText(group: { button: string; kind: FunctionColumn["kind"]; pirLabels?: string[]; key: string }): string {
-      if (group.kind !== "pir" || !group.pirLabels) return splitHeaderText(group.button || "-");
-      const labels = group.pirLabels;
-      if (labels.length === 0) return "-";
-      if (labels.length === 1) return splitHeaderText(labels[0]);
-      return expandedPirHeaderKeys.has(group.key)
-        ? labels.map((label) => label.replace(/\s+\/\s+/, " ")).join("\n")
-        : `${labels.length} PIRs`;
+    function isOtherProgrammingLocationForEntry(item: CfsZoneRow["circuits"][number]): boolean {
+      return item.locationId === OTHER_AREA_ID || item.location.trim().toLowerCase() === "other";
     }
 
-    function rowFill(row: CfsZoneRow, isNoColumn = false): ExcelFill | undefined {
-      const ffe = showFfeHighlight && row.circuits.some((item) => item.circuit.ffe);
-      const energy = showEnergySavingHighlight && row.circuits.some((item) => item.circuit.energySaving);
-      if (ffe && energy) {
-        return { type: "pattern", pattern: "solid", fgColor: { argb: "FFDBEAFE" } };
-      }
-      if (ffe) {
-        return { type: "pattern", pattern: "solid", fgColor: { argb: "FFE0F2FE" } };
-      }
-      if (energy) {
-        return { type: "pattern", pattern: "solid", fgColor: { argb: "FFDCFCE7" } };
-      }
-      if (isReservedCfsRow(row) && !isNoColumn) {
-        return { type: "pattern", pattern: "solid", fgColor: { argb: "FFC4C9CF" } };
-      }
-      return undefined;
+    function programmingLocationNumberTokenForEntry(item: CfsZoneRow["circuits"][number]): string {
+      const locationNumber = locationById.get(item.locationId)?.number.trim() ?? "";
+      return isOtherProgrammingLocationForEntry(item) ? locationNumber || "99" : locationNumber;
     }
 
-    function functionHeaderFill(kind: FunctionColumn["kind"]): ExcelFill {
-      if (kind === "contact") {
-        return { type: "pattern", pattern: "solid", fgColor: { argb: "FFBFE9E9" } };
-      }
-      if (kind === "lutronPd") {
-        return { type: "pattern", pattern: "solid", fgColor: { argb: "FFC9D9FF" } };
-      }
-      if (kind === "lutronPico") {
-        return { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFDCA3" } };
-      }
-      if (kind === "pir") {
-        return { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFC8DD" } };
-      }
-      if (kind === "scene") {
-        return { type: "pattern", pattern: "solid", fgColor: { argb: "FFD7F5C8" } };
-      }
-      if (kind === "command") {
-        return { type: "pattern", pattern: "solid", fgColor: { argb: "FFDCC8F5" } };
-      }
-      return headerFill;
+    function programmingAreaTokenForNameForEntry(
+      item: CfsZoneRow["circuits"][number],
+      locationNumber: string,
+    ): string {
+      if (!isOtherProgrammingLocationForEntry(item)) return programmingAreaTokenForEntry(item);
+      return activeProgrammingNameSettings.tokens.includes("locationNumber") ? "" : locationNumber || "99";
     }
 
-    function changedBaseCell(row: CfsZoneRow, key: BaseColumnKey): boolean {
-      return hasChangedBaseCell(row, key);
+    function programmingAddressTokenForEntry(item: CfsZoneRow["circuits"][number]): string {
+      const rawAddress = normalizeProgrammingToken(item.areaAddress);
+      if (!rawAddress) return "";
+      const area = programmingAreaTokenForEntry(item);
+      if (area && rawAddress.toUpperCase().startsWith(area.toUpperCase())) {
+        return rawAddress.slice(area.length);
+      }
+      return rawAddress;
     }
 
-    function bodyBaseCell(row: CfsZoneRow, rowIndex: number, col: BaseColumn, colIndex: number): ExcelCellModel | null {
-      const excelRow = 5 + rowIndex;
-      const excelCol = colIndex + 1;
-      const isChanged = changedBaseCell(row, col.key);
-      const changedFill = isChanged ? { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFFFF3B0" } } : undefined;
-
-      if (col.key === "number") {
-        return {
-          row: excelRow,
-          col: excelCol,
-          value: rowIndex + 1,
-          fill: rowFill(row, true),
-          horizontal: "center",
-        };
+    function deviceProgrammingTokenForEntry(row: CfsZoneRow): string {
+      const device = deviceByModel.get(row.device);
+      const code = normalizeProgrammingToken(device?.programmingCode || device?.abbrev || row.device);
+      const deviceNum = normalizeProgrammingToken(row.deviceNum === "-" ? "" : row.deviceNum);
+      const prefix = `${code}${deviceNum}`;
+      if (row.isDali) {
+        const line = normalizeProgrammingToken(row.daliLine);
+        const group = normalizeProgrammingToken(row.group === "-" ? "" : row.group);
+        const address = normalizeZoneNumber(row.zone === "-" ? "" : row.zone);
+        const route = (/2D/i.test(code) ? [line, group, address] : [group, address])
+          .filter(Boolean)
+          .join("-");
+        return route ? `${prefix}-${route}` : prefix;
       }
+      const zone = normalizeControlAddressToken(row.zone === "-" ? "" : row.zone);
+      return zone ? `${prefix}-${zone}` : prefix;
+    }
 
-      if (row.isBacklight && BACKLIGHT_LOGIC_MERGE_KEYS.includes(col.key)) {
-        const mergeInfo = backlightMergeInfo.get(row.id) ?? { isFirst: true, rowSpan: 1 };
-        if (!mergeInfo.isFirst) return null;
-        const visibleBacklightKeys = BACKLIGHT_LOGIC_MERGE_KEYS.filter((key) =>
-          visibleBaseColumns.some((visibleCol) => visibleCol.key === key),
+    function rowProgrammingNameValuesForEntry(row: CfsZoneRow): string[] {
+      if (row.isBacklight || row.isHvac || row.isCurtain || row.circuits.length === 0) return [];
+      const deviceToken = deviceProgrammingTokenForEntry(row);
+      return row.circuits.map((item) => {
+        const locationNumber = programmingLocationNumberTokenForEntry(item);
+        const designerNumber = item.designerNumber.trim();
+        const detail = item.detail.trim();
+        return formatProgrammingName(
+          {
+            locationNumber,
+            designerNumber,
+            area: programmingAreaTokenForNameForEntry(item, locationNumber),
+            address: programmingAddressTokenForEntry(item),
+            device: deviceToken,
+          },
+          detail,
+          activeProgrammingNameSettings,
         );
-        if (col.key !== visibleBacklightKeys[0]) return null;
-        return {
-          row: excelRow,
-          col: excelCol,
-          value: "Backlight Logic",
-          colSpan: visibleBacklightKeys.length,
-          rowSpan: mergeInfo.rowSpan,
-          fill: changedFill ?? rowFill(row),
-          bold: true,
-          horizontal: "center",
-        };
-      }
-
-      if (col.key === "device" || col.key === "deviceNum") {
-        const info = deviceMergeInfo.get(row.id) ?? { isFirst: true, rowSpan: 1 };
-        if (!info.isFirst) return null;
-        return {
-          row: excelRow,
-          col: excelCol,
-          value: stackedText(baseValues(row, col.key)),
-          rowSpan: info.rowSpan,
-          fill: changedFill ?? rowFill(row),
-          bold: true,
-          horizontal: "center",
-        };
-      }
-      if (col.key === "dimmingType") {
-        const info = dimmingMergeInfo.get(row.id) ?? { isFirst: true, rowSpan: 1 };
-        if (!info.isFirst) return null;
-        return {
-          row: excelRow,
-          col: excelCol,
-          value: stackedText(baseValues(row, col.key)),
-          rowSpan: info.rowSpan,
-          fill: changedFill ?? rowFill(row),
-          bold: true,
-          horizontal: "center",
-        };
-      }
-      if (col.key === "designerNumber") {
-        const info = designerMergeInfo.get(row.id) ?? { isFirst: true, rowSpan: 1 };
-        if (!info.isFirst) return null;
-        return {
-          row: excelRow,
-          col: excelCol,
-          value: stackedText(baseValues(row, col.key)),
-          rowSpan: info.rowSpan,
-          fill: changedFill ?? rowFill(row),
-          bold: true,
-          horizontal: "center",
-        };
-      }
-      if (col.key === "group" && !row.isDali && visibleBaseColumns[colIndex + 1]?.key === "zone") {
-        const info = zoneMergeInfo.get(row.id) ?? { isFirst: true, rowSpan: 1 };
-        if (!info.isFirst) return null;
-        const groupZoneChangedFill =
-          isChanged || hasChangedBaseCell(row, "zone")
-            ? { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFFFF3B0" } }
-            : undefined;
-        return {
-          row: excelRow,
-          col: excelCol,
-          value: stackedText(baseValues(row, "zone")),
-          colSpan: 2,
-          rowSpan: info.rowSpan,
-          fill: groupZoneChangedFill ?? rowFill(row),
-          horizontal: "center",
-        };
-      }
-      if (col.key === "zone" && !row.isDali && visibleBaseColumns[colIndex - 1]?.key === "group") {
-        return null;
-      }
-      if (col.key === "group" && row.isDali) {
-        const info = daliGroupMergeInfo.get(row.id) ?? { isFirst: true, rowSpan: 1 };
-        if (!info.isFirst) return null;
-        return {
-          row: excelRow,
-          col: excelCol,
-          value: stackedText(baseValues(row, col.key)),
-          rowSpan: info.rowSpan,
-          fill: changedFill ?? rowFill(row),
-          horizontal: "center",
-        };
-      }
-      if (col.key === "zone") {
-        const info = zoneMergeInfo.get(row.id) ?? { isFirst: true, rowSpan: 1 };
-        if (!info.isFirst) return null;
-        return {
-          row: excelRow,
-          col: excelCol,
-          value: stackedText(baseValues(row, col.key)),
-          rowSpan: info.rowSpan,
-          fill: changedFill ?? rowFill(row),
-          horizontal: "center",
-        };
-      }
-      return {
-        row: excelRow,
-        col: excelCol,
-        value: stackedText(baseValues(row, col.key)),
-        fill: changedFill ?? rowFill(row),
-        horizontal: "center",
-      };
+      });
     }
 
-    function bodyFunctionCell(row: CfsZoneRow, rowIndex: number, col: FunctionColumn, colIndex: number): ExcelCellModel {
-      const values = functionValues(row, col);
-      const isAreaSceneValue = showAreaSceneHighlight && hasAreaSceneValueCell(row, col);
-      const isChanged = hasChangedFunctionCell(row, col);
-      const isIndividualOverride = showIndividualOverrideHighlight && hasSceneDifferentOverride(row, col);
-      const isInspectionMarked = showInspectionMarkHighlight && hasInspectionMarkForCell(row, col);
-      const fill =
-        isInspectionMarked
-          ? { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFEEF6FF" } }
-          : isIndividualOverride
-          ? { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFFEF08A" } }
-          : isChanged
-            ? { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFFFF3B0" } }
-            : isAreaSceneValue
-              ? { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFF3E8FF" } }
-              : rowFill(row);
-      return {
-        row: 5 + rowIndex,
-        col: visibleBaseColumns.length + colIndex + 1,
-        value: stackedText(values, row.isBacklight ? "" : "-"),
-        fill,
-        horizontal: "center",
-      };
+    function baseValuesForEntry(row: CfsZoneRow, key: BaseColumnKey): string[] {
+      if (row.isBacklight) {
+        switch (key) {
+          case "device":
+          case "deviceNum":
+          case "dimmingType":
+          case "group":
+          case "zone":
+          case "designerNumber":
+          case "area":
+          case "areaAddress":
+            return key === "device" ? ["Backlight Logic"] : [];
+          case "detail":
+            return row.circuits.map((item) => item.detail || "-");
+          case "programmingName":
+            return [];
+          default:
+            return [];
+        }
+      }
+      if (row.isHvac) {
+        switch (key) {
+          case "designerNumber":
+          case "group":
+          case "areaAddress":
+          case "programmingName":
+            return [];
+          case "zone":
+            return rowZoneValues(row);
+          case "dimmingType":
+            return rowDimmingValues(row);
+          case "detail":
+            return row.circuits.map((item) => item.detail || "-");
+          case "area":
+            return [row.location];
+          case "device":
+          case "deviceNum":
+            return [String(row[key] ?? "")];
+          default:
+            return [];
+        }
+      }
+      switch (key) {
+        case "designerNumber":
+          return rowNumberValues(row, numberMode);
+        case "areaAddress":
+          return rowAreaAddressValuesForEntry(row);
+        case "programmingName":
+          return rowProgrammingNameValuesForEntry(row);
+        case "dimmingType":
+          return rowDimmingValues(row);
+        case "area":
+          return row.location ? [row.location] : [];
+        case "detail":
+          if (row.circuits.length === 0 && row.isIoAssignment) {
+            const ioDetail = row.assignmentDetail || row.assignmentValue || "";
+            return ioDetail ? [ioDetail] : [];
+          }
+          return row.circuits.length === 0
+            ? [row.assignmentDetail || row.assignmentValue || "-"]
+            : row.circuits.map((item) => item.detail || item.designerNumber || item.internalNumber || "-");
+        case "zone":
+          return rowZoneValues(row);
+        case "group":
+          return row.isDali ? [row.group || "Reserved"] : [];
+        case "number":
+          return [];
+        case "device":
+        case "deviceNum":
+          return [String(row[key] ?? "")];
+        default:
+          return [];
+      }
     }
 
-    const cells: ExcelCellModel[] = [];
-    visibleBaseColumns.forEach((col, index) => {
-      cells.push({
-        row: 1,
-        col: index + 1,
-        value: baseColumnLabel(col),
-        rowSpan: 4,
-        fill: headerFill,
-        bold: true,
-        horizontal: "center",
-      });
-    });
-    let headerCol = visibleBaseColumns.length + 1;
-    for (const group of switchHeaderGroups) {
-      cells.push({
-        row: 1,
-        col: headerCol,
-        value: [group.switchNumber, group.switchName].filter(Boolean).join("\n") || "-",
-        colSpan: group.colSpan,
-        fill: functionHeaderFill(group.kind),
-        bold: true,
-        horizontal: "center",
-      });
-      headerCol += group.colSpan;
-    }
-    headerCol = visibleBaseColumns.length + 1;
-    for (const group of buttonHeaderGroups) {
-      cells.push({
-        row: 2,
-        col: headerCol,
-        value: pirButtonHeaderExportText(group),
-        colSpan: group.colSpan,
-        fill: headerFill,
-        bold: true,
-        horizontal: "center",
-      });
-      headerCol += group.colSpan;
-    }
-    headerCol = visibleBaseColumns.length + 1;
-    for (const group of functionNameHeaderGroups) {
-      cells.push({
-        row: 3,
-        col: headerCol,
-        value: splitHeaderText(group.functionName || "-"),
-        colSpan: group.colSpan,
-        fill: headerFill,
-        bold: true,
-        horizontal: "center",
-      });
-      headerCol += group.colSpan;
-    }
-    headerCol = visibleBaseColumns.length + 1;
-    for (const group of conditionHeaderGroups) {
-      cells.push({
-        row: 4,
-        col: headerCol,
-        value: splitHeaderText(group.condition || "-"),
-        colSpan: group.colSpan,
-        fill: group.cols.some(isPriorityTriggerColumn)
-          ? { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFE08A" } }
-          : headerFill,
-        bold: true,
-        horizontal: "center",
-      });
-      headerCol += group.colSpan;
+    function sceneIdsForSwitchTargetForEntry(sw: SwitchEntry, _targetId: string, areaId: string): string[] {
+      return selectedSceneIdsForSwitch(sw)
+        .map((sceneId) => targetScenesById.get(sceneId))
+        .filter((scene): scene is Scene => scene !== undefined && sceneMatchesArea(scene, areaId))
+        .map((scene) => scene.id);
     }
 
-    if (displayedRows.length === 0) {
-      cells.push({
-        row: 5,
-        col: 1,
-        value: "Enter Circuit and Device Assign data to generate the CFS matrix.",
-        colSpan: visibleBaseColumns.length + visibleFunctionColumns.length,
-        fill: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } },
-        horizontal: "center",
+    function rawInspectionValueForTargetForEntry(col: FunctionColumn, targetId: string, areaId: string): string {
+      if (col.roomScene) {
+        const direct = col.roomScene.settings.find((setting) => setting.circuitId === targetId)?.percentage.trim() ?? "";
+        if (direct) return direct;
+        const areaSceneId = roomSceneSelectedAreaSceneId(col.roomScene, areaId);
+        const areaScene = targetScenesById.get(areaSceneId);
+        return areaScene ? sceneValueForCircuit(areaScene, targetId) : "";
+      }
+      if (!col.source) return "";
+      const direct = col.source.buttonSetting.circuitSettings
+        .find((setting) => setting.circuitId === targetId)
+        ?.percentage.trim() ?? "";
+      if (direct) return direct;
+      const sceneIds = sceneIdsForSwitchTargetForEntry(col.source, targetId, areaId);
+      return sceneIds
+        .map((sceneId) => {
+          const scene = targetScenesById.get(sceneId);
+          return scene ? sceneValueForCircuit(scene, targetId) : "";
+        })
+        .find(Boolean) ?? "";
+    }
+
+    function inspectionAreaSceneNameForTargetForEntry(col: FunctionColumn, target: InspectionTarget): string {
+      if (!showAreaSceneNames) return "";
+      if (col.roomScene) {
+        const direct = col.roomScene.settings.find((setting) => setting.circuitId === target.targetId)?.percentage.trim() ?? "";
+        if (direct) return "";
+        const areaSceneId = roomSceneSelectedAreaSceneId(col.roomScene, target.areaId);
+        const areaScene = targetScenesById.get(areaSceneId);
+        return areaScene ? areaSceneDisplayName(areaScene) : "";
+      }
+      if (!col.source) return "";
+      const direct = col.source.buttonSetting.circuitSettings
+        .find((setting) => setting.circuitId === target.targetId)
+        ?.percentage.trim() ?? "";
+      if (direct) return "";
+      const sceneId = sceneIdsForSwitchTargetForEntry(col.source, target.targetId, target.areaId).find((id) => {
+        const scene = targetScenesById.get(id);
+        return scene ? sceneValueForCircuit(scene, target.targetId).trim() !== "" : false;
       });
-    } else {
-      displayedRows.forEach((row, rowIndex) => {
-        visibleBaseColumns.forEach((col, colIndex) => {
-          const cell = bodyBaseCell(row, rowIndex, col, colIndex);
-          if (cell) cells.push(cell);
+      const scene = sceneId ? targetScenesById.get(sceneId) : undefined;
+      return scene ? areaSceneDisplayName(scene) : "";
+    }
+
+    function targetDisplayValuesForEntry(row: CfsZoneRow, col: FunctionColumn): string[] {
+      const targets = rowTargetIds(row);
+      if (targets.length === 0) return [""];
+      return uniqueValues(
+        targets.flatMap((target) => {
+          const rawValue = rawInspectionValueForTargetForEntry(col, target.targetId, target.areaId);
+          const formattedValue = formatInspectionValue(rawValue, target.dimmingType);
+          if (!formattedValue) return [];
+          const sceneName = inspectionAreaSceneNameForTargetForEntry(col, target);
+          return sceneName ? [sceneName, formattedValue] : [formattedValue];
+        }),
+      );
+    }
+
+    function rawFunctionValuesForEntry(row: CfsZoneRow, col: FunctionColumn): string[] {
+      if (row.isBacklight) {
+        if (col.roomScene) {
+          const condition = displayBacklightConditionFromMap(
+            targetBacklightConditionNameByValue,
+            col.roomScene.backlightCondition,
+          );
+          return condition ? [condition] : [""];
+        }
+        if (!col.source || !row.backlightTargetGroupId) return [""];
+        const targetIds = col.source.backlightTarget.split(",").map((value) => value.trim()).filter(Boolean);
+        const condition = displayBacklightConditionFromMap(
+          targetBacklightConditionNameByValue,
+          col.source.backlightCondition,
+          col.source,
+        );
+        return targetIds.includes(row.backlightTargetGroupId) && condition ? [condition] : [""];
+      }
+      if (row.isHvac && row.hvacSettingId) {
+        const dimmingType = row.hvacMetric || "HVAC";
+        if (col.roomScene) {
+          return [roomSceneSettingValue(col.roomScene, row.hvacSettingId, dimmingType) || ""];
+        }
+        if (!col.source) return [""];
+        const direct = col.source.buttonSetting.circuitSettings
+          .find((setting) => setting.circuitId === row.hvacSettingId)
+          ?.percentage ?? "";
+        if (direct.trim()) return [formatLevel(direct, dimmingType)];
+        return sceneRawValuesForTarget(col.source, row.hvacSettingId, row.locationId, targetScenesById)
+          .map((value) => formatLevel(value, dimmingType))
+          .filter(Boolean);
+      }
+      if (row.circuits.length === 0) {
+        const targets = rowTargetIds(row);
+        return targets.length > 0 && targets.every(isCcoInspectionTarget)
+          ? targetDisplayValuesForEntry(row, col)
+          : [""];
+      }
+      if (col.roomScene) {
+        return row.circuits.flatMap((item) => roomSceneCellValue(col.roomScene!, item.circuit, targetScenesById, showAreaSceneNames));
+      }
+      if (!col.source) return [""];
+      return row.circuits.flatMap((item) => cellValues(col.source!, item.circuit, targetScenesById, showAreaSceneNames));
+    }
+
+    function functionValuesForEntry(row: CfsZoneRow, col: FunctionColumn): string[] {
+      const values = rawFunctionValuesForEntry(row, col);
+      if (row.isBacklight) return values;
+      return values.some((value) => value.trim() !== "") ? values : ["-"];
+    }
+
+    function hasSceneDifferentOverrideForEntry(row: CfsZoneRow, col: FunctionColumn): boolean {
+      if (col.roomScene) {
+        if (row.isBacklight || row.isHvac || row.circuits.length === 0) return false;
+        return row.circuits.some((item) => {
+          const direct = col.roomScene!.settings
+            .find((setting) => setting.circuitId === item.circuit.id)
+            ?.percentage.trim() ?? "";
+          return direct !== "" && roomSceneHasAreaSceneValue(col.roomScene!, item.circuit, targetScenesById);
         });
-        visibleFunctionColumns.forEach((col, colIndex) => {
-          cells.push(bodyFunctionCell(row, rowIndex, col, colIndex));
-        });
+      }
+      const sw = col.source;
+      if (!sw) return false;
+      if (row.isBacklight || row.circuits.length === 0) return false;
+      return row.circuits.some((item) => {
+        const direct = sw.buttonSetting.circuitSettings
+          .find((setting) => setting.circuitId === item.circuit.id)
+          ?.percentage.trim() ?? "";
+        if (!direct) return false;
+        const sceneValues = sceneRawValuesForCircuit(sw, item.circuit, targetScenesById);
+        if (sceneValues.length === 0) return false;
+        const normalizedDirect = normalizeLevelForCompare(direct);
+        return sceneValues.some((sceneValue) => normalizeLevelForCompare(sceneValue) !== normalizedDirect);
       });
     }
 
-    const maxColWidths = new Map<number, number>();
-    visibleBaseColumns.forEach((col, index) => {
-      maxColWidths.set(index + 1, Math.min(34, Math.max(7, col.minWidth / 7)));
-    });
-    visibleFunctionColumns.forEach((_col, index) => {
-      const column = visibleBaseColumns.length + index + 1;
-      maxColWidths.set(column, Math.min(34, Math.max(7, CFS_FUNCTION_COLUMN_WIDTH / 7)));
-    });
-
-    // Heavy edges: switch-to-switch boundaries, the header row band (rows 1-4),
-    // the base-column band, and the outer table frame. ExcelJS shares one style
-    // per merged range, so borders are computed per cell REGION (row/colSpan),
-    // never by overwriting individual grid positions inside a merge.
-    const baseColumnCount = visibleBaseColumns.length;
-    const totalColumnCount = baseColumnCount + visibleFunctionColumns.length;
-    const lastBorderRow = 4 + Math.max(1, displayedRows.length);
-    const switchGroupStartCols = new Set<number>();
-    {
-      let groupStartCol = baseColumnCount + 1;
-      for (const group of switchHeaderGroups) {
-        switchGroupStartCols.add(groupStartCol);
-        groupStartCol += group.colSpan;
+    function hasAreaSceneValueCellForEntry(row: CfsZoneRow, col: FunctionColumn): boolean {
+      if (row.isBacklight) return false;
+      if (row.isHvac && row.hvacSettingId) {
+        return col.source ? switchUsesAreaSceneValue(col.source, row.hvacSettingId, row.locationId, targetScenesById) : false;
       }
-    }
-
-    for (const cell of cells) {
-      const excelCell = worksheet.getCell(cell.row, cell.col);
-      excelCell.value = cell.value;
-      const regionEndRow = cell.row + (cell.rowSpan ?? 1) - 1;
-      const regionEndCol = cell.col + (cell.colSpan ?? 1) - 1;
-      excelCell.border = {
-        top: cell.row === 1 ? heavyEdge : thinEdge,
-        bottom: regionEndRow === lastBorderRow || regionEndRow === 4 ? heavyEdge : thinEdge,
-        left:
-          cell.col === 1 || cell.col === baseColumnCount + 1 || switchGroupStartCols.has(cell.col)
-            ? heavyEdge
-            : thinEdge,
-        right:
-          regionEndCol === totalColumnCount ||
-          regionEndCol === baseColumnCount ||
-          switchGroupStartCols.has(regionEndCol + 1)
-            ? heavyEdge
-            : thinEdge,
-      };
-      excelCell.alignment = {
-        horizontal: cell.horizontal ?? "center",
-        vertical: "middle",
-        wrapText: true,
-      };
-      excelCell.font = {
-        bold: Boolean(cell.bold),
-        color: { argb: cell.fontColor ?? "FF334155" },
-      };
-      if (cell.fill) excelCell.fill = cell.fill;
-      const rowSpan = cell.rowSpan ?? 1;
-      const colSpan = cell.colSpan ?? 1;
-      if (rowSpan > 1 || colSpan > 1) {
-        worksheet.mergeCells(cell.row, cell.col, cell.row + rowSpan - 1, cell.col + colSpan - 1);
+      if (row.circuits.length === 0) return false;
+      if (col.roomScene) {
+        return row.circuits.some((item) => roomSceneUsesAreaSceneValue(col.roomScene!, item.circuit, targetScenesById));
       }
-      const text = String(cell.value ?? "");
-      const textWidth = Math.min(36, Math.max(6, Math.max(...text.split("\n").map((line) => line.length)) * 0.85 + 2));
-      for (let col = cell.col; col < cell.col + colSpan; col += 1) {
-        maxColWidths.set(col, Math.max(maxColWidths.get(col) ?? 0, textWidth));
+      if (col.source) {
+        return row.circuits.some((item) => switchUsesAreaSceneValue(col.source!, item.circuit.id, item.circuit.area, targetScenesById));
       }
+      return false;
     }
 
-    for (let rowIndex = 1; rowIndex <= 4; rowIndex += 1) {
-      const rowCells = cells.filter((cell) => cell.row === rowIndex);
-      const maxLines = rowCells.reduce((max, cell) => Math.max(max, String(cell.value ?? "").split("\n").length), 1);
-      worksheet.getRow(rowIndex).height = Math.max(22, Math.min(82, maxLines * 18));
-    }
-    const bodyRowCount = Math.max(1, displayedRows.length);
-    for (let rowIndex = 5; rowIndex < 5 + bodyRowCount; rowIndex += 1) {
-      worksheet.getRow(rowIndex).height = 31;
+    function hasInspectionSourceMark(sourceType: InspectionDraftSource, sourceId: string, targetId: string): boolean {
+      return targetInspectionMarksByKey.has(inspectionDraftKey(sourceType, sourceId, targetId));
     }
 
-    maxColWidths.forEach((width, index) => {
-      worksheet.getColumn(index).width = Math.min(34, Math.max(7, width));
-    });
+    function hasInspectionMarkForCellForEntry(row: CfsZoneRow, col: FunctionColumn): boolean {
+      return rowTargetIds(row).some((target) => {
+        if (col.roomScene) {
+          const directExists = hasSetting(col.roomScene.settings, target.targetId);
+          const areaSceneId = roomSceneSelectedAreaSceneId(col.roomScene, target.areaId);
+          if (!directExists && areaSceneId && hasInspectionSourceMark("areaScene", areaSceneId, target.targetId)) {
+            return true;
+          }
+          return hasInspectionSourceMark("roomScene", col.roomScene.id, target.targetId);
+        }
+        if (!col.source) return false;
+        const directExists = hasSetting(col.source.buttonSetting.circuitSettings, target.targetId);
+        if (
+          !directExists &&
+          sceneIdsForSwitchTargetForEntry(col.source, target.targetId, target.areaId).some((sceneId) =>
+            hasInspectionSourceMark("areaScene", sceneId, target.targetId),
+          )
+        ) {
+          return true;
+        }
+        return hasInspectionSourceMark("switch", col.source.id, target.targetId);
+      });
+    }
 
-    worksheet.views = [{ state: "frozen", xSplit: visibleBaseColumns.length, ySplit: 4 }];
+    return {
+      visibleBaseColumns,
+      visibleFunctionColumns: targetVisibleFunctionColumns,
+      displayedRows: targetDisplayedRows,
+      headerGroups: buildExcelHeaderGroupsFor(targetVisibleFunctionColumns),
+      mergeInfo: buildExcelMergeInfoFor(targetDisplayedRows, numberMode),
+      highlights: {
+        ffe: showFfeHighlight,
+        energySaving: showEnergySavingHighlight,
+        areaScene: showAreaSceneHighlight,
+        individualOverride: showIndividualOverrideHighlight,
+        inspectionMark: showInspectionMarkHighlight,
+      },
+      expandedPirHeaderKeys,
+      resolvers: {
+        baseValues: baseValuesForEntry,
+        functionValues: functionValuesForEntry,
+        baseColumnLabel,
+        hasChangedBaseCell: () => false,
+        hasChangedFunctionCell: () => false,
+        hasAreaSceneValueCell: hasAreaSceneValueCellForEntry,
+        hasSceneDifferentOverride: hasSceneDifferentOverrideForEntry,
+        hasInspectionMarkForCell: hasInspectionMarkForCellForEntry,
+        isPriorityTriggerColumn,
+      },
+    };
+  }
+
+  async function exportVisibleCfsToExcel(): Promise<void> {
+    const ExcelJS = await loadExcelJs();
+    const workbook = new ExcelJS.Workbook();
+    appendCfsSheet(workbook, "CFS View", buildCurrentCfsExcelSheetModel());
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2504,6 +2992,32 @@ export default function CfsView({
     link.download = `${safeExcelFilePart(projectName, "Project")}_${safeExcelFilePart(roomType.name, "Room")}_CFS_view.xlsx`;
     link.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function exportProjectCfsToExcel(): Promise<void> {
+    if (isProjectExcelExporting) return;
+    setIsProjectExcelExporting(true);
+    try {
+      const ExcelJS = await loadExcelJs();
+      const workbook = new ExcelJS.Workbook();
+      const usedSheetNames = new Set<string>();
+      projectCfsExportEntries.forEach((entry, index) => {
+        const sheetName = safeExcelSheetName(entry.roomType.name, `Room ${index + 1}`, usedSheetNames);
+        appendCfsSheet(workbook, sheetName, buildProjectCfsExcelSheetModel(entry));
+      });
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${safeExcelFilePart(projectName, "Project")}_CFS_ALL.xlsx`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } finally {
+      setIsProjectExcelExporting(false);
+    }
   }
 
   function rowAreaAddressValues(row: CfsZoneRow): string[] {
@@ -4224,10 +4738,10 @@ export default function CfsView({
             onOpen={collapseAllFunctionColumnGroups}
           >
             <div className="cfs-column-actions">
-              <button type="button" onClick={() => setHiddenFunctionColumns(new Set())}>Show all</button>
+              <button type="button" onClick={() => commitHiddenFunctionColumns(new Set())}>Show all</button>
               <button
                 type="button"
-                onClick={() => setHiddenFunctionColumns(new Set(orderedFunctionColumns.map((col) => col.id)))}
+                onClick={() => commitHiddenFunctionColumns(new Set(orderedFunctionColumns.map((col) => col.id)))}
               >
                 Hide all
               </button>
@@ -4493,18 +5007,73 @@ export default function CfsView({
                 Fixed Window
               </button>
             ) : null}
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => {
-                void exportVisibleCfsToExcel().catch((error) => {
-                  console.error("CFS visible export failed", error);
-                  window.alert("Excel export failed. Please try again.");
-                });
-              }}
-            >
-              Excel Export
-            </button>
+            <div ref={excelExportMenuRef} style={{ position: "relative", display: "inline-flex" }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={isProjectExcelExporting}
+                aria-haspopup="menu"
+                aria-expanded={showExcelExportMenu}
+                onClick={() => setShowExcelExportMenu((prev) => !prev)}
+                title="Export the CFS matrix to Excel (choose this room type or all rooms)"
+              >
+                Excel Export
+              </button>
+              {showExcelExportMenu ? (
+                <div
+                  role="menu"
+                  aria-label="Excel export scope"
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 4px)",
+                    right: 0,
+                    zIndex: 60,
+                    minWidth: 180,
+                    background: "#ffffff",
+                    border: "1px solid #d7e0e5",
+                    borderRadius: 8,
+                    boxShadow: "0 8px 24px rgba(15, 23, 42, 0.14)",
+                    padding: 4,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 2,
+                  }}
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="btn btn-secondary"
+                    style={{ justifyContent: "flex-start", border: "none", boxShadow: "none" }}
+                    onClick={() => {
+                      setShowExcelExportMenu(false);
+                      void exportVisibleCfsToExcel().catch((error) => {
+                        console.error("CFS visible export failed", error);
+                        window.alert("Excel export failed. Please try again.");
+                      });
+                    }}
+                  >
+                    This Room Type
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="btn btn-secondary"
+                    style={{ justifyContent: "flex-start", border: "none", boxShadow: "none" }}
+                    disabled={isProjectExcelExporting}
+                    onClick={() => {
+                      setShowExcelExportMenu(false);
+                      void exportProjectCfsToExcel().catch((error) => {
+                        console.error("CFS project export failed", error);
+                        window.alert("Project Excel export failed. Please try again.");
+                      });
+                    }}
+                    title="Export all room types into one workbook"
+                  >
+                    All Rooms
+                  </button>
+                </div>
+              ) : null}
+            </div>
             <button type="button" className="btn btn-secondary" onClick={() => setIsMaximized((prev) => !prev)}>
               {isMaximized ? "Exit Maximize" : "Maximize"}
             </button>

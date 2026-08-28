@@ -4,6 +4,47 @@ export function circuitGroupKey(circuit: Pick<CircuitEntry, "id" | "circuitGroup
   return circuit.circuitGroupId.trim() || circuit.id;
 }
 
+/**
+ * Sets FFE for every circuit row that uses one of the given fixtures,
+ * propagated like the FFE checkbox: whole circuit group plus, for DALI rows,
+ * the DALI fixture block. Rows in unrelated groups (including manually
+ * checked ones) are never touched. Returns the original array when nothing
+ * changes.
+ */
+export function setFfeOnCircuitsUsingFixtures(
+  circuits: CircuitEntry[],
+  fixtureNames: readonly string[],
+  value: boolean,
+): CircuitEntry[] {
+  const names = new Set(fixtureNames.map((name) => name.trim()).filter((name) => name !== ""));
+  if (names.size === 0) return circuits;
+  const seedIds = new Set<string>();
+  const groupKeys = new Set<string>();
+  const daliBlockIds = new Set<string>();
+  for (const circuit of circuits) {
+    if (!names.has(circuit.fixture)) continue;
+    seedIds.add(circuit.id);
+    if (circuit.circuitGroupId.trim() !== "") groupKeys.add(circuitGroupKey(circuit));
+    if (circuit.dimmingType === "DALI" && circuit.daliFixtureGroupId !== "") {
+      daliBlockIds.add(circuit.daliFixtureGroupId);
+    }
+  }
+  if (seedIds.size === 0) return circuits;
+  let changed = false;
+  const next = circuits.map((circuit) => {
+    const hit =
+      seedIds.has(circuit.id) ||
+      (circuit.circuitGroupId.trim() !== "" && groupKeys.has(circuitGroupKey(circuit))) ||
+      (circuit.daliFixtureGroupId !== "" && daliBlockIds.has(circuit.daliFixtureGroupId));
+    if (hit && circuit.ffe !== value) {
+      changed = true;
+      return { ...circuit, ffe: value };
+    }
+    return circuit;
+  });
+  return changed ? next : circuits;
+}
+
 export function uniqueCircuitGroupHeads(circuits: readonly CircuitEntry[]): CircuitEntry[] {
   const seen = new Set<string>();
   const heads: CircuitEntry[] = [];
