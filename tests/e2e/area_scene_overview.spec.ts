@@ -279,13 +279,17 @@ test.describe("Area Scene overview", () => {
       "Group",
       "Zone / Address",
       "Designer #",
+      // T-56: zone columns directly after Designer # (Low -> High -> Total VA)
+      "Low End",
+      "High End",
+      "Total VA",
       "Area",
       "Area Address",
       "Detail",
       "Programming Name",
     ]);
     await expect(basePanel.getByLabel("Show Area column")).toBeChecked();
-    await expect(table.locator("colgroup col").evaluateAll((columns) => columns.slice(0, 11).map((column) => (column as HTMLElement).style.width))).resolves.toEqual([
+    await expect(table.locator("colgroup col").evaluateAll((columns) => columns.slice(0, 14).map((column) => (column as HTMLElement).style.width))).resolves.toEqual([
       "44px",
       "150px",
       "82px",
@@ -293,6 +297,9 @@ test.describe("Area Scene overview", () => {
       "92px",
       "116px",
       "96px",
+      "84px",
+      "84px",
+      "88px",
       "130px",
       "112px",
       "170px",

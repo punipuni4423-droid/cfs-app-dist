@@ -1,6 +1,7 @@
 import type {
   CircuitEntry,
   DeviceMaster,
+  FixtureMaster,
   LocationMaster,
   ProgrammingNameSettings,
   RoomType,
@@ -24,6 +25,9 @@ export interface CfsWindowSnapshot {
   // pinned-mode window can show a fixed room type and switch on its own.
   roomTypeEntries?: CfsWindowRoomTypeEntry[];
   devices: DeviceMaster[];
+  // T-33: fixture masters for the zone Total VA column. Optional so snapshots
+  // from an older main-window build stay renderable (the column shows "-").
+  fixtures?: FixtureMaster[];
   locations: LocationMaster[];
   programmingNameSettings?: ProgrammingNameSettings;
   sentAt: number;

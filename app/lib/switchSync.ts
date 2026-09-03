@@ -269,7 +269,9 @@ export function dedupeSwitchIds(
     changed = true;
     const id = createId();
     seen.add(id);
-    return { ...sw, id };
+    // T-35: a re-identified clone must not silently join a setting link
+    // group; dropping the id prevents accidental link multiplication.
+    return { ...sw, id, settingLinkGroupId: undefined };
   });
   return changed ? next : switches;
 }

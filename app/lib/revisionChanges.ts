@@ -129,6 +129,7 @@ const FIELD_LABELS: Record<string, string> = {
   areaSceneSelections: "Area scene selection",
   backlightTarget: "Backlight target",
   backlightCondition: "Backlight scene",
+  settingLinkGroupId: "Setting link",
   backlightLevels: "Backlight logic",
   settings: "Scene values",
   triggerCondition: "Trigger condition",

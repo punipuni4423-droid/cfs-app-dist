@@ -115,7 +115,10 @@ function Start-CfsWorker {
   }
   $processInfo = New-Object System.Diagnostics.ProcessStartInfo
   $processInfo.FileName = Join-Path $env:SystemRoot "System32\cmd.exe"
-  $processInfo.Arguments = "/d /s /c " + '"' + $startScript + '" --worker --no-browser'
+  # cmd /s strips the first and last quote of the /c string, so the whole
+  # command must be wrapped in an extra pair of quotes (same pattern as
+  # LAUNCH_CFS_APP.vbs) or a start script path containing spaces gets split.
+  $processInfo.Arguments = '/d /s /c ""' + $startScript + '" --worker --no-browser"'
   $processInfo.WorkingDirectory = $appRoot
   $processInfo.UseShellExecute = $false
   $processInfo.CreateNoWindow = $true

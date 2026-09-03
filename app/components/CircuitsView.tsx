@@ -28,6 +28,7 @@ import { circuitGroupKey } from "../lib/circuitGroups";
 import AutoGrowTextarea from "./AutoGrowTextarea";
 import Combobox from "./Combobox";
 import ActionIconButton from "./ActionIconButton";
+import DragHandle from "./DragHandle";
 import DuplicationBanner from "./DuplicationBanner";
 import ResizableMatrixScroll from "./ResizableMatrixScroll";
 import { createAppId } from '../lib/id';
@@ -930,8 +931,7 @@ export default function CircuitsView({
                     {isHead ? (
                       <td className="col-center drag-handle-cell" rowSpan={groupVisibleRows}>
                         <span className="rowspan-cell-content rowspan-cell-center">
-                        <span
-                          className="drag-handle"
+                        <DragHandle
                           draggable={canEdit}
                           onPointerDown={(e) => drag.onPointerDown(e, groupKey)}
                           onDragStart={(e) => drag.onDragStart(e, groupKey)}
@@ -939,9 +939,7 @@ export default function CircuitsView({
                           onDrop={(e) => drag.onDrop(e, groupKey)}
                           onDragEnd={drag.onDragEnd}
                           title="Drag to reorder"
-                        >
-                          ::
-                        </span>
+                        />
                         </span>
                       </td>
                     ) : null}
@@ -1255,8 +1253,7 @@ export default function CircuitsView({
                       onDrop={(event) => dryContactDrag.onDrop(event, entry.id)}
                     >
                       <td className="col-center drag-handle-cell">
-                        <span
-                          className="drag-handle"
+                        <DragHandle
                           draggable={canEdit}
                           onPointerDown={(event) => dryContactDrag.onPointerDown(event, entry.id)}
                           onDragStart={(event) => dryContactDrag.onDragStart(event, entry.id)}
@@ -1264,9 +1261,7 @@ export default function CircuitsView({
                           onDrop={(event) => dryContactDrag.onDrop(event, entry.id)}
                           onDragEnd={dryContactDrag.onDragEnd}
                           title="Drag to reorder"
-                        >
-                          ::
-                        </span>
+                        />
                       </td>
                       <td className="col-center">{index + 1}</td>
                       <td className={dryContactRevisionCellClass(entry.id, ["area"])}>

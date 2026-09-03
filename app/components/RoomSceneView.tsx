@@ -24,6 +24,7 @@ import { createEmptyRoomScene, normalizeBacklightLevels } from "../lib/constants
 import { ensureRoomScenes, isPmsScene, sortRoomScenesByGroup } from "../lib/roomScenes";
 import { useDragReorder } from "../lib/useDragReorder";
 import ActionIconButton from "./ActionIconButton";
+import DragHandle from "./DragHandle";
 import AutoGrowTextarea from "./AutoGrowTextarea";
 import Combobox from "./Combobox";
 import { buildSettingTargetGroups, hvacSettingTargets as buildHvacSettingTargets, settingTargetIds, type SettingTarget } from "../lib/settingTargets";
@@ -847,17 +848,12 @@ export default function RoomSceneView({
                       onDrop={(event) => drag.onDrop(event, scene.id)}
                     >
                       <td className="col-center drag-handle-cell">
-                        <button
-                          type="button"
-                          className="drag-handle"
+                        <DragHandle
                           title="Drag to reorder"
-                          disabled={!canEdit}
                           draggable={canEdit}
                           onDragStart={(event) => handleSceneDragStart(event, scene.id)}
                           onDragEnd={drag.onDragEnd}
-                        >
-                          ::
-                        </button>
+                        />
                       </td>
                       <td className="col-center">{rowIndex + 1}</td>
                       <td className={revisionCellClass(scene.id, ["sceneType", "detail"])}>
@@ -961,17 +957,12 @@ export default function RoomSceneView({
                     onDrop={(event) => drag.onDrop(event, scene.id)}
                   >
                     <td className="col-center drag-handle-cell">
-                      <button
-                        type="button"
-                        className="drag-handle"
+                      <DragHandle
                         title="Drag to reorder"
-                        disabled={!canEdit}
                         draggable={canEdit}
                         onDragStart={(event) => handleSceneDragStart(event, scene.id)}
                         onDragEnd={drag.onDragEnd}
-                      >
-                        ::
-                      </button>
+                      />
                     </td>
                     <td className="col-center">{rowIndex + 1}</td>
                     <td className={revisionCellClass(scene.id, ["phase"])}>

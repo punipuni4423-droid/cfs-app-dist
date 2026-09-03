@@ -4,6 +4,7 @@ import type { AddressMode, DeviceMaster } from "../types";
 import { CONTROL_OPTIONS, createEmptyDevice } from "../lib/constants";
 import { useDragReorder } from "../lib/useDragReorder";
 import ActionIconButton from "./ActionIconButton";
+import DragHandle from "./DragHandle";
 
 interface DevicesViewProps {
   devices: DeviceMaster[];
@@ -93,15 +94,12 @@ export default function DevicesView({ devices, onChange }: DevicesViewProps) {
                     onDrop={(e) => drag.onDrop(e, d.id)}
                   >
                     <td className="col-center drag-handle-cell">
-                      <span
-                        className="drag-handle"
+                      <DragHandle
                         draggable
                         onDragStart={(e) => drag.onDragStart(e, d.id)}
                         onDragEnd={drag.onDragEnd}
                         title="Drag to reorder"
-                      >
-                        ::
-                      </span>
+                      />
                     </td>
                     <td className="col-center">{index + 1}</td>
                     <td>

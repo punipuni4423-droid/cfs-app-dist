@@ -35,6 +35,7 @@ import {
 import HvacSettingPanel from "./HvacSettingPanel";
 import CurtainActionButtons from "./CurtainActionButtons";
 import ActionIconButton from "./ActionIconButton";
+import DragHandle from "./DragHandle";
 import { createAppId } from '../lib/id';
 
 interface CommandViewProps {
@@ -717,7 +718,7 @@ export default function CommandView({
                                           </div>
                                           <button
                                             type="button"
-                                            className="btn-clear-circuit"
+                                            className={`btn-clear-circuit${value === "" ? " is-active" : ""}`}
                                             onClick={() => handleTargetValueChange(sw, target, "")}
                                             disabled={!canEdit}
                                           >
@@ -871,15 +872,12 @@ export default function CommandView({
                       onDrop={(e) => drag.onDrop(e, command.id)}
                     >
                       <td className="col-center drag-handle-cell">
-                        <span
-                          className="drag-handle"
+                        <DragHandle
                           draggable={canEdit}
                           onDragStart={(e) => drag.onDragStart(e, command.id)}
                           onDragEnd={drag.onDragEnd}
                           title="Drag to reorder"
-                        >
-                          ::
-                        </span>
+                        />
                       </td>
                       <td className="col-center">{index + 1}</td>
                       <td className={revisionCellClass(command.id, ["switchName"])}>

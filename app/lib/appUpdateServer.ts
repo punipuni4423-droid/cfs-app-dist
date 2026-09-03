@@ -139,7 +139,10 @@ function isCommandNotFound(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "ENOENT");
 }
 
-async function runGit(args: string[], options: { timeoutMs?: number; allowFailure?: boolean } = {}): Promise<string> {
+async function runGit(
+  args: string[],
+  options: { timeoutMs?: number; allowFailure?: boolean; trimOutput?: boolean } = {},
+): Promise<string> {
   const gitExecutable = resolveGitExecutable();
   try {
     const result = await execFileAsync(gitExecutable, args, {
@@ -154,7 +157,10 @@ async function runGit(args: string[], options: { timeoutMs?: number; allowFailur
         GCM_INTERACTIVE: "Never",
       },
     });
-    return result.stdout.trim();
+    // trimOutput: false preserves leading whitespace, which is significant for
+    // "git status --porcelain" (an unstaged change starts with " M ...": losing
+    // the leading space shifts the XY column parse onto the wrong characters).
+    return options.trimOutput === false ? result.stdout : result.stdout.trim();
   } catch (error) {
     if (isCommandNotFound(error)) {
       throw new GitUnavailableError(
@@ -182,10 +188,17 @@ async function readLastRun(): Promise<AppUpdateRunStatus | undefined> {
 // restoring the files from the current commit; real local edits (non-empty
 // files) are never touched.
 async function healZeroByteTrackedFiles(): Promise<boolean> {
-  const porcelain = await runGit(["status", "--porcelain", "--untracked-files=no"], { allowFailure: true });
+  const porcelain = await runGit(["status", "--porcelain", "--untracked-files=no"], {
+    allowFailure: true,
+    trimOutput: false,
+  });
   const lines = porcelain.split("\n").map((line) => line.trimEnd()).filter(Boolean);
   if (lines.length === 0) return false;
   for (const line of lines) {
+    // Porcelain v1: two status columns + a space, then the path. Anything
+    // shorter is unexpected; treat it as a real change so the heal never
+    // force-checkouts based on a misparsed path.
+    if (line.length < 4) return false;
     let relPath = line.slice(3).replace(/^"|"$/g, "");
     const renameSplit = relPath.split(" -> ");
     if (renameSplit.length > 1) relPath = renameSplit[renameSplit.length - 1].replace(/^"|"$/g, "");

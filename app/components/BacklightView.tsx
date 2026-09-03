@@ -5,6 +5,7 @@ import type { BacklightLevelSetting, RevisionFieldChanges, RoomScene, SwitchEntr
 import { createDefaultBacklightLevels, normalizeBacklightLevels } from "../lib/constants";
 import { useDragReorder } from "../lib/useDragReorder";
 import ActionIconButton from "./ActionIconButton";
+import DragHandle from "./DragHandle";
 import AutoGrowTextarea from "./AutoGrowTextarea";
 import { createAppId } from '../lib/id';
 
@@ -278,15 +279,12 @@ export default function BacklightView({
                 onDrop={(e) => drag.onDrop(e, level.key)}
               >
                 <td className="col-center drag-handle-cell">
-                  <span
-                    className="drag-handle"
+                  <DragHandle
                     draggable={canEditBacklightLevels}
                     onDragStart={(e) => drag.onDragStart(e, level.key)}
                     onDragEnd={drag.onDragEnd}
                     title="Drag to reorder"
-                  >
-                    ::
-                  </span>
+                  />
                 </td>
                 <td className="col-center">{index + 1}</td>
                 <td className={backlightLogicChanged ? "revision-changed-cell" : ""}>
@@ -429,15 +427,12 @@ export default function BacklightView({
                   onDrop={(e) => assignmentDrag.onDrop(e, switchGroupId(sw))}
                 >
                   <td className="col-center drag-handle-cell">
-                    <span
-                      className="drag-handle"
+                    <DragHandle
                       draggable={canEdit}
                       onDragStart={(e) => assignmentDrag.onDragStart(e, switchGroupId(sw))}
                       onDragEnd={assignmentDrag.onDragEnd}
                       title="Drag to reorder"
-                    >
-                      ::
-                    </span>
+                    />
                   </td>
                   <td className="col-center">{index + 1}</td>
                   <td className="col-center switch-bulk-select-cell">

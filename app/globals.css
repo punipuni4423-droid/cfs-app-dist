@@ -1709,6 +1709,22 @@ textarea:disabled {
   color: var(--color-text-muted);
 }
 
+/* T-34: menu variant — compact boxless handle used in the CFS column menus.
+   The whole menu row is the draggable target, so the handle itself shows no
+   hover/active box. */
+.drag-handle--menu {
+  width: 1rem;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.drag-handle--menu:hover,
+.drag-handle--menu:active {
+  background: transparent;
+  color: var(--color-text-muted);
+  border-color: transparent;
+}
+
 .row-dragging {
   opacity: 0.4;
 }
@@ -5389,15 +5405,7 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   cursor: grabbing;
 }
 
-.cfs-draggable-column .drag-handle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1rem;
-  color: var(--color-text-muted);
-  font-weight: 900;
-  letter-spacing: 0;
-}
+/* T-34: menu handles are styled by .drag-handle--menu (see the drag-handle block). */
 
 .cfs-function-group-order {
   display: flex;
@@ -9131,4 +9139,199 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
+/* T-35: switch setting link */
+.switch-setting-link-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: fit-content;
+  margin: 3px auto 0;
+  padding: 0 5px;
+  border: 1.5px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* T-32/T-33: low-high-end & cfs base columns */
+.device-assign-col-low-end,
+.device-assign-col-high-end {
+  width: 88px;
+}
+
+/* On/Off zones show a centered "-" instead of an input. */
+.device-assign-end-na {
+  text-align: center;
+  color: var(--muted, #64748b);
+}
+
+/* T-57 */
+/* Dimming-row "Uneffected" (btn-clear-circuit) active state: match the
+   teal active look of the On/Off row buttons and Raise/Lower quick buttons. */
+.btn-clear-circuit.is-active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+/* T-58 */
+/* CFS column-header setting-link display (Display menu "Link" toggle).
+   Band + badge are absolutely positioned so the header keeps its exact
+   pre-T-58 height; colors are inline styles fed by the shared
+   settingLinkGroups helper (identical to the Switch tab badges). */
+.cfs-matrix-table thead th.cfs-header-link-cell {
+  position: relative;
+}
+
+.cfs-header-link-band {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  pointer-events: none;
+}
+
+.cfs-header-link-badge {
+  position: absolute;
+  top: 6px;
+  right: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  font-size: 0.6rem;
+  font-weight: 800;
+  line-height: 1.35;
+  pointer-events: none;
+}
+
+/* T-60 */
+/* CFS Link panel + linked-column vertical highlight lines.
+   The lines are absolute-positioned spans inside each covered th/td (same
+   layout-neutral approach as the T-58 badge, same 0.28rem stripe thickness
+   as the Area row highlight); colors are inline styles fed by the shared
+   settingLinkGroups helper, so they always match the Switch tab badges.
+   The retired .cfs-header-link-band rule above is intentionally left in
+   place (T-58 block untouched); the band markup no longer renders. */
+.cfs-matrix-table thead th.cfs-link-col-cell {
+  position: relative;
+}
+
+.cfs-link-col-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0.28rem;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.cfs-link-col-line-left {
+  left: 0;
+}
+
+.cfs-link-col-line-right {
+  right: 0;
+}
+
+/* Link panel group blocks: swatch + 🔗symbol checkbox row and the
+   "switch name − button name" member list. */
+.cfs-link-menu-empty {
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.25rem 0.1rem;
+}
+
+.cfs-link-menu-group {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.3rem 0.1rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.cfs-link-menu-symbol {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  font-weight: 800;
+}
+
+.cfs-link-menu-members {
+  margin: 0;
+  padding-left: 1.9rem;
+  list-style: none;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+/* T-61 */
+/* Link panel "アイコン表示" (🔗 badge visibility) toggle row, placed right
+   under Select All / Clear. Layout only; the badge/line rendering itself is
+   gated in CfsView. The vertical highlight lines no longer render spans in
+   the SW-group / category header row, so no CSS change is needed for the
+   line top edge (the T-60 span rules above are reused as-is). */
+.cfs-link-menu-badge-toggle {
+  padding: 0.3rem 0.1rem 0.1rem;
+}
+
+/* T-65 */
+/* Link display design option 3 (T-63): the CFS column header and the Link
+   panel reuse the Switch tab's "Link A" wording as a mini pill filled with
+   the shared group color (white text, same tokens as the T-63 mock). The
+   header pill sits centered UNDER the button name, so the button-name row
+   gains bottom padding while labels are shown (applied per-row, uniform for
+   every button head, so all header cells keep identical heights); hiding
+   the labels via "Show labels" restores the exact pre-T-65 header height.
+   The retired .cfs-header-link-badge / .cfs-link-menu-symbol rules above
+   (T-58 / T-60 blocks) are intentionally left in place; that markup no
+   longer renders. */
+.cfs-link-text-label {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  height: 1.05rem;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.cfs-header-link-label {
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.cfs-matrix-table thead tr.cfs-button-row-with-link-labels th.cfs-button-head {
+  padding-bottom: 1.3rem;
+}
+
+/* T-68 */
+/* The CFS header pill sits inside th.cfs-function-head, whose generic
+   ".cfs-function-head span { display: block }" rule (specificity 0,1,1)
+   overrides the pill's inline-flex (0,1,0), so the label text lost its
+   flex vertical centering and sat at the top of the pill. Re-assert the
+   pill layout with a more specific selector; measured text-ink vs pill
+   vertical center is back within ±1px (same as the Link panel pill). */
+.cfs-function-head span.cfs-link-text-label {
+  display: inline-flex;
+  white-space: nowrap;
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import type { BaseColumn, BaseColumnKey } from "../lib/cfsTableModel";
+import DragHandle from "./DragHandle";
 
 interface CfsBaseColumnMenuProps {
   columns: BaseColumn[];
@@ -45,7 +46,7 @@ export default function CfsBaseColumnMenu({
               }}
               title="Drag to reorder"
             >
-              <span className="drag-handle" aria-hidden="true">::</span>
+              <DragHandle variant="menu" aria-hidden />
               <input
                 type="checkbox"
                 checked={!hiddenColumns.has(column.key)}

@@ -1,8 +1,14 @@
 import type {
+  CircuitEntry,
+  DeviceAssignment,
   DeviceMaster,
+  FixtureMaster,
   LocationMaster,
   ProgrammingNameSettings,
 } from "../types";
+import { calcFixtureVa } from "./constants";
+import { circuitGroupKey } from "./circuitGroups";
+import { isLowHighEndEligibleDimmingTypes, resolveLowHighEnd } from "./lowHighEnd";
 import { normalizeProgrammingToken } from "./programming";
 import {
   formatProgrammingName,
@@ -22,6 +28,12 @@ export interface CfsBaseValueContext {
   locations: LocationMaster[];
   devices: DeviceMaster[];
   programmingNameSettings?: ProgrammingNameSettings;
+  // T-33: sources for the totalVa / zoneLowEnd / zoneHighEnd columns. When
+  // absent those columns resolve to "-" (callers that never show them, or old
+  // call sites, stay compatible).
+  circuits?: CircuitEntry[];
+  fixtures?: FixtureMaster[];
+  deviceAssignments?: DeviceAssignment[];
 }
 
 function programmingAreaToken(
@@ -126,6 +138,105 @@ export function cfsRowProgrammingNameValues(
   });
 }
 
+// ---- T-33: zone Total VA / Low End / High End -------------------------------
+
+function formatVaTotal(n: number): string {
+  if (!Number.isFinite(n)) return "";
+  if (Number.isInteger(n)) return String(n);
+  return (Math.round(n * 100) / 100).toString();
+}
+
+export interface CfsZoneVaContext {
+  // Full circuit list of the room type (all rows of every circuit group).
+  circuits: readonly CircuitEntry[];
+  fixtureByName: ReadonlyMap<string, FixtureMaster>;
+}
+
+/**
+ * Zone Total VA. Same calculation as the Circuit tab (calcFixtureVa summed
+ * over every row of the linked circuit group), so a zone linked to one group
+ * matches the Circuit tab's Total VA exactly. DALI address rows sum their own
+ * DALI fixture block instead of the whole group (one address = one block).
+ * Backlight / HVAC / Curtain rows and zones without circuits return [] ("-").
+ */
+export function rowTotalVaValues(row: CfsZoneRow, context: CfsZoneVaContext): string[] {
+  if (row.isBacklight || row.isHvac || row.isCurtain) return [];
+  if (row.circuits.length === 0) return [];
+  let sum = 0;
+  let found = false;
+  const seen = new Set<string>();
+  const addVa = (entry: CircuitEntry): void => {
+    if (seen.has(entry.id)) return;
+    seen.add(entry.id);
+    const fixture = context.fixtureByName.get(entry.fixture);
+    if (!fixture) return;
+    const value = Number.parseFloat(calcFixtureVa(entry.pcs, fixture));
+    if (Number.isFinite(value)) {
+      sum += value;
+      found = true;
+    }
+  };
+  for (const item of row.circuits) {
+    const entry = item.circuit;
+    const expanded = row.isDali
+      ? entry.daliFixtureGroupId.trim()
+        ? context.circuits.filter((c) => c.daliFixtureGroupId === entry.daliFixtureGroupId)
+        : [entry]
+      : context.circuits.filter((c) => circuitGroupKey(c) === circuitGroupKey(entry));
+    for (const circuit of expanded.length > 0 ? expanded : [entry]) addVa(circuit);
+  }
+  return found ? [formatVaTotal(sum)] : [];
+}
+
+export interface CfsZoneEndContext {
+  // Original circuit rows by id - CfsZoneRow.circuits carries the CFS display
+  // dimming type (e.g. "PWM" for 4P20 devices), so the On/Off judgement must
+  // read the Circuit tab's original value.
+  circuitById: ReadonlyMap<string, CircuitEntry>;
+  assignmentById: ReadonlyMap<string, DeviceAssignment>;
+  deviceByModel: ReadonlyMap<string, DeviceMaster>;
+}
+
+/**
+ * Zone Low/High End: DeviceAssign row override first, DeviceMaster fallback
+ * second (shared resolveLowHighEnd). T-55: only zones with at least one
+ * linked DALI / PWM / Phase circuit (original Circuit-tab dimming type) show
+ * a value; unassigned zones, On/Off-only zones, Backlight, HVAC and Curtain
+ * rows return [] ("-") - hidden overrides stay in the data.
+ */
+export function rowZoneLowHighEndValues(
+  row: CfsZoneRow,
+  key: "zoneLowEnd" | "zoneHighEnd",
+  context: CfsZoneEndContext,
+): string[] {
+  if (row.isBacklight || row.isHvac || row.isCurtain) return [];
+  const originalDimmingTypes = row.circuits.map(
+    (item) => context.circuitById.get(item.id)?.dimmingType ?? item.dimmingType,
+  );
+  if (!isLowHighEndEligibleDimmingTypes(originalDimmingTypes)) return [];
+  const assignment = (row.assignmentIds ?? [])
+    .map((id) => context.assignmentById.get(id))
+    .find((entry): entry is DeviceAssignment => Boolean(entry));
+  const resolved = resolveLowHighEnd(assignment, row.device, context.deviceByModel);
+  const value = key === "zoneLowEnd" ? resolved.lowEnd : resolved.highEnd;
+  return value ? [value] : [];
+}
+
+function zoneVaContextFrom(context: CfsBaseValueContext): CfsZoneVaContext {
+  return {
+    circuits: context.circuits ?? [],
+    fixtureByName: new Map((context.fixtures ?? []).map((fixture) => [fixture.fixture, fixture])),
+  };
+}
+
+function zoneEndContextFrom(context: CfsBaseValueContext): CfsZoneEndContext {
+  return {
+    circuitById: new Map((context.circuits ?? []).map((circuit) => [circuit.id, circuit])),
+    assignmentById: new Map((context.deviceAssignments ?? []).map((assignment) => [assignment.id, assignment])),
+    deviceByModel: new Map(context.devices.map((device) => [device.model, device])),
+  };
+}
+
 export function cfsBaseColumnLabel(col: BaseColumn, numberMode: CfsNumberMode): string {
   return col.key === "designerNumber"
     ? numberMode === "designer" ? "Designer #" : "Internal #"
@@ -171,6 +282,11 @@ export function cfsBaseColumnValues(
       return cfsRowProgrammingNameValues(row, context);
     case "dimmingType":
       return rowDimmingValues(row);
+    case "totalVa":
+      return rowTotalVaValues(row, zoneVaContextFrom(context));
+    case "zoneLowEnd":
+    case "zoneHighEnd":
+      return rowZoneLowHighEndValues(row, key, zoneEndContextFrom(context));
     case "area":
       return row.location ? [row.location] : [];
     case "detail":

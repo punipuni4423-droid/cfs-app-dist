@@ -29,12 +29,14 @@ import {
   rebuildZoneExpansion as rebuildSyncedZoneExpansion,
   syncDeviceAssignmentsWithCircuits,
 } from "../lib/deviceAssignmentSync";
+import { isLowHighEndEligibleDimmingTypes, resolveLowHighEnd } from "../lib/lowHighEnd";
 import Combobox, { type ComboboxOptionInput } from "./Combobox";
 import DuplicationBanner from "./DuplicationBanner";
 import DeviceSelectModal from "./DeviceSelectModal";
 import CurtainAssignView from "./CurtainAssignView";
 import HvacAssignView from "./HvacAssignView";
 import ActionIconButton from "./ActionIconButton";
+import DragHandle from "./DragHandle";
 import AutoGrowTextarea from "./AutoGrowTextarea";
 import ResizableMatrixScroll from "./ResizableMatrixScroll";
 import { createAppId } from '../lib/id';
@@ -214,6 +216,12 @@ export default function DeviceAssignView({
             : d.addressMode !== "dali",
         ),
     [devices, deviceAssignMode],
+  );
+
+  // T-32: master fallback for the Low End / High End columns.
+  const deviceByModel = useMemo(
+    () => new Map(devices.map((d) => [d.model, d])),
+    [devices],
   );
 
   function assignedCircuitLabel(circuitNumber: string): string {
@@ -580,6 +588,28 @@ export default function DeviceAssignView({
     }
 
     onChange(nextList);
+  }
+
+  // T-32: Low/High End override. A non-empty value is stored on the row; an
+  // empty value removes the key so the DeviceMaster default shows again.
+  function updateEndOverride(
+    id: string,
+    field: "lowEnd" | "highEnd",
+    value: string,
+  ): void {
+    if (!canEdit) return;
+    onChange(
+      assignments.map((a) => {
+        if (a.id !== id) return a;
+        if (value.trim() === "") {
+          if (!(field in a)) return a;
+          const next = { ...a };
+          delete next[field];
+          return next;
+        }
+        return { ...a, [field]: value };
+      }),
+    );
   }
 
   // ---- Renumber device numbers per mode (1, 2, 3...) ----
@@ -1295,7 +1325,8 @@ export default function DeviceAssignView({
   const isDali = deviceAssignMode === "dali";
   const isHvac = deviceAssignMode === "hvac";
   const isCurtain = deviceAssignMode === "curtain";
-  const colCount = isDali ? 12 : 9;
+  // T-32: +2 for the Low End / High End columns (placed before Zone / Address).
+  const colCount = isDali ? 14 : 11;
 
   // Zone/Address merge info for non-DALI
   const zoneBlockInfo = useMemo(() => {
@@ -1355,6 +1386,38 @@ export default function DeviceAssignView({
     flush();
     return info;
   }, [tabVisible]);
+
+  // T-55 (was T-32): per-row eligibility for the Low End / High End columns.
+  // A zone (deviceGroupId + zoneAddress; expansion rows included) shows the
+  // master default and accepts an override only when it has at least one
+  // linked circuit whose Circuit-tab Dimming Type is DALI, PWM or Phase.
+  // Unassigned / Reserved / Input / CCI/CCO rows and On/Off-only zones
+  // display "-" (existing overrides are hidden, never deleted).
+  const zoneEndEligibleById = useMemo(() => {
+    const map = new Map<string, boolean>();
+    const zoneKeyOf = (a: DeviceAssignment): string =>
+      a.deviceGroupId && a.zoneAddress ? `${a.deviceGroupId}::${a.zoneAddress}` : a.id;
+    const resolveTypes = (a: DeviceAssignment): string[] => {
+      const value = a.circuitNumber.trim();
+      if (!value || value === RESERVED_VALUE) return [];
+      if (isInputRow(a) || isCciOrCcoAddress(a.zoneAddress)) return [];
+      const match = findMatchingCircuit(value, a.device);
+      return match ? [match.dimmingType] : [];
+    };
+    const typesByZone = new Map<string, string[]>();
+    for (const a of tabVisible) {
+      const key = zoneKeyOf(a);
+      const list = typesByZone.get(key) ?? [];
+      list.push(...resolveTypes(a));
+      typesByZone.set(key, list);
+    }
+    for (const a of tabVisible) {
+      map.set(a.id, isLowHighEndEligibleDimmingTypes(typesByZone.get(zoneKeyOf(a)) ?? []));
+    }
+    return map;
+    // resolveTypes uses component helpers that depend on circuits/mode/devices.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabVisible, circuits, circuitMode, devices, deviceAssignMode]);
 
   const blockDisplayNo = useMemo(() => {
     const map = new Map<string, number>();
@@ -1499,6 +1562,8 @@ export default function DeviceAssignView({
             <col className="device-assign-col-device-num" />
             {isDali && <col className="device-assign-col-line" />}
             {isDali && <col className="device-assign-col-group" />}
+            <col className="device-assign-col-low-end" />
+            <col className="device-assign-col-high-end" />
             <col className="device-assign-col-zone" />
             <col className="device-assign-col-swap" />
             <col className="device-assign-col-circuit" />
@@ -1527,6 +1592,8 @@ export default function DeviceAssignView({
                   Group
                 </th>
               )}
+              <th style={{ minWidth: 78 }}>Low End</th>
+              <th style={{ minWidth: 78 }}>High End</th>
               <th style={{ minWidth: 130 }}>
                 {isDali ? "Address" : "Zone / Address"}
               </th>
@@ -1635,16 +1702,13 @@ export default function DeviceAssignView({
                     {isFirstOfBlock && (
                       <td className="col-center drag-handle-cell" rowSpan={blockVisibleRows}>
                         {!isEmpty ? (
-                          <span
-                            className="drag-handle"
+                          <DragHandle
                             draggable={canEdit}
                             onDragStart={(e) => handleDragStart(e, key)}
                             onDragEnd={handleDragEnd}
                             title="Drag to reorder group"
                             aria-label="Group reorder handle"
-                          >
-                            ::
-                          </span>
+                          />
                         ) : null}
                       </td>
                     )}
@@ -1727,6 +1791,7 @@ export default function DeviceAssignView({
                             update(a.id, "deviceNum", e.target.value)
                           }
                           disabled={isEmpty || !canEdit}
+                          aria-label="Device number"
                         />
                       </td>
                     ) : null}
@@ -1769,6 +1834,45 @@ export default function DeviceAssignView({
                           </span>
                         </td>
                       );
+                    })()}
+
+                    {/* Low End / High End (T-32) - keep as one self-contained
+                        block so a future column move stays a small change.
+                        Merge structure mirrors the Zone / Address cell. */}
+                    {(() => {
+                      const zi = zoneBlockInfo.get(a.id);
+                      if (!collapsed && zi && !zi.isFirst) return null;
+                      const rowSpan = collapsed ? 1 : zi?.rowSpan ?? 1;
+                      const endEligible = zoneEndEligibleById.get(a.id) ?? false;
+                      const resolved = resolveLowHighEnd(a, a.device, deviceByModel);
+                      return (["lowEnd", "highEnd"] as const).map((field) => (
+                        <td
+                          key={field}
+                          rowSpan={rowSpan}
+                          className={[
+                            collapsed ? "cell-collapsed-muted" : "",
+                            revisionCellClass(a, [field]),
+                          ].filter(Boolean).join(" ") || undefined}
+                        >
+                          {collapsed ? (
+                            <span className="cell-readonly" />
+                          ) : !endEligible ? (
+                            <span className="cell-readonly device-assign-end-na">-</span>
+                          ) : (
+                            <input
+                              className="cell-input"
+                              type="number"
+                              step="any"
+                              value={resolved[field]}
+                              onChange={(e) =>
+                                updateEndOverride(a.id, field, e.target.value)
+                              }
+                              disabled={isEmpty || !canEdit}
+                              aria-label={field === "lowEnd" ? "Low End" : "High End"}
+                            />
+                          )}
+                        </td>
+                      ));
                     })()}
 
                     {/* Zone / Address */}

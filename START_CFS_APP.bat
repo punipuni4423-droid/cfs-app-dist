@@ -68,13 +68,20 @@ if errorlevel 1 (
 set "UPDATED_STANDALONE_SERVER=%APP_ROOT%\.next\standalone\server.js"
 set "BUNDLED_RUNTIME_SERVER=%APP_ROOT%\runtime\server.js"
 set "STANDALONE_SERVER="
+set "REBUILD_STALE=0"
 if exist "%UPDATED_STANDALONE_SERVER%" (
-  call :is_root_build_current
-  if not errorlevel 1 (
+  call :classify_root_build
+  if "!BUILD_FRESHNESS!"=="current" (
     set "STANDALONE_SERVER=%UPDATED_STANDALONE_SERVER%"
     call :set_status "Using updated CFS build."
     goto :runtime_ready
   )
+  if "!BUILD_FRESHNESS!"=="unknown" (
+    set "STANDALONE_SERVER=%UPDATED_STANDALONE_SERVER%"
+    call :set_status "Using existing CFS build. Build freshness could not be verified."
+    goto :runtime_ready
+  )
+  set "REBUILD_STALE=1"
   call :set_status "Existing CFS build is stale. Rebuilding before launch."
 )
 if not exist "%UPDATED_STANDALONE_SERVER%" (
@@ -100,13 +107,17 @@ if not exist node_modules (
   )
 )
 
-if not exist "%UPDATED_STANDALONE_SERVER%" (
+set "NEED_BUILD=0"
+if not exist "%UPDATED_STANDALONE_SERVER%" set "NEED_BUILD=1"
+if "%REBUILD_STALE%"=="1" set "NEED_BUILD=1"
+if "%NEED_BUILD%"=="1" (
   call :set_status "Building CFS for launch."
   call npm.cmd run build
   if errorlevel 1 (
     call :set_status "CFS build failed. See the start log."
     exit /b 1
   )
+  call :sync_standalone_static
 )
 if exist "%UPDATED_STANDALONE_SERVER%" (
   set "STANDALONE_SERVER=%UPDATED_STANDALONE_SERVER%"
@@ -205,17 +216,37 @@ where npm.cmd >nul 2>nul
 if errorlevel 1 exit /b 1
 exit /b 0
 
-:is_root_build_current
-if not exist "%APP_ROOT%\.cfs-build-info.json" exit /b 1
-if not defined CFS_GIT_EXE exit /b 1
+rem Classifies the root .next\standalone build against Git HEAD.
+rem BUILD_FRESHNESS: current (SHA match), stale (SHA mismatch), unknown (no
+rem build info or Git SHA unavailable). Note: git.exe must be called without a
+rem leading quoted path inside for /f backquotes - cmd strips the outer quotes
+rem and breaks the command, which made this check always fail before. The
+rem bundled Git directory is already prepended to PATH by :prefer_bundled_git.
+:classify_root_build
+set "BUILD_FRESHNESS=unknown"
 set "CURRENT_GIT_SHA="
 set "BUILD_GIT_SHA="
-for /f "usebackq delims=" %%i in (`"%CFS_GIT_EXE%" -C "%APP_ROOT%" rev-parse HEAD 2^>nul`) do set "CURRENT_GIT_SHA=%%i"
-if not defined CURRENT_GIT_SHA exit /b 1
+if not exist "%APP_ROOT%\.cfs-build-info.json" exit /b 0
+for /f "usebackq delims=" %%i in (`git.exe -C "%APP_ROOT%" rev-parse HEAD 2^>nul`) do set "CURRENT_GIT_SHA=%%i"
+if not defined CURRENT_GIT_SHA exit /b 0
 for /f "usebackq delims=" %%i in (`powershell.exe -NoProfile -NonInteractive -Command "try { (Get-Content -LiteralPath '%APP_ROOT%\.cfs-build-info.json' -Raw | ConvertFrom-Json).gitSha } catch { '' }"`) do set "BUILD_GIT_SHA=%%i"
-if not defined BUILD_GIT_SHA exit /b 1
-if /I "%BUILD_GIT_SHA%"=="%CURRENT_GIT_SHA%" exit /b 0
-exit /b 1
+if not defined BUILD_GIT_SHA exit /b 0
+if /I "%BUILD_GIT_SHA%"=="%CURRENT_GIT_SHA%" (
+  set "BUILD_FRESHNESS=current"
+) else (
+  set "BUILD_FRESHNESS=stale"
+)
+exit /b 0
+
+rem Mirrors Sync-StandaloneStaticAssets in scripts\update-cfs-app.ps1: the Next
+rem standalone runtime serves /_next/static from .next\standalone\.next\static,
+rem which "next build" does not populate on its own.
+:sync_standalone_static
+if not exist "%APP_ROOT%\.next\standalone\server.js" exit /b 0
+if not exist "%APP_ROOT%\.next\static" exit /b 0
+if exist "%APP_ROOT%\.next\standalone\.next\static" rmdir /s /q "%APP_ROOT%\.next\standalone\.next\static" >nul 2>nul
+xcopy /e /i /y /q "%APP_ROOT%\.next\static" "%APP_ROOT%\.next\standalone\.next\static" >nul 2>nul
+exit /b 0
 
 :is_cfs_running
 if exist "%APP_ROOT%\scripts\test-cfs-instance.ps1" (
@@ -265,7 +296,11 @@ exit /b 0
 if "%PORT%"=="%CFS_AUTH_REDIRECT_PORT%" exit /b 0
 if not exist "%APP_ROOT%\scripts\auth-redirect-helper.mjs" exit /b 0
 set "AUTH_REDIRECT_LOG=%LOG_DIR%\auth-redirect-helper.log"
-start "" /b "%ComSpec%" /d /s /c "node.exe ""%APP_ROOT%\scripts\auth-redirect-helper.mjs"" --port %CFS_AUTH_REDIRECT_PORT% --target-file ""%AUTH_REDIRECT_TARGET_FILE%"" --target ""http://localhost:%PORT%"" >> ""%AUTH_REDIRECT_LOG%"" 2>&1"
+rem Single quotes here are load-bearing: the leading quote of the /c string
+rem shifts quote parity so >> and 2>&1 stay quoted at this parse level, and
+rem after cmd /s strips the outer quotes the inner cmd sees each path quoted
+rem normally. Doubled quotes ("") broke paths containing spaces.
+start "" /b "%ComSpec%" /d /s /c "node.exe "%APP_ROOT%\scripts\auth-redirect-helper.mjs" --port %CFS_AUTH_REDIRECT_PORT% --target-file "%AUTH_REDIRECT_TARGET_FILE%" --target "http://localhost:%PORT%" >> "%AUTH_REDIRECT_LOG%" 2>&1"
 exit /b 0
 
 :load_public_env

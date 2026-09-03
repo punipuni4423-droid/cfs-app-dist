@@ -37,8 +37,11 @@ try {
       throw "ServerPath is required for Standalone mode."
     }
     $server = (Resolve-Path -LiteralPath $ServerPath).Path
+    # Windows PowerShell 5.1 joins -ArgumentList items with spaces without
+    # quoting, so a server path containing spaces gets split into multiple
+    # node arguments ("Cannot find module"). Quote it explicitly.
     $process = Start-Process -FilePath "node.exe" `
-      -ArgumentList @($server) `
+      -ArgumentList @('"' + $server + '"') `
       -WorkingDirectory $root `
       -WindowStyle Hidden `
       -RedirectStandardOutput $StdoutPath `

@@ -13,6 +13,7 @@ import {
 } from "../lib/csv";
 import { useDragReorder } from "../lib/useDragReorder";
 import ActionIconButton from "./ActionIconButton";
+import DragHandle from "./DragHandle";
 import { createAppId } from '../lib/id';
 
 interface FixturesViewProps {
@@ -218,15 +219,12 @@ export default function FixturesView({ fixtures, onChange }: FixturesViewProps) 
                     onDrop={(e) => drag.onDrop(e, fx.id)}
                   >
                     <td className="col-center drag-handle-cell">
-                      <span
-                        className="drag-handle"
+                      <DragHandle
                         draggable
                         onDragStart={(e) => drag.onDragStart(e, fx.id)}
                         onDragEnd={drag.onDragEnd}
                         title="Drag to reorder"
-                      >
-                        ::
-                      </span>
+                      />
                     </td>
                     <td className="col-center">{index + 1}</td>
                     <td>

@@ -897,6 +897,7 @@ function isSwitchEntry(value: unknown): value is SwitchEntry {
     (!('buttonCount' in v) || typeof v.buttonCount === 'string') &&
     (!('buttonLabel' in v) || typeof v.buttonLabel === 'string') &&
     (!('isPriorityFunction' in v) || typeof v.isPriorityFunction === 'boolean') &&
+    (!('settingLinkGroupId' in v) || typeof v.settingLinkGroupId === 'string' || typeof v.settingLinkGroupId === 'undefined') &&
     (!('backlightAssignment' in v) || typeof v.backlightAssignment === 'string') &&
     typeof v.allocation === 'string' &&
     typeof v.buttonFunction === 'string' &&
@@ -919,7 +920,9 @@ function isDeviceAssignment(value: unknown): value is DeviceAssignment {
     typeof v.zoneAddress === 'string' &&
     typeof v.circuitNumber === 'string' &&
     (!('area' in v) || typeof v.area === 'string') &&
-    typeof v.detail === 'string'
+    typeof v.detail === 'string' &&
+    (!('lowEnd' in v) || typeof v.lowEnd === 'string') &&
+    (!('highEnd' in v) || typeof v.highEnd === 'string')
   );
 }
 

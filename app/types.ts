@@ -214,6 +214,11 @@ export interface DeviceAssignment {
   detail: string;
   // DALI address-group number (sequential per device). Empty for non-DALI.
   group: string;
+  // Optional per-zone Low/High End overrides (T-32). When absent or empty the
+  // DeviceMaster.lowEnd/highEnd value for `device` is displayed instead.
+  // Stored only while a non-empty override exists (empty input removes the key).
+  lowEnd?: string;
+  highEnd?: string;
 }
 
 export type HvacProtocol = 'Modbus' | 'FCU' | 'BACnet';
@@ -330,6 +335,10 @@ export interface SwitchEntry {
   isPriorityFunction?: boolean;
   buttonType: ButtonType;
   condition: string;
+  // T-35: permanent setting link. Rows sharing this id keep their Function
+  // Setting (buttonSetting deep copy) and Backlight CONDITION in sync.
+  // backlightTarget is switch-specific wiring and is never propagated.
+  settingLinkGroupId?: string;
   buttonSetting: SwitchButtonSetting;
   backlightTarget: string;
   backlightCondition: string;

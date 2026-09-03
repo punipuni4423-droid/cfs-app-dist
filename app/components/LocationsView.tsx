@@ -5,6 +5,7 @@ import { createEmptyLocation, DEFAULT_LOCATION_COLORS } from "../lib/constants";
 import { deriveAreaCode, nextUniqueAreaCode, normalizeAreaCode } from "../lib/programming";
 import { useDragReorder } from "../lib/useDragReorder";
 import ActionIconButton from "./ActionIconButton";
+import DragHandle from "./DragHandle";
 
 interface LocationsViewProps {
   locations: LocationMaster[];
@@ -159,15 +160,12 @@ export default function LocationsView({ locations, onChange }: LocationsViewProp
                     onDrop={(e) => drag.onDrop(e, loc.id)}
                   >
                     <td className="col-center drag-handle-cell">
-                      <span
-                        className="drag-handle"
+                      <DragHandle
                         draggable
                         onDragStart={(e) => drag.onDragStart(e, loc.id)}
                         onDragEnd={drag.onDragEnd}
                         title="Drag to reorder"
-                      >
-                        ::
-                      </span>
+                      />
                     </td>
                     <td className="col-center">{index + 1}</td>
                     <td>

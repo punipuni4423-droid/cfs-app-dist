@@ -4,6 +4,7 @@ import type { CurtainAssignment, LocationMaster, RevisionFieldChanges } from "..
 import { createEmptyCurtainAssignment } from "../lib/constants";
 import { useDragReorder } from "../lib/useDragReorder";
 import ActionIconButton from "./ActionIconButton";
+import DragHandle from "./DragHandle";
 import ResizableMatrixScroll from "./ResizableMatrixScroll";
 import { createAppId } from "../lib/id";
 
@@ -111,17 +112,14 @@ export default function CurtainAssignView({
                     }}
                   >
                     <td className="col-center drag-handle-cell">
-                      <span
-                        className="drag-handle"
+                      <DragHandle
                         draggable={canEdit}
                         onDragStart={(event) => {
                           if (canEdit) drag.onDragStart(event, assignment.id);
                         }}
                         onDragEnd={drag.onDragEnd}
                         title="Drag to reorder"
-                      >
-                        ::
-                      </span>
+                      />
                     </td>
                     <td className="col-center">{index + 1}</td>
                     <td className={revisionCellClass(assignment.id, ["area"])}>

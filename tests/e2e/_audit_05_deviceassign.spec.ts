@@ -165,7 +165,8 @@ test.describe("AUDIT-05 Device Assign", () => {
     expect(delta).toBe(6);
 
     // Device# (instance) が自動採番されて "1" になっている
-    const deviceNumInput = page.locator('tbody input[type="number"]').first();
+    // (T-32 で Low/High End の number input が増えたため aria-label で特定する)
+    const deviceNumInput = page.locator('tbody input[aria-label="Device number"]').first();
     await expect(deviceNumInput).toHaveValue("1", { timeout: 3000 });
   });
 
@@ -180,7 +181,8 @@ test.describe("AUDIT-05 Device Assign", () => {
     await addDeviceViaModal(page, "MQSE-4A1-D"); // 2台目
     await shot(page, "02-two-devices");
 
-    const nums = await page.locator('tbody input[type="number"]').evaluateAll(
+    // T-32 で Low/High End の number input が増えたため Device# は aria-label で特定する
+    const nums = await page.locator('tbody input[aria-label="Device number"]').evaluateAll(
       (els) => els.map((e) => (e as HTMLInputElement).value),
     );
     // 先頭行のみ Device# input を持つ (rowSpan 化) → [1, 2]

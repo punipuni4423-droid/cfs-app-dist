@@ -27,7 +27,9 @@ import {
 } from "../lib/constants";
 import { useDragReorder } from "../lib/useDragReorder";
 import { backlightStrongColor } from "../lib/backlightColors";
+import { buildSettingLinkGroups } from "../lib/settingLinkGroups";
 import ActionIconButton from "./ActionIconButton";
+import DragHandle from "./DragHandle";
 import AutoGrowTextarea from "./AutoGrowTextarea";
 import Combobox from "./Combobox";
 import ResizableMatrixScroll from "./ResizableMatrixScroll";
@@ -137,6 +139,75 @@ function visibleButtonFunction(sw: SwitchEntry): string {
   return sw.buttonFunction;
 }
 
+// T-35: switch setting link -------------------------------------------------
+// T-58: the group color/symbol palette and first-appearance ordering moved to
+// app/lib/settingLinkGroups.ts so the CFS header link display shares the
+// exact same colors. Behavior here is unchanged.
+
+/**
+ * T-35: propagate linked settings inside a commit. The copy rules are the
+ * same as applyBulkSetting: buttonSetting is deep-copied and backlight copies
+ * the CONDITION only. backlightTarget points at switch-specific circuit
+ * groups; propagating it cross-wired targets in the past, so it must never
+ * be copied between rows.
+ */
+function propagateSettingLinks(previous: SwitchEntry[], next: SwitchEntry[]): SwitchEntry[] {
+  const prevById = new Map(previous.map((sw) => [sw.id, sw]));
+  // groupId -> serialized buttonSetting of the first row whose setting changed.
+  const sceneSourceByGroup = new Map<string, string>();
+  // groupId -> backlightCondition of the first row whose condition changed.
+  const backlightSourceByGroup = new Map<string, string>();
+  for (const sw of next) {
+    const groupId = sw.settingLinkGroupId;
+    if (!groupId) continue;
+    const prev = prevById.get(sw.id);
+    if (!prev) continue;
+    if (!sceneSourceByGroup.has(groupId)) {
+      const serialized = JSON.stringify(sw.buttonSetting);
+      if (serialized !== JSON.stringify(prev.buttonSetting)) {
+        sceneSourceByGroup.set(groupId, serialized);
+      }
+    }
+    if (!backlightSourceByGroup.has(groupId) && sw.backlightCondition !== prev.backlightCondition) {
+      backlightSourceByGroup.set(groupId, sw.backlightCondition);
+    }
+  }
+  if (sceneSourceByGroup.size === 0 && backlightSourceByGroup.size === 0) return next;
+  return next.map((sw) => {
+    const groupId = sw.settingLinkGroupId;
+    if (!groupId) return sw;
+    let result = sw;
+    const sceneSetting = sceneSourceByGroup.get(groupId);
+    if (sceneSetting !== undefined && JSON.stringify(result.buttonSetting) !== sceneSetting) {
+      result = { ...result, buttonSetting: JSON.parse(sceneSetting) as SwitchEntry["buttonSetting"] };
+    }
+    const backlightCondition = backlightSourceByGroup.get(groupId);
+    if (backlightCondition !== undefined && result.backlightCondition !== backlightCondition) {
+      result = { ...result, backlightCondition };
+    }
+    return result;
+  });
+}
+
+/** T-35: a link group left with fewer than two members dissolves. */
+function clearSingletonSettingLinks(rows: SwitchEntry[]): SwitchEntry[] {
+  const counts = new Map<string, number>();
+  for (const sw of rows) {
+    if (!sw.settingLinkGroupId) continue;
+    counts.set(sw.settingLinkGroupId, (counts.get(sw.settingLinkGroupId) ?? 0) + 1);
+  }
+  let changed = false;
+  const next = rows.map((sw) => {
+    if (sw.settingLinkGroupId && (counts.get(sw.settingLinkGroupId) ?? 0) <= 1) {
+      changed = true;
+      return { ...sw, settingLinkGroupId: undefined };
+    }
+    return sw;
+  });
+  return changed ? next : rows;
+}
+// ---------------------------------------------------------------------------
+
 function nextQsmNumber(switches: SwitchEntry[]): string {
   const used = switches
     .filter((sw) => sw.kind === "qsm")
@@ -195,7 +266,14 @@ export default function SwitchView({
     if (!canEdit) return;
     // Resolve against the current state so a commit can never overwrite an
     // edit that landed after this component's props were captured.
-    onChange((current) => normalizeSwitchPriorityFunctions(typeof next === "function" ? next(current) : next));
+    // T-35: linked rows are synced inside the same commit so that revision
+    // diffs and collaboration saves ride the normal commit path.
+    onChange((current) => {
+      const resolved = typeof next === "function" ? next(current) : next;
+      return normalizeSwitchPriorityFunctions(
+        clearSingletonSettingLinks(propagateSettingLinks(current, resolved)),
+      );
+    });
   }
 
   useEffect(() => {
@@ -231,6 +309,10 @@ export default function SwitchView({
     });
     return map;
   }, [groupedSwitches]);
+
+  // T-35: color/symbol per setting link group, ordered by first appearance.
+  // T-58: computed by the shared helper so the CFS tab shows identical colors.
+  const settingLinkGroups = useMemo(() => buildSettingLinkGroups(switches), [switches]);
 
   const pirRegistrationCounts = useMemo(
     () => buildPirRegistrationCounts(switches),
@@ -628,6 +710,9 @@ export default function SwitchView({
           ...source,
           id,
           switchGroupId: groupId,
+          // T-35: a row duplicated for a different button label must not
+          // silently join the source row's setting link group.
+          settingLinkGroupId: source.buttonLabel === label ? source.settingLinkGroupId : undefined,
           kind: head.kind,
           switchNumber: head.switchNumber,
           switchName: head.switchName,
@@ -807,6 +892,48 @@ export default function SwitchView({
     else openBacklightSetting(template);
   }
 
+  // T-35: create/join a permanent setting link from the checked rows. The
+  // checked-first row acts as the template; its settings are synced to every
+  // member with the applyBulkSetting copy rules (buttonSetting deep copy,
+  // backlight CONDITION only — backlightTarget is never copied).
+  function linkSelectedSwitches(): void {
+    const template = bulkTemplateRow();
+    if (!template || bulkSelectedIds.size < 2) return;
+    const ids = new Set(bulkSelectedIds);
+    commitSwitches((current) => {
+      const selected = current.filter((sw) => ids.has(sw.id));
+      if (selected.length < 2) return current;
+      // Joining: reuse the first existing group among the selection.
+      const groupId = selected.find((sw) => sw.settingLinkGroupId)?.settingLinkGroupId ?? createAppId();
+      const source = current.find((sw) => sw.id === template.id) ?? selected[0];
+      const serializedSetting = JSON.stringify(source.buttonSetting);
+      return current.map((sw) => {
+        if (!ids.has(sw.id)) return sw;
+        if (sw.id === source.id) return { ...sw, settingLinkGroupId: groupId };
+        return {
+          ...sw,
+          settingLinkGroupId: groupId,
+          buttonSetting: JSON.parse(serializedSetting) as SwitchEntry["buttonSetting"],
+          backlightCondition: source.backlightCondition,
+        };
+      });
+    });
+    setBulkSelectedIds(new Set());
+  }
+
+  // T-35: remove only the checked rows from their link group. A group left
+  // with a single member dissolves via clearSingletonSettingLinks.
+  function unlinkSelectedSwitches(): void {
+    const ids = new Set(bulkSelectedIds);
+    if (ids.size === 0) return;
+    commitSwitches((current) =>
+      current.map((sw) =>
+        ids.has(sw.id) && sw.settingLinkGroupId ? { ...sw, settingLinkGroupId: undefined } : sw,
+      ),
+    );
+    setBulkSelectedIds(new Set());
+  }
+
   function applyBulkSetting(active: SwitchEntry): void {
     const mode = bulkApplyMode;
     if (!mode) return;
@@ -885,6 +1012,9 @@ export default function SwitchView({
       ...row,
       id: createAppId(),
       switchGroupId: newGroupId,
+      // T-35: copies never inherit the setting link (prevents accidental
+      // propagation into the source group).
+      settingLinkGroupId: undefined,
       switchNumber: row.switchNumber ? `${row.switchNumber} Copy` : row.switchNumber,
       buttonSetting: {
         ...row.buttonSetting,
@@ -1319,7 +1449,7 @@ export default function SwitchView({
                                           </div>
                                           <button
                                             type="button"
-                                            className="btn-clear-circuit"
+                                            className={`btn-clear-circuit${value === "" ? " is-active" : ""}`}
                                             onClick={() => handleTargetValueChange(sw, target, "")}
                                             disabled={!canEdit}
                                           >
@@ -1518,6 +1648,27 @@ export default function SwitchView({
             >
               Backlight Setting
             </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={!canEdit || bulkSelectedIds.size < 2}
+              onClick={linkSelectedSwitches}
+              title="Link the checked switches so their Function/Backlight settings stay in sync permanently"
+            >
+              Link
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={
+                !canEdit ||
+                !filteredSwitches.some((sw) => bulkSelectedIds.has(sw.id) && sw.settingLinkGroupId)
+              }
+              onClick={unlinkSelectedSwitches}
+              title="Remove the checked switches from their setting link group"
+            >
+              Unlink
+            </button>
           </>
         ) : null}
       </div>
@@ -1655,15 +1806,12 @@ export default function SwitchView({
                           onDrop={(e) => drag.onDrop(e, groupId)}
                         >
                           <td className="col-center drag-handle-cell">
-                            <span
-                              className="drag-handle"
+                            <DragHandle
                               draggable={canEdit}
                               onDragStart={(e) => drag.onDragStart(e, groupId)}
                               onDragEnd={drag.onDragEnd}
                               title="Drag to reorder"
-                            >
-                              ::
-                            </span>
+                            />
                           </td>
                           <td className="col-center">{groupDisplayNo.get(groupId) ?? ""}</td>
                           <td>
@@ -1726,6 +1874,13 @@ export default function SwitchView({
                       const isBeforeDrop = isDropTarget && drag.dragOverInfo?.position === "before" && isFirst;
                       const isAfterDrop = isDropTarget && drag.dragOverInfo?.position === "after" && rowIndex === groupRows.length - 1;
                       const selectedPirOptions = isPir ? selectedPirInstances(sw) : [];
+                      // T-35: group color/symbol for permanently linked rows.
+                      // T-62: the 🔗 checkbox-cell badge was removed; linked
+                      // rows are identified by the Setting button text
+                      // ("Link A" = group symbol) plus the group color.
+                      const linkInfo = sw.settingLinkGroupId
+                        ? settingLinkGroups.get(sw.settingLinkGroupId)
+                        : undefined;
                       return (
                         <Fragment key={`${sw.id}-${rowIndex}`}>
                           <tr
@@ -1739,15 +1894,12 @@ export default function SwitchView({
                           >
                             {isFirst ? (
                               <td className="col-center drag-handle-cell" rowSpan={groupRowSpan}>
-                                <span
-                                  className="drag-handle"
+                                <DragHandle
                                   draggable={canEdit}
                                   onDragStart={(e) => drag.onDragStart(e, groupId)}
                                   onDragEnd={drag.onDragEnd}
                                   title="Drag to reorder"
-                                >
-                                  ::
-                                </span>
+                                />
                               </td>
                             ) : null}
                             {isFirst ? (
@@ -2008,9 +2160,19 @@ export default function SwitchView({
                                   "setting-status-button",
                                   hasButtonSettings(sw) ? "has-setting" : "",
                                 ].filter(Boolean).join(" ")}
+                                style={
+                                  linkInfo && hasButtonSettings(sw)
+                                    ? { backgroundColor: linkInfo.color, borderColor: linkInfo.color, color: "#fff" }
+                                    : undefined
+                                }
                                 onClick={() => openFunctionSetting(sw)}
+                                title={
+                                  linkInfo
+                                    ? `Setting link group ${linkInfo.symbol}: Function/Backlight settings stay in sync`
+                                    : undefined
+                                }
                               >
-                                Setting
+                                {linkInfo ? `Link ${linkInfo.symbol}` : "Setting"}
                               </button>
                             </td>
                             <td className={`col-center ${revisionCellClass(sw.id, ["backlightTarget", "backlightCondition"])}`}>
@@ -2027,10 +2189,29 @@ export default function SwitchView({
                                       "setting-status-button",
                                       hasBacklightSettings(sw) ? "has-setting" : "",
                                     ].filter(Boolean).join(" ")}
-                                    style={strong ? { backgroundColor: strong, borderColor: strong, color: "#fff" } : undefined}
+                                    style={
+                                      linkInfo && hasBacklightSettings(sw)
+                                        ? { backgroundColor: linkInfo.color, borderColor: linkInfo.color, color: "#fff" }
+                                        : strong
+                                          ? { backgroundColor: strong, borderColor: strong, color: "#fff" }
+                                          : undefined
+                                    }
                                     onClick={() => openBacklightSetting(sw)}
+                                    title={
+                                      linkInfo
+                                        ? `Setting link group ${linkInfo.symbol}: Function/Backlight settings stay in sync`
+                                        : undefined
+                                    }
                                   >
-                                    {label || "Setting"}
+                                    {/* T-62: linked rows show the group symbol; the
+                                        synced condition label stays visible after it
+                                        ("Link A · Relax") since the column is wide
+                                        enough for the short level names. */}
+                                    {linkInfo
+                                      ? label
+                                        ? `Link ${linkInfo.symbol} · ${label}`
+                                        : `Link ${linkInfo.symbol}`
+                                      : label || "Setting"}
                                   </button>
                                 );
                               })()}

@@ -673,6 +673,7 @@ export default function SceneView({
           roomTypeName={roomTypeName}
           roomType={roomType}
           devices={devices}
+          fixtures={fixtures}
           programmingNameSettings={programmingNameSettings}
         />
       ) : (
@@ -1047,7 +1048,7 @@ export default function SceneView({
                             </div>
                             <button
                               type="button"
-                              className="btn-clear-circuit"
+                              className={`btn-clear-circuit${value === "" ? " is-active" : ""}`}
                               onClick={() => handleCircuitSettingChange(c, "")}
                               disabled={!canEdit}
                             >

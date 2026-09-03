@@ -4,6 +4,7 @@ import type { InputMaster } from "../types";
 import { createEmptyInputMaster } from "../lib/constants";
 import { useDragReorder } from "../lib/useDragReorder";
 import ActionIconButton from "./ActionIconButton";
+import DragHandle from "./DragHandle";
 
 interface InputMastersViewProps {
   inputMasters: InputMaster[];
@@ -73,15 +74,12 @@ export default function InputMastersView({
                     onDrop={(e) => drag.onDrop(e, master.id)}
                   >
                     <td className="col-center drag-handle-cell">
-                      <span
-                        className="drag-handle"
+                      <DragHandle
                         draggable
                         onDragStart={(e) => drag.onDragStart(e, master.id)}
                         onDragEnd={drag.onDragEnd}
                         title="Drag to reorder"
-                      >
-                        ::
-                      </span>
+                      />
                     </td>
                     <td className="col-center">{index + 1}</td>
                     <td>

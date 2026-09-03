@@ -604,11 +604,12 @@ export default function ProjectScreen({
       circuits: activeRoomTypeCircuits,
       roomTypeEntries: cfsWindowRoomTypeEntries,
       devices,
+      fixtures: project.fixtures,
       locations: project.locations,
       programmingNameSettings,
       sentAt: Date.now(),
     };
-  }, [project.name, activeRoomType, activeRoomTypeCircuits, cfsWindowRoomTypeEntries, devices, project.locations, programmingNameSettings]);
+  }, [project.name, activeRoomType, activeRoomTypeCircuits, cfsWindowRoomTypeEntries, devices, project.fixtures, project.locations, programmingNameSettings]);
 
   useEffect(() => {
     if (typeof BroadcastChannel === "undefined") return;
@@ -3176,6 +3177,7 @@ export default function ProjectScreen({
                 circuits={activeRoomTypeCircuits}
                 projectRoomTypeEntries={cfsWindowRoomTypeEntries}
                 devices={devices}
+                fixtures={project.fixtures}
                 locations={project.locations}
                 onScenesChange={setScenes}
                 onRoomScenesChange={setRoomScenes}

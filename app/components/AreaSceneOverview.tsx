@@ -6,6 +6,7 @@ import type {
   CircuitEntry,
   CurtainAssignment,
   DeviceMaster,
+  FixtureMaster,
   HvacAssignment,
   LocationMaster,
   ProgrammingNameSettings,
@@ -23,6 +24,7 @@ import {
 import {
   BASE_COLUMNS,
   CFS_FUNCTION_COLUMN_WIDTH,
+  orderBaseColumns,
   type BaseColumn,
   type BaseColumnKey,
   type CfsSortMode,
@@ -51,6 +53,8 @@ interface AreaSceneOverviewProps {
   roomTypeName?: string;
   roomType?: RoomType;
   devices?: DeviceMaster[];
+  // T-33: fixture masters for the zone Total VA column ("-" when absent).
+  fixtures?: FixtureMaster[];
   programmingNameSettings?: ProgrammingNameSettings;
 }
 
@@ -246,6 +250,7 @@ export default function AreaSceneOverview({
   roomTypeName = "",
   roomType,
   devices = [],
+  fixtures = [],
   programmingNameSettings,
 }: AreaSceneOverviewProps): JSX.Element {
   const matrix = useMemo(
@@ -306,14 +311,9 @@ export default function AreaSceneOverview({
     }
   }, [baseColumnOrder, hiddenBaseColumns, numberMode, prefsLoaded, sortMode]);
 
-  const orderedBaseColumns = useMemo(() => {
-    const byKey = new Map(BASE_COLUMNS.map((column) => [column.key, column]));
-    const ordered = baseColumnOrder
-      .map((key) => byKey.get(key))
-      .filter((column): column is BaseColumn => Boolean(column));
-    const orderedKeys = new Set(ordered.map((column) => column.key));
-    return [...ordered, ...BASE_COLUMNS.filter((column) => !orderedKeys.has(column.key))];
-  }, [baseColumnOrder]);
+  // T-33: orderBaseColumns inserts the new zone columns right after Type for
+  // saved orders that predate them (instead of appending at the end).
+  const orderedBaseColumns = useMemo(() => orderBaseColumns(baseColumnOrder), [baseColumnOrder]);
   const visibleBaseColumns = orderedBaseColumns.filter((column) => !hiddenBaseColumns.has(column.key));
   const stickyOffsets = useMemo(() => {
     const offsets = new Map<BaseColumnKey, number>();
@@ -326,8 +326,16 @@ export default function AreaSceneOverview({
   }, [visibleBaseColumns]);
 
   const baseContext = useMemo<CfsBaseValueContext>(
-    () => ({ locations, devices, programmingNameSettings }),
-    [devices, locations, programmingNameSettings],
+    () => ({
+      locations,
+      devices,
+      programmingNameSettings,
+      // T-33: sources for the zone Total VA / Low End / High End columns.
+      circuits,
+      fixtures,
+      deviceAssignments: roomType?.deviceAssignments,
+    }),
+    [circuits, devices, fixtures, locations, programmingNameSettings, roomType?.deviceAssignments],
   );
   const cfsRows = useMemo(() => {
     if (!roomType) return [];

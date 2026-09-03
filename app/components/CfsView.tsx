@@ -10,6 +10,7 @@ import type {
   CfsRowDisplaySettings,
   CfsRowKind,
   DeviceMaster,
+  FixtureMaster,
   InspectionMark,
   LocationMaster,
   ProgrammingNameSettings,
@@ -50,6 +51,7 @@ import {
   BASE_COLUMNS,
   CFS_FUNCTION_COLUMN_WIDTH,
   OTHER_AREA_ID,
+  orderBaseColumns,
   type BaseColumn,
   type BaseColumnKey,
   type CfsSortMode,
@@ -59,6 +61,12 @@ import {
   type MergeInfo,
 } from "../lib/cfsTableModel";
 import { appendCfsSheet, loadExcelJs, type CfsExcelHeaderGroups, type CfsExcelSheetModel } from "../lib/cfsExcelExport";
+import {
+  rowTotalVaValues,
+  rowZoneLowHighEndValues,
+  type CfsZoneEndContext,
+  type CfsZoneVaContext,
+} from "../lib/cfsBaseColumnValues";
 import { cfsTargetsForRow, type CfsResolvedTarget } from "../lib/cfsTargets";
 import { analyzeStaleHvacLinks, repairStaleHvacLinks } from "../lib/staleHvacLinkRepair";
 import {
@@ -84,8 +92,10 @@ import {
 } from "../lib/programmingNameSettings";
 import { isPmsScene, sortRoomScenesByGroup } from "../lib/roomScenes";
 import { CFS_ROW_DISPLAY_OPTIONS, normalizeCfsRowDisplaySettings } from "../lib/cfsRowDisplay";
+import { buildSettingLinkGroups } from "../lib/settingLinkGroups";
 import { normalizeBacklightLevels } from "../lib/constants";
 import CfsBaseColumnMenu from "./CfsBaseColumnMenu";
+import DragHandle from "./DragHandle";
 import CfsFilterMenu from "./CfsFilterMenu";
 
 interface CfsProjectExcelRoomTypeEntry {
@@ -102,6 +112,9 @@ interface CfsViewProps {
   circuits: CircuitEntry[];
   projectRoomTypeEntries?: CfsProjectExcelRoomTypeEntry[];
   devices: DeviceMaster[];
+  // T-33: fixture masters for the zone Total VA column. Optional so read-only
+  // embeddings without fixture data keep working (the column shows "-").
+  fixtures?: FixtureMaster[];
   locations: LocationMaster[];
   onScenesChange?: (next: Scene[]) => void;
   onRoomScenesChange?: (next: RoomScene[]) => void;
@@ -275,6 +288,18 @@ interface CfsStoredProjectPrefs extends CfsStoredSeedPrefs {
   // Function-column hide state persists at the group level only. Per-column
   // ids are room-type-local UUIDs, so they stay session-only (T-16).
   hiddenFunctionColumnGroups?: string[];
+  // T-60: Link panel selection, stored as the HIDDEN set of
+  // settingLinkGroupId values so brand-new link groups are visible by
+  // default. Group ids are project data ids, so this is per-project state.
+  // (Replaces the removed T-58 seed field showSettingLinkHeaders; any stored
+  // value of that old field is simply ignored on load.)
+  hiddenSettingLinkGroups?: string[];
+  // T-61: Link panel "Show labels" toggle (labeled "Show icons" until T-65;
+  // the stored field name is kept for compatibility), stored as the HIDDEN
+  // flag so a missing field keeps the default (labels shown). Same
+  // per-project-only convention as hiddenSettingLinkGroups; independent of
+  // the line checkboxes.
+  hideSettingLinkBadges?: boolean;
   viewerCfsRowDisplayByRoom?: Record<string, unknown>;
 }
 
@@ -332,6 +357,44 @@ function displaySwitchNumber(sw: SwitchEntry): string {
 
 function displaySwitchName(sw: SwitchEntry): string {
   return sw.switchName.trim() || "-";
+}
+
+// T-60: vertical column-highlight line state for one visible function
+// column. left/right are true only at the outer edges of a run of ADJACENT
+// columns that share the same checked link group, so a linked switch block
+// (or adjacent blocks of one group) reads as a single wrapped band.
+interface SettingLinkLineInfo {
+  color: string;
+  left: boolean;
+  right: boolean;
+}
+
+// T-60: builds column id -> line info for every column whose setting-link
+// group is checked in the Link panel (i.e. not in the hidden set). Display
+// only: never feeds the Excel export or the column model.
+function buildSettingLinkLineMap(
+  columns: readonly FunctionColumn[],
+  linkGroupsByColId: Map<string, { groupId: string; color: string; symbol: string }>,
+  hiddenGroupIds: ReadonlySet<string>,
+): Map<string, SettingLinkLineInfo> {
+  const map = new Map<string, SettingLinkLineInfo>();
+  const activeGroupIdAt = (index: number): string | null => {
+    const col = columns[index];
+    if (!col) return null;
+    const info = linkGroupsByColId.get(col.id);
+    if (!info || hiddenGroupIds.has(info.groupId)) return null;
+    return info.groupId;
+  };
+  columns.forEach((col, index) => {
+    const info = linkGroupsByColId.get(col.id);
+    if (!info || hiddenGroupIds.has(info.groupId)) return;
+    map.set(col.id, {
+      color: info.color,
+      left: activeGroupIdAt(index - 1) !== info.groupId,
+      right: activeGroupIdAt(index + 1) !== info.groupId,
+    });
+  });
+  return map;
 }
 
 function displayFunctionName(sw: SwitchEntry): string {
@@ -1026,6 +1089,7 @@ export default function CfsView({
   circuits,
   projectRoomTypeEntries,
   devices,
+  fixtures = [],
   locations,
   onScenesChange,
   onRoomScenesChange,
@@ -1056,6 +1120,15 @@ export default function CfsView({
   const [showAreaColorHighlight, setShowAreaColorHighlight] = useState(true);
   // Toggles the automatic pale per-value tint on Backlight Logic cells.
   const [showBacklightColorHighlight, setShowBacklightColorHighlight] = useState(true);
+  // T-60: setting-link groups whose column highlight lines are switched OFF
+  // in the Link panel (hidden set; empty = every link group highlighted).
+  // The "Link <symbol>" label is NOT controlled by this: it always marks
+  // linked columns.
+  const [hiddenSettingLinkGroupIds, setHiddenSettingLinkGroupIds] = useState<Set<string>>(new Set());
+  // T-61/T-65: Link panel "Show labels" toggle. true hides every
+  // "Link <symbol>" label (display only); the vertical lines are untouched.
+  // Default = show.
+  const [hideSettingLinkBadges, setHideSettingLinkBadges] = useState(false);
   const [showAreaSceneNames, setShowAreaSceneNames] = useState(true);
   const [showAreaSceneHighlight, setShowAreaSceneHighlight] = useState(true);
   const [showInspectionMarkHighlight, setShowInspectionMarkHighlight] = useState(true);
@@ -1161,6 +1234,23 @@ export default function CfsView({
 
   const locationById = useMemo(() => new Map(locations.map((loc) => [loc.id, loc])), [locations]);
   const deviceByModel = useMemo(() => new Map(devices.map((device) => [device.model, device])), [devices]);
+  // T-33: contexts for the zone Total VA / Low End / High End base columns.
+  const fixtureByName = useMemo(
+    () => new Map(fixtures.map((fixture) => [fixture.fixture, fixture])),
+    [fixtures],
+  );
+  const zoneVaContext = useMemo<CfsZoneVaContext>(
+    () => ({ circuits, fixtureByName }),
+    [circuits, fixtureByName],
+  );
+  const zoneEndContext = useMemo<CfsZoneEndContext>(
+    () => ({
+      circuitById: new Map(circuits.map((circuit) => [circuit.id, circuit])),
+      assignmentById: new Map(roomType.deviceAssignments.map((assignment) => [assignment.id, assignment])),
+      deviceByModel,
+    }),
+    [circuits, deviceByModel, roomType.deviceAssignments],
+  );
   const areaAddressByAssignmentCircuit = useMemo(
     () => buildAreaAddressAssignmentMap(roomType.deviceAssignments, circuits, locations),
     [circuits, locations, roomType.deviceAssignments],
@@ -1510,6 +1600,13 @@ export default function CfsView({
       setBaseColumnOrder(Array.isArray(parsed.baseColumnOrder) ? parsed.baseColumnOrder : []);
       setFunctionColumnGroupOrder(Array.isArray(parsed.functionColumnGroupOrder) ? parsed.functionColumnGroupOrder : []);
       setShowBacklightColorHighlight(parsed.showBacklightColorHighlight !== false);
+      // T-60: link-line selection (hidden set). Missing field = all visible.
+      // The retired T-58 field showSettingLinkHeaders is ignored on purpose.
+      setHiddenSettingLinkGroupIds(
+        new Set(Array.isArray(parsed.hiddenSettingLinkGroups) ? parsed.hiddenSettingLinkGroups : []),
+      );
+      // T-61: badge visibility (missing field = badges shown).
+      setHideSettingLinkBadges(parsed.hideSettingLinkBadges === true);
       if (
         parsed.viewerCfsRowDisplayByRoom &&
         typeof parsed.viewerCfsRowDisplayByRoom === "object" &&
@@ -1565,6 +1662,8 @@ export default function CfsView({
                   selectedAreaIds: Array.from(selectedAreaIds),
                   hiddenDeviceKeys: Array.from(hiddenDeviceKeys),
                   hiddenFunctionColumnGroups: Array.from(hiddenFunctionColumnGroupKeys),
+                  hiddenSettingLinkGroups: Array.from(hiddenSettingLinkGroupIds),
+                  hideSettingLinkBadges,
                   viewerCfsRowDisplayByRoom,
                 },
               }
@@ -1578,6 +1677,8 @@ export default function CfsView({
   }, [
     projectId,
     showBacklightColorHighlight,
+    hiddenSettingLinkGroupIds,
+    hideSettingLinkBadges,
     baseColumnOrder,
     functionColumnGroupOrder,
     hiddenDeviceKeys,
@@ -1688,14 +1789,9 @@ export default function CfsView({
     };
   }, [inspectionPopover]);
 
-  const orderedBaseColumns = useMemo(() => {
-    const byKey = new Map(BASE_COLUMNS.map((col) => [col.key, col]));
-    const ordered = baseColumnOrder
-      .map((key) => byKey.get(key))
-      .filter((col): col is BaseColumn => Boolean(col));
-    const orderedKeys = new Set(ordered.map((col) => col.key));
-    return [...ordered, ...BASE_COLUMNS.filter((col) => !orderedKeys.has(col.key))];
-  }, [baseColumnOrder]);
+  // T-33: orderBaseColumns inserts the new zone columns right after Type for
+  // saved orders that predate them (instead of appending at the end).
+  const orderedBaseColumns = useMemo(() => orderBaseColumns(baseColumnOrder), [baseColumnOrder]);
   const visibleBaseColumns = orderedBaseColumns.filter((col) => !hiddenBaseColumns.has(col.key));
   const visibleBaseColumnWidth = visibleBaseColumns.reduce((sum, col) => sum + col.minWidth, 0);
   const functionColumnGroups = useMemo<FunctionColumnGroup[]>(
@@ -1712,6 +1808,85 @@ export default function CfsView({
   );
   const visibleFunctionColumns = orderedFunctionColumns.filter((col) => !hiddenFunctionColumns.has(col.id));
   const hiddenFunctionColumnList = orderedFunctionColumns.filter((col) => hiddenFunctionColumns.has(col.id));
+
+  // T-58: column id -> link group id/color/symbol for the header link band.
+  // The header render consumes ONLY this generic map, so when scene/command
+  // columns gain their own link mechanism (T-40 phase 2) they can join the
+  // same display by adding entries here. Colors come from the shared helper
+  // and therefore always match the Switch tab badges. Display only: this map
+  // never feeds the Excel export or the column model.
+  const functionColumnLinkGroups = useMemo(() => {
+    const map = new Map<string, { groupId: string; color: string; symbol: string }>();
+    const groups = buildSettingLinkGroups(roomType.switches);
+    if (groups.size === 0) return map;
+    for (const col of orderedFunctionColumns) {
+      if (col.category !== "switch") continue;
+      const groupId = col.source?.settingLinkGroupId;
+      if (!groupId) continue;
+      const info = groups.get(groupId);
+      if (info) map.set(col.id, { groupId, color: info.color, symbol: info.symbol });
+    }
+    return map;
+  }, [orderedFunctionColumns, roomType.switches]);
+
+  // T-60: Link panel model — every setting-link group of the current room
+  // type in symbol order (= first-appearance order, identical to the Switch
+  // tab), with its members rendered as "switch name − button name".
+  const settingLinkPanelGroups = useMemo(() => {
+    const infos = buildSettingLinkGroups(roomType.switches);
+    const groups = new Map<string, { groupId: string; color: string; symbol: string; members: string[] }>();
+    for (const [groupId, info] of infos) {
+      groups.set(groupId, { groupId, color: info.color, symbol: info.symbol, members: [] });
+    }
+    for (const sw of roomType.switches) {
+      const groupId = sw.settingLinkGroupId;
+      if (!groupId) continue;
+      groups.get(groupId)?.members.push(`${displaySwitchName(sw)} − ${sw.buttonLabel.trim() || "-"}`);
+    }
+    return Array.from(groups.values());
+  }, [roomType.switches]);
+
+  // T-60: vertical link-line info per visible column. Recomputed inline (not
+  // useMemo) because visibleFunctionColumns is itself derived per render.
+  const settingLinkLineByColId = buildSettingLinkLineMap(
+    visibleFunctionColumns,
+    functionColumnLinkGroups,
+    hiddenSettingLinkGroupIds,
+  );
+
+  // T-60: absolute-positioned line spans for one header/body cell covering
+  // `cols`. Interior edges of merged header cells are positioned with the
+  // fixed column width (the CFS table is table-layout: fixed), so the lines
+  // stay on the member columns even when a merged cell mixes linked and
+  // unlinked columns. Returns null when the cell needs no line.
+  const renderSettingLinkLineSpans = (cols: ReadonlyArray<Pick<FunctionColumn, "id">>): ReactNode[] | null => {
+    const spans: ReactNode[] = [];
+    cols.forEach((col, index) => {
+      const line = settingLinkLineByColId.get(col.id);
+      if (!line) return;
+      if (line.left) {
+        spans.push(
+          <span
+            key={`${col.id}-link-line-l`}
+            className="cfs-link-col-line cfs-link-col-line-left"
+            style={{ backgroundColor: line.color, left: index * CFS_FUNCTION_COLUMN_WIDTH }}
+            aria-hidden="true"
+          />,
+        );
+      }
+      if (line.right) {
+        spans.push(
+          <span
+            key={`${col.id}-link-line-r`}
+            className="cfs-link-col-line cfs-link-col-line-right"
+            style={{ backgroundColor: line.color, right: (cols.length - 1 - index) * CFS_FUNCTION_COLUMN_WIDTH }}
+            aria-hidden="true"
+          />,
+        );
+      }
+    });
+    return spans.length > 0 ? spans : null;
+  };
 
   // Expands the persisted group keys into per-column hidden state when the
   // project prefs finish loading or the room type changes. Groups whose key
@@ -1979,11 +2154,14 @@ export default function CfsView({
     );
   }, [visibleBaseColumns]);
   const switchHeaderGroups = useMemo(() => {
-    const groups: Array<{ key: string; colSpan: number; switchNumber: string; switchName: string; kind: FunctionColumn["kind"] }> = [];
+    // cols added in T-60 so the link column lines can cover the switch header
+    // row too (display only; colSpan/labels are untouched).
+    const groups: Array<{ key: string; colSpan: number; switchNumber: string; switchName: string; kind: FunctionColumn["kind"]; cols: FunctionColumn[] }> = [];
     for (const col of visibleFunctionColumns) {
       const current = groups.at(-1);
       if (current && current.key === col.switchGroupKey) {
         current.colSpan += 1;
+        current.cols.push(col);
       } else {
         groups.push({
           key: col.switchGroupKey,
@@ -1991,6 +2169,7 @@ export default function CfsView({
           switchNumber: col.switchNumber,
           switchName: col.switchName,
           kind: col.kind,
+          cols: [col],
         });
       }
     }
@@ -2615,6 +2794,13 @@ export default function CfsView({
     const targetInspectionMarksByKey = new Map(
       (targetRoomType.inspectionMarks ?? []).map((mark) => [inspectionDraftKey(mark.sourceType, mark.sourceId, mark.targetId), mark]),
     );
+    // T-33: per-entry contexts for the zone Total VA / Low / High End columns.
+    const targetZoneVaContext: CfsZoneVaContext = { circuits: targetCircuits, fixtureByName };
+    const targetZoneEndContext: CfsZoneEndContext = {
+      circuitById: new Map(targetCircuits.map((circuit) => [circuit.id, circuit])),
+      assignmentById: new Map(targetRoomType.deviceAssignments.map((assignment) => [assignment.id, assignment])),
+      deviceByModel,
+    };
 
     function rowAreaAddressValuesForEntry(row: CfsZoneRow): string[] {
       return row.circuits.map((item) => item.areaAddress || "-");
@@ -2742,6 +2928,11 @@ export default function CfsView({
           return rowProgrammingNameValuesForEntry(row);
         case "dimmingType":
           return rowDimmingValues(row);
+        case "totalVa":
+          return rowTotalVaValues(row, targetZoneVaContext);
+        case "zoneLowEnd":
+        case "zoneHighEnd":
+          return rowZoneLowHighEndValues(row, key, targetZoneEndContext);
         case "area":
           return row.location ? [row.location] : [];
         case "detail":
@@ -4098,6 +4289,11 @@ export default function CfsView({
         return rowProgrammingNameValues(row);
       case "dimmingType":
         return rowDimmingValues(row);
+      case "totalVa":
+        return rowTotalVaValues(row, zoneVaContext);
+      case "zoneLowEnd":
+      case "zoneHighEnd":
+        return rowZoneLowHighEndValues(row, key, zoneEndContext);
       case "area":
         return row.location ? [row.location] : [];
       case "detail":
@@ -4507,7 +4703,7 @@ export default function CfsView({
                     }}
                     title="Drag to reorder"
                   >
-                    <span className="drag-handle" aria-hidden="true">::</span>
+                    <DragHandle variant="menu" aria-hidden />
                     <input
                       type="checkbox"
                       aria-label={`Show ${label} rows`}
@@ -4765,15 +4961,14 @@ export default function CfsView({
                       onPointerDown={(event) => handleFunctionColumnGroupPointerDown(event, group.key)}
                       title="Drag to reorder"
                     >
-                      <span
-                        className="drag-handle cfs-function-group-drag"
-                        aria-hidden="true"
+                      <DragHandle
+                        variant="menu"
+                        className="cfs-function-group-drag"
+                        aria-hidden
                         onMouseDown={(event) => handleFunctionColumnGroupMouseDown(event, group.key)}
                         onMouseMove={(event) => handleFunctionColumnGroupMouseMove(event, group.key)}
                         onPointerDown={(event) => handleFunctionColumnGroupPointerDown(event, group.key)}
-                      >
-                        ::
-                      </span>
+                      />
                       <input
                         type="checkbox"
                         aria-label={`${group.label} visible`}
@@ -4965,6 +5160,71 @@ export default function CfsView({
               <span className="cfs-highlight-swatch cfs-highlight-swatch-backlight" aria-hidden="true" />
               Backlight Logic Color
             </label>
+          </CfsFilterMenu>
+          {/* T-60: Link panel — lists the current room type's setting-link
+              groups (symbol order) with their members and per-group
+              checkboxes that toggle the vertical column highlight lines.
+              T-61/T-65: the "Show labels" checkbox toggles the
+              "Link <symbol>" labels; it is independent of the per-group line
+              checkboxes. */}
+          <CfsFilterMenu label="Link" toolbarOrder={8} wide panelMinWidth={320} testId="cfs-link-menu">
+            {settingLinkPanelGroups.length === 0 ? (
+              <div className="cfs-link-menu-empty">No links</div>
+            ) : (
+              <>
+                <div className="cfs-column-actions">
+                  <button type="button" onClick={() => setHiddenSettingLinkGroupIds(new Set())}>
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setHiddenSettingLinkGroupIds(
+                        new Set(settingLinkPanelGroups.map((group) => group.groupId)),
+                      )
+                    }
+                  >
+                    Clear
+                  </button>
+                </div>
+                {/* T-61/T-65: "Link <symbol>" label visibility (default ON =
+                    labels shown). */}
+                <label className="cfs-check cfs-link-menu-badge-toggle">
+                  <input
+                    type="checkbox"
+                    checked={!hideSettingLinkBadges}
+                    onChange={(e) => setHideSettingLinkBadges(!e.target.checked)}
+                  />
+                  Show labels
+                </label>
+                {settingLinkPanelGroups.map((group) => (
+                  <div key={group.groupId} className="cfs-link-menu-group">
+                    <label className="cfs-check">
+                      <input
+                        type="checkbox"
+                        checked={!hiddenSettingLinkGroupIds.has(group.groupId)}
+                        onChange={() =>
+                          setHiddenSettingLinkGroupIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(group.groupId)) next.delete(group.groupId);
+                            else next.add(group.groupId);
+                            return next;
+                          })
+                        }
+                      />
+                      <span className="cfs-link-text-label" style={{ backgroundColor: group.color }}>
+                        {`Link ${group.symbol}`}
+                      </span>
+                    </label>
+                    <ul className="cfs-link-menu-members">
+                      {group.members.map((member, memberIndex) => (
+                        <li key={`${group.groupId}-${memberIndex}`}>{member}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </>
+            )}
           </CfsFilterMenu>
           </div>
           <div className="cfs-matrix-actions">
@@ -5335,6 +5595,9 @@ export default function CfsView({
                   </div>
                 </th>
               ))}
+              {/* T-61: no link-line spans here. The vertical highlight lines
+                  start at the button-name row below, so the SW group band and
+                  the Scene/Command category band stay clear of them. */}
               {switchHeaderGroups.map((group, index) => (
                 <th
                   key={`${group.key}-${index}`}
@@ -5357,11 +5620,32 @@ export default function CfsView({
               ))}
               <th className="cfs-scroll-end-inline-cell" aria-hidden="true" />
             </tr>
-            <tr>
-              {buttonHeaderGroups.map((group, index) => (
+            <tr
+              className={
+                !hideSettingLinkBadges &&
+                buttonHeaderGroups.some((group) => group.cols.some((col) => functionColumnLinkGroups.has(col.id)))
+                  ? "cfs-button-row-with-link-labels"
+                  : undefined
+              }
+            >
+              {buttonHeaderGroups.map((group, index) => {
+                // T-58/T-60/T-65: linked columns carry a "Link <symbol>" text
+                // label (design option 3: same wording and group color as the
+                // Switch tab Setting button) centered under the button name,
+                // plus the T-60 vertical highlight lines for checked groups.
+                // While labels are shown the row above gains bottom padding
+                // (uniform across ALL button heads); hiding the labels
+                // restores the pre-T-65 height. Excel output stays untouched.
+                const linkInfo = group.cols.map((col) => functionColumnLinkGroups.get(col.id)).find(Boolean);
+                const linkLines = renderSettingLinkLineSpans(group.cols);
+                return (
                 <th
                   key={`${group.key}-${index}`}
                   className={`cfs-function-head cfs-button-head${group.startsSwitchGroup ? " cfs-switch-group-start" : ""}${
+                    linkInfo ? " cfs-header-link-cell" : ""
+                  }${
+                    linkLines ? " cfs-link-col-cell" : ""
+                  }${
                     group.cols.some((col) =>
                       hasChangedFunctionColumnFields(col, ["buttonLabel", "allocation", "buttonCount", "phase"]),
                     )
@@ -5370,6 +5654,18 @@ export default function CfsView({
                   }`}
                   colSpan={group.colSpan}
                 >
+                  {linkLines}
+                  {/* T-61/T-65: the Link panel "Show labels" toggle hides
+                      every label; the lines are independent of it. */}
+                  {linkInfo && !hideSettingLinkBadges ? (
+                    <span
+                      className="cfs-link-text-label cfs-header-link-label"
+                      style={{ backgroundColor: linkInfo.color }}
+                      title={`Setting link group ${linkInfo.symbol} (linked with the Switch tab)`}
+                    >
+                      {`Link ${linkInfo.symbol}`}
+                    </span>
+                  ) : null}
                   {group.kind === "pir" && group.pirLabels ? (
                     <PirHeaderText
                       labels={group.pirLabels}
@@ -5387,14 +5683,19 @@ export default function CfsView({
                     <HeaderSplitText value={group.button} />
                   )}
                 </th>
-              ))}
+                );
+              })}
               <th className="cfs-scroll-end-inline-cell" aria-hidden="true" />
             </tr>
             <tr>
-              {functionNameHeaderGroups.map((group, index) => (
+              {functionNameHeaderGroups.map((group, index) => {
+                const linkLines = renderSettingLinkLineSpans(group.cols);
+                return (
                 <th
                   key={`${group.key}-${index}`}
                   className={`cfs-function-head cfs-function-name-head${group.startsSwitchGroup ? " cfs-switch-group-start" : ""}${
+                    linkLines ? " cfs-link-col-cell" : ""
+                  }${
                     group.cols.some((col) =>
                       hasChangedFunctionColumnFields(col, ["buttonFunction", "kind", "sceneType", "detail"]),
                     )
@@ -5403,20 +5704,25 @@ export default function CfsView({
                   }`}
                   colSpan={group.colSpan}
                 >
+                  {linkLines}
                   <HeaderSplitText value={group.functionName || "-"} />
                 </th>
-              ))}
+                );
+              })}
               <th className="cfs-scroll-end-inline-cell" aria-hidden="true" />
             </tr>
             <tr>
               {conditionHeaderGroups.map((group, index) => {
                 const isPriority = group.cols.some(isPriorityTriggerColumn);
+                const linkLines = renderSettingLinkLineSpans(group.cols);
                 return (
                   <th
                     key={`${group.key}-${index}`}
                     colSpan={group.colSpan}
                     className={`cfs-function-head cfs-condition-head${group.startsSwitchGroup ? " cfs-switch-group-start" : ""}${
                       isPriority ? " cfs-priority-trigger-cell" : ""
+                    }${
+                      linkLines ? " cfs-link-col-cell" : ""
                     }${
                       group.cols.some(hasLinkIssueFunctionColumn) ? " cfs-link-error-cell" : ""
                     }${
@@ -5428,6 +5734,7 @@ export default function CfsView({
                     }`}
                     title={isPriority ? "Priority function trigger" : undefined}
                   >
+                    {linkLines}
                     <HeaderSplitText value={group.condition || "-"} />
                   </th>
                 );
@@ -5654,6 +5961,7 @@ export default function CfsView({
                     })}
                     {visibleFunctionColumns.map((col) => {
                       const values = functionValues(row, col);
+                      const linkLines = renderSettingLinkLineSpans([col]);
                       const isAreaSceneValue = showAreaSceneHighlight && hasAreaSceneValueCell(row, col);
                       const isRepairedLink = hasRepairedLinkCell(row, values);
                       const isLinkIssueCell = hasLinkIssueFunctionCell(row, col);
@@ -5688,7 +5996,7 @@ export default function CfsView({
                         <td
                           key={col.id}
                           style={backlightTint}
-                          className={`cfs-function-cell${switchGroupStartColIds.has(col.id) ? " cfs-switch-group-start" : ""}${hasChangedFunctionCell(row, col) ? " revision-changed-cell" : ""}${
+                          className={`cfs-function-cell${switchGroupStartColIds.has(col.id) ? " cfs-switch-group-start" : ""}${linkLines ? " cfs-link-col-cell" : ""}${hasChangedFunctionCell(row, col) ? " revision-changed-cell" : ""}${
                             isAreaSceneValue ? " cfs-area-scene-value-cell" : ""
                           }${
                             isRepairedLink ? " cfs-repaired-link-cell" : ""
@@ -5712,6 +6020,7 @@ export default function CfsView({
                             isLinkIssueCell ? " cfs-link-error-cell" : ""
                           }`}
                         >
+                          {linkLines}
                           {inspectionMode
                             ? renderInspectionCellContent(row, col, values, isAreaSceneValue)
                             : renderStack(values, row.isBacklight ? "" : "-", {

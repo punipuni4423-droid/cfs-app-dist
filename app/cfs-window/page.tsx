@@ -136,6 +136,7 @@ function CfsWindowContent() {
           circuits={view.circuits}
           projectRoomTypeEntries={snapshot.roomTypeEntries ?? []}
           devices={snapshot.devices}
+          fixtures={snapshot.fixtures ?? []}
           locations={snapshot.locations}
           programmingNameSettings={snapshot.programmingNameSettings}
           canEdit={false}
