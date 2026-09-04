@@ -30,8 +30,21 @@ if not defined NODE_OPTIONS set "NODE_OPTIONS=--max-old-space-size=4096"
 
 call :load_public_env
 
+rem BUGREPORT_20260824 BUG-5: resolve the log folder with a three-tier fallback
+rem and a real write probe. A launcher parent (launch-cfs-app.ps1) passes its
+rem resolved folder via CFS_LOG_DIR so both sides log to the same place.
 set "LOG_DIR=%APP_ROOT%\artifacts\startup"
-if not exist "%LOG_DIR%" mkdir "%LOG_DIR%" >nul 2>nul
+if defined CFS_LOG_DIR set "LOG_DIR=%CFS_LOG_DIR%"
+call :ensure_writable_log_dir
+if errorlevel 1 (
+  echo CFS could not start because no log folder is writable.
+  echo Tried: "%APP_ROOT%\artifacts\startup"
+  if defined LOCALAPPDATA echo Tried: "%LOCALAPPDATA%\CFS App\startup"
+  if defined TEMP echo Tried: "%TEMP%\CFS App\startup"
+  echo Move the CFS App folder to a writable location such as C:\Users\%USERNAME%\tools\CFS App and start it again.
+  exit /b 1
+)
+set "CFS_LOG_DIR=%LOG_DIR%"
 set "AUTH_REDIRECT_TARGET_FILE=%LOG_DIR%\auth-redirect-target.json"
 
 for /f %%i in ('powershell.exe -NoProfile -NonInteractive -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "STAMP=%%i"
@@ -276,20 +289,59 @@ for /l %%p in (3014,1,3035) do (
 exit /b 1
 
 :wait_for_cfs
+rem BUGREPORT_20260824 BUG-4: a single readiness probe can now take tens of
+rem seconds once the server starts answering (status probe timeout is 30s), so
+rem the iteration count alone no longer bounds the wait. Add a 180-second
+rem real-time deadline on top of the 90-iteration cap.
+call :now_seconds
+set /a "WAIT_DEADLINE=NOW_SECONDS+180"
 for /l %%i in (1,1,90) do (
   call :is_cfs_running
   if not errorlevel 1 exit /b 0
+  call :now_seconds
+  set /a "WAIT_LEFT=WAIT_DEADLINE-NOW_SECONDS"
+  if !WAIT_LEFT! GTR 43200 set /a "WAIT_LEFT-=86400"
+  if !WAIT_LEFT! LEQ 0 exit /b 1
   ping 127.0.0.1 -n 2 >nul
 )
 exit /b 1
 
+:now_seconds
+rem %TIME% is H:MM:SS.CC (a leading space becomes 0 via %TIME: =0%). Prefixing
+rem 1 and subtracting 100 keeps values such as "08" from being read as octal.
+set "NOW_SECONDS=0"
+for /f "tokens=1-3 delims=:.," %%a in ("%TIME: =0%") do set /a "NOW_SECONDS=(1%%a-100)*3600+(1%%b-100)*60+(1%%c-100)" >nul 2>nul
+exit /b 0
+
+rem BUGREPORT_20260824 BUG-5: pick the first log folder that accepts a real
+rem write. "if exist" cannot see a missing write permission (Program Files
+rem ACL carried along by a folder move), so each candidate is probed with an
+rem actual file.
+:ensure_writable_log_dir
+call :try_log_dir "%LOG_DIR%" && exit /b 0
+if defined LOCALAPPDATA call :try_log_dir "%LOCALAPPDATA%\CFS App\startup" && exit /b 0
+if defined TEMP call :try_log_dir "%TEMP%\CFS App\startup" && exit /b 0
+exit /b 1
+
+:try_log_dir
+set "LOG_DIR_CANDIDATE=%~1"
+if "%LOG_DIR_CANDIDATE%"=="" exit /b 1
+if not exist "%LOG_DIR_CANDIDATE%" mkdir "%LOG_DIR_CANDIDATE%" >nul 2>nul
+if not exist "%LOG_DIR_CANDIDATE%" exit /b 1
+> "%LOG_DIR_CANDIDATE%\.cfs-write-probe" 2>nul echo probe
+if not exist "%LOG_DIR_CANDIDATE%\.cfs-write-probe" exit /b 1
+del "%LOG_DIR_CANDIDATE%\.cfs-write-probe" >nul 2>nul
+set "LOG_DIR=%LOG_DIR_CANDIDATE%"
+exit /b 0
+
 :set_status
-> "%STATUS_FILE%" echo [%date% %time%] %~1
+rem The status file is advisory; a failed write must not break startup (BUG-5).
+2>nul (> "%STATUS_FILE%" echo [%date% %time%] %~1)
 echo %~1
 exit /b 0
 
 :write_auth_redirect_target
-> "%AUTH_REDIRECT_TARGET_FILE%" echo {"targetOrigin":"http://localhost:%PORT%"}
+2>nul (> "%AUTH_REDIRECT_TARGET_FILE%" echo {"targetOrigin":"http://localhost:%PORT%"})
 exit /b 0
 
 :start_auth_redirect_helper

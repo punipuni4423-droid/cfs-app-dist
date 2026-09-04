@@ -1,8 +1,9 @@
-import type { CircuitEntry, DeviceMaster, FixtureMaster, LocationMaster, ProjectData, RoomType } from "../types";
+import type { CircuitEntry, DeviceAssignment, DeviceMaster, FixtureMaster, LocationMaster, ProjectData, RoomType } from "../types";
 import { syncContactSwitchesWithCciAssignments } from "./cciAssignments";
 import { normalizeSceneSettingsByCircuitGroup, sameSceneSettings } from "./circuitGroups";
 import { backlightLevelsFromSwitches, normalizeBacklightLevels } from "./constants";
 import { syncDeviceAssignmentsWithCircuits } from "./deviceAssignmentSync";
+import { buildZoneCircuitMerges, syncSceneSettingsAcrossZoneMerges } from "./zoneCircuitMerges";
 import { createAppId } from "./id";
 import { ensureRoomScenes } from "./roomScenes";
 import { dedupeSwitchIds, normalizeQsmAssignments } from "./switchSync";
@@ -201,6 +202,22 @@ function normalizeAreaSceneCircuitGroupSettings(
   return changed ? { ...roomType, scenes } : roomType;
 }
 
+// T-59: zones carrying additional circuits edit their Area Scene value through
+// the primary circuit group; propagate that value to the merged groups so
+// "write to every circuit of the zone" holds for the Area Scene tab as well.
+function syncZoneMergedSceneSettings(
+  roomType: RoomType,
+  circuits: readonly CircuitEntry[],
+  deviceAssignments: readonly DeviceAssignment[],
+): RoomType {
+  const currentScenes = roomType.scenes ?? [];
+  const scenes = syncSceneSettingsAcrossZoneMerges(
+    currentScenes,
+    buildZoneCircuitMerges(circuits, deviceAssignments),
+  );
+  return scenes === currentScenes ? roomType : { ...roomType, scenes };
+}
+
 export function inferRoomTypeCircuitIds(
   project: Pick<ProjectData, "circuits" | "roomTypes">,
   roomType: Pick<RoomType, "id" | "circuitIds" | "scenes" | "roomScenes" | "switches">,
@@ -347,9 +364,13 @@ export function syncRoomTypeLinks(
     createId: context.createId,
   });
 
-  const sceneScopedRoomType = normalizeAreaSceneCircuitGroupSettings(
-    normalizeSceneReferences(roomType),
+  const sceneScopedRoomType = syncZoneMergedSceneSettings(
+    normalizeAreaSceneCircuitGroupSettings(
+      normalizeSceneReferences(roomType),
+      context.circuits,
+    ),
     context.circuits,
+    deviceAssignments,
   );
   let switches = dedupeSwitchIds(sceneScopedRoomType.switches, context.createId);
   switches = syncContactSwitchesWithCciAssignments(switches, deviceAssignments);

@@ -219,6 +219,14 @@ export interface DeviceAssignment {
   // Stored only while a non-empty override exists (empty input removes the key).
   lowEnd?: string;
   highEnd?: string;
+  // T-59: additional circuits assigned to the same zone via the "+" button
+  // (fixed lighting zones only, max 4 so a zone carries at most 5 circuits).
+  // Stored only while non-empty, like lowEnd/highEnd (v14 schema kept).
+  additionalCircuitNumbers?: string[];
+  // T-59: editable zone-level Detail shown in CFS / setting panels while
+  // additional circuits exist. Initialized from circuit 1's Detail and
+  // removed together with additionalCircuitNumbers.
+  zoneDetail?: string;
 }
 
 export type HvacProtocol = 'Modbus' | 'FCU' | 'BACnet';

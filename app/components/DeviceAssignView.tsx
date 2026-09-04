@@ -30,6 +30,11 @@ import {
   syncDeviceAssignmentsWithCircuits,
 } from "../lib/deviceAssignmentSync";
 import { isLowHighEndEligibleDimmingTypes, resolveLowHighEnd } from "../lib/lowHighEnd";
+import {
+  additionalCircuitNumbersOf,
+  joinZoneCircuitNumbers,
+  MAX_ADDITIONAL_ZONE_CIRCUITS,
+} from "../lib/zoneCircuitMerges";
 import Combobox, { type ComboboxOptionInput } from "./Combobox";
 import DuplicationBanner from "./DuplicationBanner";
 import DeviceSelectModal from "./DeviceSelectModal";
@@ -106,6 +111,30 @@ function computeLineNumber(a: DeviceAssignment, allInGroup: DeviceAssignment[]):
   return idx < DALI_ADDRESSES_PER_LINE ? 1 : 2;
 }
 
+// T-59: additionalCircuitNumbers / zoneDetail are stored only while the zone
+// keeps at least one additional circuit (Reserved / Clear / device change
+// removes both together).
+function stripZoneExtras(a: DeviceAssignment): DeviceAssignment {
+  if (!("additionalCircuitNumbers" in a) && !("zoneDetail" in a)) return a;
+  const next = { ...a };
+  delete next.additionalCircuitNumbers;
+  delete next.zoneDetail;
+  return next;
+}
+
+// T-59 (spec 8): Swap moves the additional circuits and the zone Detail as a
+// whole together with circuitNumber/detail.
+function moveZoneExtras(base: DeviceAssignment, source: DeviceAssignment): DeviceAssignment {
+  const next = stripZoneExtras(base);
+  const hasExtras =
+    Array.isArray(source.additionalCircuitNumbers) && source.additionalCircuitNumbers.length > 0;
+  if (!hasExtras && !("zoneDetail" in source)) return next;
+  const moved = next === base ? { ...next } : next;
+  if (hasExtras) moved.additionalCircuitNumbers = [...(source.additionalCircuitNumbers ?? [])];
+  if (typeof source.zoneDetail === "string") moved.zoneDetail = source.zoneDetail;
+  return moved;
+}
+
 export default function DeviceAssignView({
   assignments,
   hvacAssignments,
@@ -139,6 +168,9 @@ export default function DeviceAssignView({
     position: "before" | "after";
   } | null>(null);
   const [swapSourceId, setSwapSourceId] = useState<string | null>(null);
+  // T-59: zones showing one empty "additional circuit" combobox after "+"
+  // was pressed (UI-only; the value is stored once a circuit is selected).
+  const [pendingExtraSlotIds, setPendingExtraSlotIds] = useState<Set<string>>(new Set());
   const scrollPosRef = useRef<number | null>(null);
 
   useLayoutEffect(() => {
@@ -228,8 +260,9 @@ export default function DeviceAssignView({
     const labels = assignments
       .filter((assignment) => {
         const value = assignment.circuitNumber.trim();
-        if (!value || value === RESERVED_VALUE) return false;
-        return value === circuitNumber;
+        if (value && value !== RESERVED_VALUE && value === circuitNumber) return true;
+        // T-59: additional circuits of a zone count as "in use" too.
+        return additionalCircuitNumbersOf(assignment).includes(circuitNumber);
       })
       .map((assignment) => {
         const device = assignment.device.trim();
@@ -478,7 +511,8 @@ export default function DeviceAssignView({
         a.zoneAddress === row.zoneAddress;
       if (!sameZone) return a;
       return a.id === row.id
-        ? { ...a, circuitNumber: RESERVED_VALUE, area: "", detail: "", group: "" }
+        ? // T-59: Clear also removes the additional circuits and zone Detail.
+          stripZoneExtras({ ...a, circuitNumber: RESERVED_VALUE, area: "", detail: "", group: "" })
         : a;
     });
     next = rebuildZoneExpansion(next, row.id);
@@ -554,12 +588,27 @@ export default function DeviceAssignView({
           if (effectiveValue === RESERVED_VALUE) {
             updated.detail = "";
             updated.group = "";
+            // T-59: Reserved clears the additional circuits and zone Detail.
+            delete updated.additionalCircuitNumbers;
+            delete updated.zoneDetail;
           } else if (match) {
             updated.detail = match.detail;
           } else if (isCciOrCcoAddress(target.zoneAddress)) {
             const previousMatch = findMatchingCircuit(target.circuitNumber, target.device);
             if (previousMatch?.detail && updated.detail === previousMatch.detail) {
               updated.detail = "";
+            }
+          }
+          // T-59: the primary circuit may not duplicate an additional one.
+          if (effectiveValue !== RESERVED_VALUE && updated.additionalCircuitNumbers) {
+            const remaining = updated.additionalCircuitNumbers.filter(
+              (entry) => entry.trim() !== effectiveValue.trim(),
+            );
+            if (remaining.length === 0) {
+              delete updated.additionalCircuitNumbers;
+              delete updated.zoneDetail;
+            } else if (remaining.length !== updated.additionalCircuitNumbers.length) {
+              updated.additionalCircuitNumbers = remaining;
             }
           }
         }
@@ -575,6 +624,26 @@ export default function DeviceAssignView({
           updated.detail = "";
           updated.circuitNumber = RESERVED_VALUE;
           updated.group = "";
+          // T-59: an incompatible device clears the whole zone assignment.
+          delete updated.additionalCircuitNumbers;
+          delete updated.zoneDetail;
+      }
+      if (
+        field === "device" &&
+        updated.additionalCircuitNumbers &&
+        !isInputRow(updated) &&
+        !isCcoAddress(updated.zoneAddress)
+      ) {
+        // T-59: drop additional circuits the new device cannot drive.
+        const remaining = updated.additionalCircuitNumbers.filter((entry) =>
+          findMatchingCircuit(entry, effectiveValue),
+        );
+        if (remaining.length === 0) {
+          delete updated.additionalCircuitNumbers;
+          delete updated.zoneDetail;
+        } else if (remaining.length !== updated.additionalCircuitNumbers.length) {
+          updated.additionalCircuitNumbers = remaining;
+        }
       }
       return updated;
     });
@@ -609,6 +678,77 @@ export default function DeviceAssignView({
         }
         return { ...a, [field]: value };
       }),
+    );
+  }
+
+  // ---- T-59: additional circuits per zone ("+" button, max 5 in total) ----
+  function additionalCircuitOptions(a: DeviceAssignment, currentValue: string): ComboboxOptionInput[] {
+    const used = new Set([a.circuitNumber.trim(), ...additionalCircuitNumbersOf(a)]);
+    used.delete(currentValue);
+    return circuitOptionsForDevice(a.device).filter((option) => {
+      const value = typeof option === "string" ? option : option.value;
+      return !used.has(value);
+    });
+  }
+
+  function addExtraSlot(id: string): void {
+    if (!canEdit) return;
+    setPendingExtraSlotIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }
+
+  function removeExtraSlot(id: string): void {
+    setPendingExtraSlotIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }
+
+  // index >= 0 edits/removes a stored additional circuit; index -1 confirms
+  // the pending slot. An empty value removes the entry; removing the last one
+  // also removes zoneDetail (spec 3). T-89: zoneDetail is never auto-filled
+  // (former spec 2 removed) - while it stays blank the " / " join of the live
+  // circuit Details is displayed, and only user input pins a fixed value.
+  function setAdditionalCircuit(id: string, index: number, value: string): void {
+    if (!canEdit) return;
+    const trimmed = value.trim();
+    onChange(
+      assignments.map((a) => {
+        if (a.id !== id) return a;
+        const current = a.additionalCircuitNumbers ?? [];
+        let nextValues: string[] | null = null;
+        if (index < 0) {
+          if (!trimmed || trimmed === RESERVED_VALUE) return a;
+          if (current.includes(trimmed) || a.circuitNumber.trim() === trimmed) return a;
+          if (current.length >= MAX_ADDITIONAL_ZONE_CIRCUITS) return a;
+          nextValues = [...current, trimmed];
+        } else if (!trimmed || trimmed === RESERVED_VALUE) {
+          nextValues = current.filter((_, i) => i !== index);
+        } else {
+          if (current.some((entry, i) => i !== index && entry === trimmed)) return a;
+          if (a.circuitNumber.trim() === trimmed) return a;
+          nextValues = current.map((entry, i) => (i === index ? trimmed : entry));
+        }
+        if (nextValues.length === 0) return stripZoneExtras(a);
+        return { ...a, additionalCircuitNumbers: nextValues };
+      }),
+    );
+    if (trimmed && trimmed !== RESERVED_VALUE) removeExtraSlot(id);
+  }
+
+  function removeAdditionalCircuit(id: string, index: number): void {
+    setAdditionalCircuit(id, index, "");
+  }
+
+  function updateZoneDetail(id: string, value: string): void {
+    if (!canEdit) return;
+    onChange(
+      assignments.map((a) => (a.id === id ? { ...a, zoneDetail: value } : a)),
     );
   }
 
@@ -653,18 +793,31 @@ export default function DeviceAssignView({
     if (!canEdit) return;
     const prev = circuitMode;
     const next: CircuitMode = prev === "designer" ? "internal" : "designer";
-    const converted = assignments.map((a) => {
-      const v = a.circuitNumber.trim();
-      if (!v) return a;
-      if (isCcoAddress(a.zoneAddress)) return a;
+    const convertValue = (value: string): string => {
+      const v = value.trim();
+      if (!v) return value;
       const match = circuits.find((c) =>
         prev === "designer" ? c.designerNumber === v : c.internalNumber === v,
       );
-      if (!match) return a;
+      if (!match) return value;
       const newVal =
         next === "designer" ? match.designerNumber : match.internalNumber;
-      if (!newVal || newVal === a.circuitNumber) return a;
-      return { ...a, circuitNumber: newVal };
+      return newVal || value;
+    };
+    const converted = assignments.map((a) => {
+      if (isCcoAddress(a.zoneAddress)) return a;
+      const newPrimary = a.circuitNumber.trim() === "" ? a.circuitNumber : convertValue(a.circuitNumber);
+      // T-59: additional circuits convert together with the primary one.
+      const extras = a.additionalCircuitNumbers;
+      const newExtras = extras && extras.length > 0 ? extras.map(convertValue) : undefined;
+      const primaryChanged = newPrimary !== a.circuitNumber;
+      const extrasChanged =
+        !!extras && !!newExtras && newExtras.some((value, index) => value !== extras[index]);
+      if (!primaryChanged && !extrasChanged) return a;
+      const updated = { ...a };
+      if (primaryChanged) updated.circuitNumber = newPrimary;
+      if (extrasChanged && newExtras) updated.additionalCircuitNumbers = newExtras;
+      return updated;
     });
     onChange(converted);
     setCircuitMode(next);
@@ -944,10 +1097,11 @@ export default function DeviceAssignView({
     }
     let nextList = assignments.map((a) => {
       if (a.id === fromId) {
-        return { ...a, circuitNumber: to.circuitNumber, detail: to.detail };
+        // T-59: additional circuits + zone Detail move with the swap.
+        return moveZoneExtras({ ...a, circuitNumber: to.circuitNumber, detail: to.detail }, to);
       }
       if (a.id === toId) {
-        return { ...a, circuitNumber: from.circuitNumber, detail: from.detail };
+        return moveZoneExtras({ ...a, circuitNumber: from.circuitNumber, detail: from.detail }, from);
       }
       return a;
     });
@@ -1143,9 +1297,22 @@ export default function DeviceAssignView({
         : a.deviceGroupId && a.zoneAddress
           ? `${a.deviceGroupId}::${a.zoneAddress}::${v}`
           : `${a.id}::${v}`;
-      if (seen.has(dedup)) continue;
-      seen.add(dedup);
-      counts.set(v, (counts.get(v) ?? 0) + 1);
+      if (!seen.has(dedup)) {
+        seen.add(dedup);
+        counts.set(v, (counts.get(v) ?? 0) + 1);
+      }
+      // T-59: additional circuits of the zone join the duplicate check.
+      if (!isDeviceDali(a.device)) {
+        for (const extra of additionalCircuitNumbersOf(a)) {
+          const extraDedup =
+            a.deviceGroupId && a.zoneAddress
+              ? `${a.deviceGroupId}::${a.zoneAddress}::${extra}`
+              : `${a.id}::${extra}`;
+          if (seen.has(extraDedup)) continue;
+          seen.add(extraDedup);
+          counts.set(extra, (counts.get(extra) ?? 0) + 1);
+        }
+      }
     }
     const dup = new Set<string>();
     for (const [v, n] of counts) if (n > 1) dup.add(v);
@@ -1401,8 +1568,15 @@ export default function DeviceAssignView({
       const value = a.circuitNumber.trim();
       if (!value || value === RESERVED_VALUE) return [];
       if (isInputRow(a) || isCciOrCcoAddress(a.zoneAddress)) return [];
+      const types: string[] = [];
       const match = findMatchingCircuit(value, a.device);
-      return match ? [match.dimmingType] : [];
+      if (match) types.push(match.dimmingType);
+      // T-59: additional circuits of the zone join the eligibility check.
+      for (const extra of additionalCircuitNumbersOf(a)) {
+        const extraMatch = findMatchingCircuit(extra, a.device);
+        if (extraMatch) types.push(extraMatch.dimmingType);
+      }
+      return types;
     };
     const typesByZone = new Map<string, string[]>();
     for (const a of tabVisible) {
@@ -1660,8 +1834,9 @@ export default function DeviceAssignView({
                 const circuitDup =
                   !inputRow &&
                   !ccoRow &&
-                  a.circuitNumber.trim() !== "" &&
-                  dupCircuit.has(a.circuitNumber.trim());
+                  ((a.circuitNumber.trim() !== "" &&
+                    dupCircuit.has(a.circuitNumber.trim())) ||
+                    additionalCircuitNumbersOf(a).some((value) => dupCircuit.has(value)));
 
                 const isExpansion = !isDali && !inputRow && expansionRowIds.has(a.id);
                 const isDaliGroupRow = isDali && !!a.group;
@@ -1935,7 +2110,7 @@ export default function DeviceAssignView({
                             collapsed ? "cell-collapsed-muted" : "",
                             circuitDup ? "cell-duplicate" : "",
                             isReserved ? "cell-reserved" : "",
-                            revisionCellClass(a, ["circuitNumber", "area"]),
+                            revisionCellClass(a, ["circuitNumber", "area", "additionalCircuitNumbers"]),
                           ].filter(Boolean).join(" ") || undefined}
                         >
                           {collapsed ? (
@@ -1993,29 +2168,136 @@ export default function DeviceAssignView({
                               ) : null}
                             </div>
                           ) : (
-                            <div className="circuit-cell">
-                              <Combobox
-                                value={isReserved ? "" : a.circuitNumber}
-                                options={circuitOptionsForDevice(a.device)}
-                                onChange={(v) =>
-                                  update(a.id, "circuitNumber", v)
-                                }
-                        disabled={isEmpty || !canEdit}
-                      />
-                      {!isEmpty &&
-                      !collapsed &&
-                      a.circuitNumber.trim() !== "" &&
-                      a.circuitNumber !== RESERVED_VALUE ? (
-                        <button
-                          type="button"
-                          className="btn-clear-circuit"
-                          onClick={() => clearCircuitAssignment(a)}
-                          disabled={!canEdit}
-                        >
-                          Clear
-                        </button>
-                      ) : null}
-                    </div>
+                            (() => {
+                              // T-59/T-75: fixed lighting zones may carry up
+                              // to 4 additional circuits. With additional
+                              // circuits the top line is a read-only " & "
+                              // summary of every assigned Circuit # (plus the
+                              // "+" button) and the following lines are one
+                              // assign row per circuit.
+                              const extraValues = additionalCircuitNumbersOf(a);
+                              const showZoneExtras =
+                                !isDali && !isReserved && canEditCircuit;
+                              const hasPendingSlot =
+                                showZoneExtras && pendingExtraSlotIds.has(a.id);
+                              const canAddExtra =
+                                showZoneExtras &&
+                                canEdit &&
+                                !hasPendingSlot &&
+                                extraValues.length < MAX_ADDITIONAL_ZONE_CIRCUITS;
+                              const hasZoneStack =
+                                showZoneExtras && extraValues.length > 0;
+                              const stackedMode = hasZoneStack || hasPendingSlot;
+                              const addButton = canAddExtra ? (
+                                <button
+                                  type="button"
+                                  className="btn-clear-circuit btn-add-zone-circuit"
+                                  onClick={() => addExtraSlot(a.id)}
+                                  title="Assign another circuit to this zone (max 5)"
+                                  aria-label="Add circuit to this zone"
+                                >
+                                  +
+                                </button>
+                              ) : null;
+                              return (
+                                <div className="circuit-cell-stack">
+                                  {hasZoneStack ? (
+                                    <div
+                                      className="circuit-cell zone-line zone-circuit-summary"
+                                      title="Circuits assigned to this zone"
+                                    >
+                                      <span className="cell-readonly zone-circuit-summary-text">
+                                        {joinZoneCircuitNumbers([
+                                          a.circuitNumber,
+                                          ...extraValues,
+                                        ])}
+                                      </span>
+                                      {addButton}
+                                    </div>
+                                  ) : null}
+                                  <div
+                                    className={
+                                      stackedMode
+                                        ? "circuit-cell zone-line zone-assign-line"
+                                        : "circuit-cell"
+                                    }
+                                  >
+                                    <Combobox
+                                      value={isReserved ? "" : a.circuitNumber}
+                                      options={circuitOptionsForDevice(a.device)}
+                                      onChange={(v) =>
+                                        update(a.id, "circuitNumber", v)
+                                      }
+                                      disabled={isEmpty || !canEdit}
+                                    />
+                                    {!isEmpty &&
+                                    !collapsed &&
+                                    a.circuitNumber.trim() !== "" &&
+                                    a.circuitNumber !== RESERVED_VALUE ? (
+                                      <button
+                                        type="button"
+                                        className="btn-clear-circuit"
+                                        onClick={() => clearCircuitAssignment(a)}
+                                        disabled={!canEdit}
+                                      >
+                                        Clear
+                                      </button>
+                                    ) : null}
+                                    {hasZoneStack ? null : addButton}
+                                  </div>
+                                  {showZoneExtras
+                                    ? extraValues.map((value, index) => (
+                                        <div
+                                          className="circuit-cell zone-line zone-assign-line zone-extra-circuit"
+                                          key={`${a.id}-extra-${index}`}
+                                        >
+                                          <Combobox
+                                            value={value}
+                                            options={additionalCircuitOptions(a, value)}
+                                            onChange={(v) =>
+                                              setAdditionalCircuit(a.id, index, v)
+                                            }
+                                            disabled={!canEdit}
+                                          />
+                                          <button
+                                            type="button"
+                                            className="btn-clear-circuit"
+                                            onClick={() =>
+                                              removeAdditionalCircuit(a.id, index)
+                                            }
+                                            disabled={!canEdit}
+                                            title="Remove this circuit from the zone"
+                                            aria-label="Remove additional circuit"
+                                          >
+                                            −
+                                          </button>
+                                        </div>
+                                      ))
+                                    : null}
+                                  {hasPendingSlot ? (
+                                    <div className="circuit-cell zone-line zone-assign-line zone-extra-circuit">
+                                      <Combobox
+                                        value=""
+                                        options={additionalCircuitOptions(a, "")}
+                                        onChange={(v) =>
+                                          setAdditionalCircuit(a.id, -1, v)
+                                        }
+                                        disabled={!canEdit}
+                                      />
+                                      <button
+                                        type="button"
+                                        className="btn-clear-circuit"
+                                        onClick={() => removeExtraSlot(a.id)}
+                                        title="Cancel adding a circuit"
+                                        aria-label="Cancel adding a circuit"
+                                      >
+                                        −
+                                      </button>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            })()
                   )}
                 </td>
                       );
@@ -2033,7 +2315,7 @@ export default function DeviceAssignView({
                         [
                           collapsed ? "cell-collapsed-muted" : "",
                           !collapsed && isReserved ? "cell-reserved" : "",
-                          revisionCellClass(a, ["detail"]),
+                          revisionCellClass(a, ["detail", "zoneDetail"]),
                         ].filter(Boolean).join(" ") || undefined
                       }
                     >
@@ -2053,18 +2335,67 @@ export default function DeviceAssignView({
                           ) : null}
                         </div>
                       ) : (
-                        <div className="cell-with-clear">
-                          <AutoGrowTextarea
-                            value={a.detail}
-                            onChange={(value) => update(a.id, "detail", value)}
-                            disabled={detailDisabled || !canEdit}
-                          />
-                          {a.detail.trim() && !isReserved ? (
-                            <button type="button" className="btn-clear-circuit" onClick={() => update(a.id, "detail", "")} disabled={!canEdit}>
-                              Clear
-                            </button>
-                          ) : null}
-                        </div>
+                        (() => {
+                          // T-59: zones with additional circuits show
+                          // circuit 1 / additional circuit Details read-only
+                          // and edit the zone Detail on the last line.
+                          const extraValues = additionalCircuitNumbersOf(a);
+                          if (extraValues.length === 0 || isDali) {
+                            return (
+                              <div className="cell-with-clear">
+                                <AutoGrowTextarea
+                                  value={a.detail}
+                                  onChange={(value) => update(a.id, "detail", value)}
+                                  disabled={detailDisabled || !canEdit}
+                                />
+                                {a.detail.trim() && !isReserved ? (
+                                  <button type="button" className="btn-clear-circuit" onClick={() => update(a.id, "detail", "")} disabled={!canEdit}>
+                                    Clear
+                                  </button>
+                                ) : null}
+                              </div>
+                            );
+                          }
+                          // T-75: line 1 = editable zone Detail (next to the
+                          // " & " summary), following lines = the read-only
+                          // Detail of each assigned circuit.
+                          return (
+                            <div className="zone-detail-stack">
+                              <div
+                                className="zone-detail-edit zone-line"
+                                title="Zone Detail (shown in CFS and setting panels)"
+                              >
+                                <AutoGrowTextarea
+                                  value={a.zoneDetail ?? ""}
+                                  onChange={(value) => updateZoneDetail(a.id, value)}
+                                  disabled={!canEdit}
+                                />
+                              </div>
+                              <div
+                                className="zone-detail-line zone-line"
+                                title="Circuit 1 Detail (edit in the Circuit tab)"
+                              >
+                                {/* T-89: live circuit-master Detail (same as the
+                                    additional circuit lines below), not the
+                                    assignment.detail copy. */}
+                                <span className="cell-readonly">
+                                  {findMatchingCircuit(a.circuitNumber, a.device)?.detail || "-"}
+                                </span>
+                              </div>
+                              {extraValues.map((value, index) => (
+                                <div
+                                  className="zone-detail-line zone-line"
+                                  key={`${a.id}-extra-detail-${index}`}
+                                  title={`Circuit ${index + 2} Detail (edit in the Circuit tab)`}
+                                >
+                                  <span className="cell-readonly">
+                                    {findMatchingCircuit(value, a.device)?.detail || "-"}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()
                       )}
                     </td>
                       );

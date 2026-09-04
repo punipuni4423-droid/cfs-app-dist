@@ -765,6 +765,13 @@ textarea:disabled {
   font-weight: 700;
 }
 
+/* T-73: shared utility for conditional notices that must keep their layout
+   slot while hidden, so toggling them never shifts the content below.
+   Reuse this class anywhere a value-driven banner appears above tables. */
+.layout-reserved-hidden {
+  visibility: hidden;
+}
+
 .pdu-warning {
   padding: 0.75rem 0.9rem;
   border: 1px solid #fecaca;
@@ -7929,6 +7936,31 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   background: var(--color-accent-soft);
 }
 
+/* ---- T-59: zone with additional circuits (Device Assign fixed tab) ---- */
+.circuit-cell-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.circuit-cell.zone-extra-circuit {
+  padding-left: 0.9rem;
+}
+
+.btn-add-zone-circuit {
+  min-width: 1.55rem;
+}
+
+.zone-detail-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.zone-detail-line .cell-readonly {
+  color: var(--muted, #64748b);
+}
+
 /* ---- Scene view ---- */
 .scene-view {
   display: flex;
@@ -9334,4 +9366,95 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 .cfs-function-head span.cfs-link-text-label {
   display: inline-flex;
   white-space: nowrap;
+}
+
+/* ---- T-75: Device Assign zone multi-circuit redesign ----
+   With additional circuits, line 1 of the Circuit # cell is a read-only
+   " & "-joined summary (+ add button) shown next to the editable zone Detail;
+   the following lines are one assign row per circuit. A shared line
+   min-height keeps the Circuit # and Detail stacks row-aligned, and every
+   action button (Clear / + / -) gets one fixed size so the comboboxes share
+   the same left and right edges on every line. */
+.circuit-cell-stack .zone-line,
+.zone-detail-stack .zone-line {
+  min-height: 2.15rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.zone-detail-stack {
+  gap: 0.25rem; /* match .circuit-cell-stack so paired lines stay aligned */
+}
+
+.circuit-cell.zone-extra-circuit {
+  padding-left: 0; /* T-75: assign rows share one left edge (was indented) */
+}
+
+.zone-circuit-summary .zone-circuit-summary-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.circuit-cell-stack .zone-circuit-summary .btn-clear-circuit,
+.circuit-cell-stack .zone-assign-line .btn-clear-circuit {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  min-width: 3.1rem;
+  height: 1.7rem;
+  padding: 0 0.3rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.zone-detail-edit {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.zone-detail-edit .cell-textarea {
+  width: 100%;
+}
+
+/* ---- T-74: Reserved cell legibility (visual only) ----
+   Keep the established gray "disabled" look (#c4c9cf background is
+   unchanged) but raise the foreground contrast so values, Detail text
+   and the combobox trigger stay readable (user report 2026-09-03).
+   Shared rules: DeviceAssign Circuit#/Detail cells, Command Contact
+   Switch cells (.cell-reserved) and the CFS Reserved rows
+   (.cfs-reserved-row). Reserved logic, Hide Reserved and saved data
+   are untouched. */
+:root {
+  /* 4.96:1 on #c4c9cf (was #9ca3af = 1.52:1 / #7d8894 = 2.16:1) */
+  --reserved-cell-fg: #43505c;
+  /* 3.26:1 on #c4c9cf: makes the input/combobox outline visible */
+  --reserved-cell-border: #5f6b7a;
+}
+
+.cell-reserved .cell-input,
+.cell-reserved .cell-readonly,
+.cell-reserved .combobox-input {
+  color: var(--reserved-cell-fg);
+  border-color: var(--reserved-cell-border);
+}
+
+/* The global `input:disabled { opacity: 0.48 }` washed the Reserved
+   Detail text down to ~1.2:1. Inside Reserved cells the gray background
+   plus the not-allowed cursor already conveys the disabled state, so
+   restore full opacity for legibility. */
+.cell-reserved .cell-input:disabled {
+  opacity: 1;
+  color: var(--reserved-cell-fg);
+}
+
+.cell-reserved .combobox-trigger {
+  color: var(--reserved-cell-fg);
+}
+
+/* CFS tab Reserved rows: same foreground fix (bg #c4c9cf unchanged). */
+.cfs-reserved-row {
+  color: var(--reserved-cell-fg);
 }

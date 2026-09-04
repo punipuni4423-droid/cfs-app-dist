@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { CfsCircuit, CfsRowKind, CircuitEntry, DeviceAssignment, LocationMaster, RoomType, SwitchEntry } from "../types";
 import { BACKLIGHT_LEVEL_NAMES, DALI_ADDRESSES_PER_LINE, DEFAULT_LOCATION_COLORS } from "./constants";
 import { areaAddressAssignmentKey } from "./programming";
+import { additionalCircuitNumbersOf, joinZoneCircuitDetails, joinZoneCircuitNumbers } from "./zoneCircuitMerges";
 import { curtainSettingId, hvacSettingId, isCfsOnlySettingRow } from "./settingTargets";
 import { DEFAULT_CFS_ROW_ORDER } from "./cfsRowDisplay";
 import {
@@ -47,7 +48,9 @@ export function rowDimmingValues(row: CfsZoneRow): string[] {
     if (isPwmControlDevice(row.device)) return ["PWM"];
     return row.inputKind ? [row.inputKind] : ["-"];
   }
-  return uniqueValues(row.circuits.map((item) => item.dimmingType));
+  return uniqueValues(
+    [...row.circuits, ...(row.zoneExtraCircuits ?? [])].map((item) => item.dimmingType),
+  );
 }
 
 export function rowNumberValues(row: CfsZoneRow, numberMode: "designer" | "internal"): string[] {
@@ -744,13 +747,63 @@ export function buildCfsZoneRows({
             circuit: { ...circuit, dimmingType },
           };
         };
-        const rowCircuits = matchedCircuits.map(toRowCircuit);
+        let rowCircuits = matchedCircuits.map(toRowCircuit);
         const displayedCircuitIds = new Set(rowCircuits.map((item) => item.circuit.id));
-        const targetAliasCircuits = isDaliAssignment
+        // T-59/T-75: additional circuits of the zone ("+" button) collapse into
+        // the primary circuit line (zone Detail, " & "-joined Designer #) and are
+        // carried separately for Total VA / Low-High End / target resolution.
+        const additionalNumbers = additionalCircuitNumbersOf(assignment);
+        const zoneDetailValue = (assignment.zoneDetail ?? "").trim();
+        let zoneExtraCircuits: RowCircuit[] = [];
+        if (
+          additionalNumbers.length > 0 &&
+          rowCircuits.length > 0 &&
+          !isDaliAssignment &&
+          !isCciOrCcoAddress(assignment.zoneAddress)
+        ) {
+          const seenGroupKeys = new Set(
+            matchedCircuits.map((circuit) => circuit.circuitGroupId.trim() || circuit.id),
+          );
+          const extraEntries: CircuitEntry[] = [];
+          for (const value of additionalNumbers) {
+            const head = circuits.find((circuit) => circuit.designerNumber.trim() === value);
+            if (!head) continue;
+            const key = head.circuitGroupId.trim() || head.id;
+            if (seenGroupKeys.has(key)) continue;
+            seenGroupKeys.add(key);
+            extraEntries.push(head);
+          }
+          if (extraEntries.length > 0) {
+            zoneExtraCircuits = extraEntries.map(toRowCircuit);
+            const joinNumbers = (primaryValue: string, extraValues: string[]): string =>
+              joinZoneCircuitNumbers([primaryValue, ...extraValues]);
+            rowCircuits = rowCircuits.map((item) => ({
+              ...item,
+              designerNumber: joinNumbers(
+                item.designerNumber,
+                extraEntries.map((entry) => entry.designerNumber),
+              ),
+              internalNumber: joinNumbers(
+                item.internalNumber,
+                extraEntries.map((entry) => entry.internalNumber),
+              ),
+              // T-88: blank zoneDetail falls back to the " / " join of every
+              // assigned circuit's Detail (blank details skipped).
+              detail:
+                zoneDetailValue ||
+                joinZoneCircuitDetails([
+                  item.detail,
+                  ...extraEntries.map((entry) => entry.detail),
+                ]),
+            }));
+          }
+        }
+        const targetAliasCircuits = (isDaliAssignment
           ? []
           : rawMatchedCircuits
               .filter((circuit) => !displayedCircuitIds.has(circuit.id))
-              .map(toRowCircuit);
+              .map(toRowCircuit)
+        ).concat(zoneExtraCircuits);
         const primaryCircuit = rowCircuits[0];
         const isDali = rowCircuits.some((item) => item.dimmingType === "DALI");
         const zoneInputKind = isCciAddress(assignment.zoneAddress)
@@ -782,6 +835,7 @@ export function buildCfsZoneRows({
           locationColor: primaryCircuit?.locationColor || ioLocation?.color || "",
           circuits: rowCircuits,
           targetAliasCircuits,
+          ...(zoneExtraCircuits.length > 0 ? { zoneExtraCircuits } : {}),
           isCci: isCciAddress(assignment.zoneAddress),
           rowKind: rowCircuits.length > 0 ? "lighting" : "cco",
           assignmentValue,

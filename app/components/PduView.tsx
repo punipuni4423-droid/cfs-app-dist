@@ -528,9 +528,14 @@ export default function PduView({
         </div>
       </div>
 
-      {grandPdu < 0 ? (
-        <div className="pdu-warning">PDU total is below 0. Add supply or reduce load.</div>
-      ) : null}
+      {/* T-73: keep the warning's layout slot even while hidden so Qty spinner
+          presses that flip Total PDU across 0 do not shift the tables below. */}
+      <div
+        className={`pdu-warning${grandPdu < 0 ? "" : " layout-reserved-hidden"}`}
+        aria-hidden={grandPdu < 0 ? undefined : true}
+      >
+        PDU total is below 0. Add supply or reduce load.
+      </div>
 
       <PduTable
         title="Lutron Device PDU Summary"

@@ -45,7 +45,6 @@ import {
   sameSceneSettings,
   sceneSettingValueForCircuitGroup,
   setSceneSettingValueForCircuitGroup,
-  uniqueCircuitGroupHeads,
 } from "../lib/circuitGroups";
 import ActionIconButton from "./ActionIconButton";
 import AreaSceneOverview from "./AreaSceneOverview";
@@ -218,6 +217,7 @@ export default function SceneView({
     return hasRevisionChange(id, fields) ? "revision-changed-cell" : "";
   }
 
+  const deviceAssignments = roomType?.deviceAssignments;
   const areaSceneSource = useMemo<AreaSceneSourceInput>(
     () => ({
       locations,
@@ -225,8 +225,10 @@ export default function SceneView({
       hvacAssignments,
       curtainAssignments,
       switches,
+      // T-59: merge zones carrying additional circuits into one lighting row.
+      deviceAssignments: deviceAssignments ?? [],
     }),
-    [locations, circuits, hvacAssignments, curtainAssignments, switches],
+    [locations, circuits, hvacAssignments, curtainAssignments, switches, deviceAssignments],
   );
 
   const firstTargetAreaId = useMemo(
@@ -304,7 +306,7 @@ export default function SceneView({
 
   function getAreaCircuitCount(areaId: string): number {
     return (
-      uniqueCircuitGroupHeads(circuits.filter((circuit) => circuit.area === areaId)).length +
+      buildAreaSceneCircuitHeads(areaId, areaSceneSource).length +
       hvacAssignments.filter((assignment) => assignment.area === areaId).length * 4 +
       curtainAssignments.filter((assignment) => assignment.area === areaId).length +
       buildAreaScenePicoLedTargets(areaId, areaSceneSource).length

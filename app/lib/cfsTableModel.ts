@@ -51,6 +51,11 @@ export interface CfsZoneRow {
   locationColor: string;
   circuits: RowCircuit[];
   targetAliasCircuits?: RowCircuit[];
+  // T-59: additional circuits merged into this zone ("+" button on the Device
+  // Assign fixed tab). Displayed collapsed into the primary circuit line
+  // (zone Detail, "1&4" Designer #) but included in Total VA / Low-High End /
+  // dimming-type resolution.
+  zoneExtraCircuits?: RowCircuit[];
   isHvac?: boolean;
   isCci?: boolean;
   isCurtain?: boolean;

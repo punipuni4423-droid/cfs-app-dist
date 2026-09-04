@@ -3,6 +3,7 @@ import { corridorPicoLedTargets } from "./picoSpecials";
 import { circuitGroupMembers, uniqueCircuitGroupHeads } from "./circuitGroups";
 import { OTHER_AREA_ID } from "./cfsTableModel";
 import { isOnOffLikeDimmingType } from "./settingValues";
+import { applyZoneMergesToSettingTargets, buildZoneCircuitMerges } from "./zoneCircuitMerges";
 
 export const HVAC_METRICS = ["On/Off", "Setpoint", "Fan Mode", "Drift"] as const;
 
@@ -194,11 +195,17 @@ export function buildSettingTargetGroups(
   curtainAssignments: CurtainAssignment[] = [],
   switches: readonly SwitchEntry[] = [],
 ): SettingTargetGroup[] {
+  // T-59: zones carrying additional circuits collapse to one target named by
+  // the zone Detail; settings written through it reach every merged circuit.
+  const zoneMerges = buildZoneCircuitMerges(circuits, deviceAssignments);
   const targets = [
-    ...uniqueCircuitGroupHeads(circuits).map((head) => ({
-      ...circuitSettingTarget(head, locations),
-      groupCircuitIds: circuitGroupMembers(circuits, head).map((member) => member.id),
-    })),
+    ...applyZoneMergesToSettingTargets(
+      uniqueCircuitGroupHeads(circuits).map((head) => ({
+        ...circuitSettingTarget(head, locations),
+        groupCircuitIds: circuitGroupMembers(circuits, head).map((member) => member.id),
+      })),
+      zoneMerges,
+    ),
     ...ccoSettingTargets(deviceAssignments, locations),
     ...cfsOnlySettingTargets(cfsOnlyRows, locations),
     ...curtainSettingTargets(curtainAssignments, locations),

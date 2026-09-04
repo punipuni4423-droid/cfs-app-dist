@@ -4,6 +4,7 @@ import { buildCfsTargetCatalog, type CfsTargetCatalog } from "./cfsTargets";
 import { buildCfsZoneRows, isPalladiomBacklightTarget, normalizeBacklightCondition } from "./useCfsZoneRows";
 import { buildAreaAddressAssignmentMap } from "./programming";
 import { hasMeaningfulBacklightSource } from "./switchSync";
+import { additionalCircuitNumbersOf } from "./zoneCircuitMerges";
 
 export type CfsLinkNodeGroup =
   | "Circuit"
@@ -497,6 +498,37 @@ export function buildCfsLinkageGraph(params: {
         risk: "ok",
         label: "CFS row",
         keys: ["assignmentId", assignment.id, "circuitId", circuit.id],
+      });
+    }
+
+    // T-59: additional circuits assigned to the same zone ("+" button) also
+    // reference this Device Assign row.
+    for (const value of additionalCircuitNumbersOf(assignment)) {
+      const extraMatches = circuitByDesigner.get(value) ?? [];
+      const head = extraMatches[0];
+      if (!head) {
+        issues.add({
+          id: `missing-designer:${assignment.id}:extra:${value}`,
+          code: "designer_missing",
+          severity: "warning",
+          group: "Device Assign",
+          title: "Designer# target not found",
+          detail: `Device Assign ${assignmentLabel || assignment.id} references additional Designer# ${value}, but no Circuit row matches it.`,
+          sourceId: assignment.id,
+          sourceIds: [assignment.id],
+          targetId: value,
+        });
+        continue;
+      }
+      addEdge(edges, {
+        from: `circuit:${head.id}`,
+        to: assignmentNodeId,
+        fromGroup: "Circuit",
+        toGroup: "Device Assign",
+        kind: "reference",
+        risk: "ok",
+        label: "Additional Designer#",
+        keys: ["designerNumber", value, "assignmentId", assignment.id],
       });
     }
   }

@@ -1,6 +1,7 @@
 import type {
   CircuitEntry,
   CurtainAssignment,
+  DeviceAssignment,
   HvacAssignment,
   LocationMaster,
   Scene,
@@ -21,6 +22,12 @@ import {
   picoLedSettingTargets,
   type SettingTarget,
 } from "./settingTargets";
+import {
+  applyZoneMergesToSettingTargets,
+  buildZoneCircuitMerges,
+  mergeZoneCircuitHeads,
+  type ZoneCircuitMergeIndex,
+} from "./zoneCircuitMerges";
 
 export const HVAC_AREA_ID = "__hvac_area_scene__";
 
@@ -30,6 +37,10 @@ export interface AreaSceneSourceInput {
   hvacAssignments: HvacAssignment[];
   curtainAssignments: CurtainAssignment[];
   switches: readonly SwitchEntry[];
+  // T-59: device assignments of the room type. When present, zones carrying
+  // additional circuits show one merged lighting row (zone Detail name) whose
+  // edits reach every merged circuit group.
+  deviceAssignments?: DeviceAssignment[];
 }
 
 export type AreaSceneTargetKind = "lighting" | "picoLed" | "curtain" | "hvac";
@@ -72,6 +83,10 @@ export interface AreaSceneMatrix {
 
 function picoTargets(input: AreaSceneSourceInput): SettingTarget[] {
   return picoLedSettingTargets(input.switches, input.locations);
+}
+
+function zoneMergesOf(input: AreaSceneSourceInput): ZoneCircuitMergeIndex {
+  return buildZoneCircuitMerges(input.circuits, input.deviceAssignments ?? []);
 }
 
 export function findFirstAreaSceneTargetAreaId(input: AreaSceneSourceInput): string {
@@ -133,7 +148,8 @@ export function buildAreaSceneAreas(input: AreaSceneSourceInput): LocationMaster
 
 export function buildAreaSceneCircuitHeads(areaId: string, input: AreaSceneSourceInput): CircuitEntry[] {
   if (areaId === HVAC_AREA_ID) return [];
-  return uniqueCircuitGroupHeads(input.circuits.filter((circuit) => circuit.area === areaId));
+  const heads = uniqueCircuitGroupHeads(input.circuits.filter((circuit) => circuit.area === areaId));
+  return mergeZoneCircuitHeads(heads, zoneMergesOf(input));
 }
 
 export function buildAreaSceneHvacTargets(areaId: string, input: AreaSceneSourceInput): AreaSceneTarget[] {
@@ -159,12 +175,15 @@ export function buildAreaScenePicoLedTargets(areaId: string, input: AreaSceneSou
 
 export function buildAreaSceneTargets(areaId: string, input: AreaSceneSourceInput): AreaSceneTarget[] {
   if (!areaId) return [];
-  const lighting = buildAreaSceneCircuitHeads(areaId, input).map((circuit) => ({
-    ...circuitSettingTarget(circuit, input.locations),
-    groupCircuitIds: circuitGroupMembers(input.circuits, circuit).map((member) => member.id),
-    kind: "lighting" as const,
-    circuit,
-  }));
+  const lighting = applyZoneMergesToSettingTargets(
+    buildAreaSceneCircuitHeads(areaId, input).map((circuit) => ({
+      ...circuitSettingTarget(circuit, input.locations),
+      groupCircuitIds: circuitGroupMembers(input.circuits, circuit).map((member) => member.id),
+      kind: "lighting" as const,
+      circuit,
+    })),
+    zoneMergesOf(input),
+  );
   return [
     ...lighting,
     ...buildAreaScenePicoLedTargets(areaId, input),

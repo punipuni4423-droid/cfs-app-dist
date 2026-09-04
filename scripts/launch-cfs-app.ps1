@@ -1,4 +1,4 @@
-param(
+﻿param(
   [int]$Port = 3014,
   [ValidateSet("Auto", "Edge", "Chrome")]
   [string]$PreferredBrowser = "Auto",
@@ -14,27 +14,62 @@ if ($env:CFS_OPEN_BROWSER -eq "0") {
 
 $appRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $startScript = Join-Path $appRoot "START_CFS_APP.bat"
-$startupDir = Join-Path $appRoot "artifacts\startup"
-$statusFile = Join-Path $startupDir "latest-status.txt"
 $iconPath = Join-Path $appRoot "public\cfs-app-icon.ico"
 $script:exitCode = 0
 $script:worker = $null
 
-function Initialize-StartupFolder {
-  if (-not (Test-Path -LiteralPath $startupDir)) {
-    New-Item -ItemType Directory -Force -Path $startupDir | Out-Null
+# BUGREPORT_20260824 BUG-5: the startup log folder falls back when the app
+# folder cannot be written (Program Files ACL carried along by a folder move,
+# OneDrive sync state, network drives). START_CFS_APP.bat applies the same
+# fallback and receives the resolved folder via CFS_LOG_DIR.
+$script:startupCandidates = @((Join-Path $appRoot "artifacts\startup"))
+if ($env:LOCALAPPDATA) { $script:startupCandidates += (Join-Path $env:LOCALAPPDATA "CFS App\startup") }
+if ($env:TEMP) { $script:startupCandidates += (Join-Path $env:TEMP "CFS App\startup") }
+$script:startupDir = $null
+$script:statusFile = $null
+
+function Test-DirectoryWritable {
+  param([string]$Path)
+  try {
+    if (-not (Test-Path -LiteralPath $Path)) {
+      New-Item -ItemType Directory -Force -Path $Path -ErrorAction Stop | Out-Null
+    }
+    # Test-Path cannot see a missing write permission, so probe with a real file.
+    $probe = Join-Path $Path ([System.IO.Path]::GetRandomFileName())
+    [System.IO.File]::WriteAllText($probe, "")
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+    return $true
+  } catch {
+    return $false
   }
+}
+
+function Resolve-StartupDirectory {
+  foreach ($candidate in $script:startupCandidates) {
+    if (Test-DirectoryWritable -Path $candidate) {
+      return $candidate
+    }
+  }
+  return $null
 }
 
 function Write-LauncherStatus {
   param([string]$Message)
-  Initialize-StartupFolder
-  $timestamp = Get-Date -Format "yyyy/MM/dd HH:mm:ss"
-  Set-Content -LiteralPath $statusFile -Value "[$timestamp] $Message" -Encoding UTF8
+  # The status file is advisory; a failed write must not stop the launcher (BUG-5).
+  if (-not $script:statusFile) { return }
+  try {
+    if (-not (Test-Path -LiteralPath $script:startupDir)) {
+      New-Item -ItemType Directory -Force -Path $script:startupDir -ErrorAction Stop | Out-Null
+    }
+    $timestamp = Get-Date -Format "yyyy/MM/dd HH:mm:ss"
+    Set-Content -LiteralPath $script:statusFile -Value "[$timestamp] $Message" -Encoding UTF8
+  } catch {
+    # Keep launching even when the status file cannot be written.
+  }
 }
 
 function Read-LauncherStatus {
-  if (-not (Test-Path -LiteralPath $statusFile)) {
+  if (-not $script:statusFile -or -not (Test-Path -LiteralPath $script:statusFile)) {
     return "Preparing CFS startup."
   }
   try {
@@ -126,14 +161,36 @@ function Start-CfsWorker {
   $processInfo.EnvironmentVariables["PORT"] = [string]$Port
   $processInfo.EnvironmentVariables["CFS_ALLOW_PORT_FALLBACK"] = "1"
   $processInfo.EnvironmentVariables["CFS_OPEN_BROWSER"] = "0"
+  # Hand the resolved log folder to the worker so START_CFS_APP.bat logs to
+  # the same place instead of failing on an unwritable app folder (BUG-5).
+  if ($script:startupDir) {
+    $processInfo.EnvironmentVariables["CFS_LOG_DIR"] = $script:startupDir
+  }
   return [System.Diagnostics.Process]::Start($processInfo)
 }
 
-Initialize-StartupFolder
-Write-LauncherStatus "Preparing CFS startup."
-
+# Load WinForms before resolving the log folder so a total failure can still
+# be reported with a message box instead of a crash before any UI (BUG-5).
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+
+$script:startupDir = Resolve-StartupDirectory
+if (-not $script:startupDir) {
+  $failMessage = "CFS App を起動できませんでした。`r`n" +
+    "起動ログを書き込めるフォルダが見つかりません。`r`n`r`n" +
+    "試行した場所:`r`n" +
+    (($script:startupCandidates | ForEach-Object { "  " + $_ }) -join "`r`n") + "`r`n`r`n" +
+    "アプリのフォルダを書き込み可能な場所(例: C:\Users\<ユーザー名>\tools\CFS App)へ移動してから、もう一度起動してください。"
+  [System.Windows.Forms.MessageBox]::Show(
+    $failMessage,
+    "CFS App",
+    [System.Windows.Forms.MessageBoxButtons]::OK,
+    [System.Windows.Forms.MessageBoxIcon]::Error
+  ) | Out-Null
+  exit 1
+}
+$script:statusFile = Join-Path $script:startupDir "latest-status.txt"
+Write-LauncherStatus "Preparing CFS startup."
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "CFS App"
@@ -218,7 +275,7 @@ $timer.Add_Tick({
 
     $detail = Read-LauncherStatus
     [System.Windows.Forms.MessageBox]::Show(
-      "CFS could not be started.`r`n`r`n$detail`r`n`r`nCheck artifacts\startup\latest-status.txt and the newest start/server logs.",
+      "CFS could not be started.`r`n`r`n$detail`r`n`r`nCheck latest-status.txt and the newest start/server logs in:`r`n$($script:startupDir)",
       "CFS App",
       [System.Windows.Forms.MessageBoxButtons]::OK,
       [System.Windows.Forms.MessageBoxIcon]::Error

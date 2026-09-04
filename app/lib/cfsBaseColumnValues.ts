@@ -176,7 +176,8 @@ export function rowTotalVaValues(row: CfsZoneRow, context: CfsZoneVaContext): st
       found = true;
     }
   };
-  for (const item of row.circuits) {
+  // T-59: additional circuits merged into the zone count toward the total.
+  for (const item of [...row.circuits, ...(row.zoneExtraCircuits ?? [])]) {
     const entry = item.circuit;
     const expanded = row.isDali
       ? entry.daliFixtureGroupId.trim()
@@ -210,7 +211,7 @@ export function rowZoneLowHighEndValues(
   context: CfsZoneEndContext,
 ): string[] {
   if (row.isBacklight || row.isHvac || row.isCurtain) return [];
-  const originalDimmingTypes = row.circuits.map(
+  const originalDimmingTypes = [...row.circuits, ...(row.zoneExtraCircuits ?? [])].map(
     (item) => context.circuitById.get(item.id)?.dimmingType ?? item.dimmingType,
   );
   if (!isLowHighEndEligibleDimmingTypes(originalDimmingTypes)) return [];

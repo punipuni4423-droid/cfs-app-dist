@@ -253,9 +253,20 @@ export default function AreaSceneOverview({
   fixtures = [],
   programmingNameSettings,
 }: AreaSceneOverviewProps): JSX.Element {
+  // T-59: deviceAssignments merge multi-circuit zones into one lighting row.
+  const deviceAssignments = roomType?.deviceAssignments;
   const matrix = useMemo(
-    () => buildAreaSceneMatrix({ scenes, locations, circuits, hvacAssignments, curtainAssignments, switches }),
-    [scenes, locations, circuits, hvacAssignments, curtainAssignments, switches],
+    () =>
+      buildAreaSceneMatrix({
+        scenes,
+        locations,
+        circuits,
+        hvacAssignments,
+        curtainAssignments,
+        switches,
+        deviceAssignments: deviceAssignments ?? [],
+      }),
+    [scenes, locations, circuits, hvacAssignments, curtainAssignments, switches, deviceAssignments],
   );
   const [hideEmptyRows, setHideEmptyRows] = useState(false);
   const [showDifferentOnly, setShowDifferentOnly] = useState(false);

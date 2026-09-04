@@ -2,8 +2,10 @@ import type { CircuitEntry, DeviceAssignment, DeviceMaster, FixtureMaster } from
 import {
   createEmptyDeviceAssignment,
   inferAddressMode,
+  RESERVED_VALUE,
 } from "./constants";
 import { createAppId } from './id';
+import { additionalCircuitNumbersOf } from './zoneCircuitMerges';
 
 interface DeviceAssignmentSyncContext {
   circuits: readonly CircuitEntry[];
@@ -126,7 +128,18 @@ export function rebuildZoneExpansion(
   const entries = value
     ? findCircuitGroupEntries(value, primary.device, context.circuits, context.devices)
     : [];
-  const detailValue = primary.detail || entries[0]?.detail || "";
+  // T-89: a zone with additional circuits has no editable assignment Detail in
+  // the UI (the stack shows live circuit-master Details), so its stored detail
+  // follows the circuit master instead of keeping the initial copy. Otherwise
+  // Circuit-tab Detail edits would never reach a multi-circuit zone (the old
+  // `primary.detail || ...` made the allMatch check below trivially true).
+  // Single-circuit zones keep the established rule: the Device Assign Detail
+  // input wins over the circuit master.
+  const zoneHasAdditionalCircuits = additionalCircuitNumbersOf(primary).length > 0;
+  const detailValue =
+    zoneHasAdditionalCircuits && entries.length > 0
+      ? entries[0].detail
+      : primary.detail || entries[0]?.detail || "";
   const currentZoneRows = list.filter(
     (assignment) =>
       assignment.deviceGroupId === primary.deviceGroupId &&
@@ -202,6 +215,56 @@ export function normalizeDaliGroupNumbers(
   return changed ? next : list;
 }
 
+// T-59: keep additionalCircuitNumbers/zoneDetail consistent when circuits are
+// removed from the circuit master or the primary assignment is cleared. Both
+// keys are stored only while at least one additional circuit remains.
+export function cleanupZoneAdditionalCircuits(
+  list: DeviceAssignment[],
+  context: DeviceAssignmentSyncContext,
+): DeviceAssignment[] {
+  let changed = false;
+  const next = list.map((assignment) => {
+    const hasExtras = "additionalCircuitNumbers" in assignment;
+    const hasZoneDetail = "zoneDetail" in assignment;
+    if (!hasExtras && !hasZoneDetail) return assignment;
+
+    const strip = (): DeviceAssignment => {
+      const cleaned = { ...assignment };
+      delete cleaned.additionalCircuitNumbers;
+      delete cleaned.zoneDetail;
+      changed = true;
+      return cleaned;
+    };
+
+    const primary = assignment.circuitNumber.trim();
+    const primaryAssigned = primary !== "" && primary !== RESERVED_VALUE;
+    const eligible =
+      primaryAssigned &&
+      !isDeviceDaliModel(assignment.device, context.devices) &&
+      !isInputAssignment(assignment, context.devices) &&
+      !isCcoAssignment(assignment);
+    if (!eligible) return strip();
+
+    const values = (assignment.additionalCircuitNumbers ?? [])
+      .map((value) => value.trim())
+      .filter((value) => value !== "" && value !== RESERVED_VALUE)
+      .filter(
+        (value) =>
+          findCircuitGroupEntries(value, assignment.device, context.circuits, context.devices)
+            .length > 0,
+      );
+    if (values.length === 0) return strip();
+    const sameValues =
+      hasExtras &&
+      (assignment.additionalCircuitNumbers ?? []).length === values.length &&
+      (assignment.additionalCircuitNumbers ?? []).every((value, index) => value === values[index]);
+    if (sameValues) return assignment;
+    changed = true;
+    return { ...assignment, additionalCircuitNumbers: values };
+  });
+  return changed ? next : list;
+}
+
 export function syncDeviceAssignmentsWithCircuits(
   assignments: DeviceAssignment[],
   context: DeviceAssignmentSyncContext,
@@ -257,7 +320,12 @@ export function syncDeviceAssignmentsWithCircuits(
     }
   }
 
-  const normalized = normalizeDaliGroupNumbers(list, context.devices);
+  let normalized = normalizeDaliGroupNumbers(list, context.devices);
   if (normalized !== list) changed = true;
+  const cleaned = cleanupZoneAdditionalCircuits(normalized, context);
+  if (cleaned !== normalized) {
+    changed = true;
+    normalized = cleaned;
+  }
   return changed ? normalized : assignments;
 }

@@ -922,7 +922,11 @@ function isDeviceAssignment(value: unknown): value is DeviceAssignment {
     (!('area' in v) || typeof v.area === 'string') &&
     typeof v.detail === 'string' &&
     (!('lowEnd' in v) || typeof v.lowEnd === 'string') &&
-    (!('highEnd' in v) || typeof v.highEnd === 'string')
+    (!('highEnd' in v) || typeof v.highEnd === 'string') &&
+    (!('additionalCircuitNumbers' in v) ||
+      (Array.isArray(v.additionalCircuitNumbers) &&
+        v.additionalCircuitNumbers.every((entry) => typeof entry === 'string'))) &&
+    (!('zoneDetail' in v) || typeof v.zoneDetail === 'string')
   );
 }
 
