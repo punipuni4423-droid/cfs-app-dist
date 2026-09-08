@@ -10,6 +10,7 @@ import * as os from "os";
 import * as path from "path";
 
 const ARTIFACT_DIR = path.join(os.tmpdir(), "cfs-audit07-artifacts");
+const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3014";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -22,7 +23,7 @@ export default defineConfig({
   outputDir: ARTIFACT_DIR,
   reporter: [["line"]],
   use: {
-    baseURL: "http://localhost:3014",
+    baseURL: BASE_URL,
     trace: "off",
     screenshot: "only-on-failure",
     video: "off",

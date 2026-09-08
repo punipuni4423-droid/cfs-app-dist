@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { byScenePalladiomBacklightTargets } from "../lib/useCfsZoneRows";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -75,6 +75,11 @@ import {
   stepPercentValue,
   type BulkSettingMode,
 } from "../lib/settingValues";
+import {
+  linkSwitchSettingSelection,
+  normalizeSwitchSettingLinksAfterCommit,
+  unlinkSwitchSettingSelection,
+} from "../lib/switchSettingLinks";
 import { createAppId } from '../lib/id';
 
 interface SwitchViewProps {
@@ -95,10 +100,17 @@ interface SwitchViewProps {
   onBacklightLevelsChange?: (next: BacklightLevelSetting[]) => void;
   revisionChanges?: RevisionFieldChanges;
   canEdit?: boolean;
+  externalSettingRequest?: SwitchSettingOverlayRequest | null;
+  overlayHostOnly?: boolean;
+}
+
+export interface SwitchSettingOverlayRequest {
+  switchId: string;
+  tab: "function" | "backlight";
+  requestId: number;
 }
 
 const PALLADIOM_BUTTON_COUNTS = ["1", "2", "3", "4", "4LR", "5", "6", "7", "8"];
-const BY_SCENE_VALUE = "__byScene";
 
 type CciOption = CciAssignmentOption;
 
@@ -142,70 +154,9 @@ function visibleButtonFunction(sw: SwitchEntry): string {
 // T-35: switch setting link -------------------------------------------------
 // T-58: the group color/symbol palette and first-appearance ordering moved to
 // app/lib/settingLinkGroups.ts so the CFS header link display shares the
-// exact same colors. Behavior here is unchanged.
+// exact same colors. T-83 moves the mutation rules to switchSettingLinks so
+// the CFS Select flow and Switch tab stay aligned.
 
-/**
- * T-35: propagate linked settings inside a commit. The copy rules are the
- * same as applyBulkSetting: buttonSetting is deep-copied and backlight copies
- * the CONDITION only. backlightTarget points at switch-specific circuit
- * groups; propagating it cross-wired targets in the past, so it must never
- * be copied between rows.
- */
-function propagateSettingLinks(previous: SwitchEntry[], next: SwitchEntry[]): SwitchEntry[] {
-  const prevById = new Map(previous.map((sw) => [sw.id, sw]));
-  // groupId -> serialized buttonSetting of the first row whose setting changed.
-  const sceneSourceByGroup = new Map<string, string>();
-  // groupId -> backlightCondition of the first row whose condition changed.
-  const backlightSourceByGroup = new Map<string, string>();
-  for (const sw of next) {
-    const groupId = sw.settingLinkGroupId;
-    if (!groupId) continue;
-    const prev = prevById.get(sw.id);
-    if (!prev) continue;
-    if (!sceneSourceByGroup.has(groupId)) {
-      const serialized = JSON.stringify(sw.buttonSetting);
-      if (serialized !== JSON.stringify(prev.buttonSetting)) {
-        sceneSourceByGroup.set(groupId, serialized);
-      }
-    }
-    if (!backlightSourceByGroup.has(groupId) && sw.backlightCondition !== prev.backlightCondition) {
-      backlightSourceByGroup.set(groupId, sw.backlightCondition);
-    }
-  }
-  if (sceneSourceByGroup.size === 0 && backlightSourceByGroup.size === 0) return next;
-  return next.map((sw) => {
-    const groupId = sw.settingLinkGroupId;
-    if (!groupId) return sw;
-    let result = sw;
-    const sceneSetting = sceneSourceByGroup.get(groupId);
-    if (sceneSetting !== undefined && JSON.stringify(result.buttonSetting) !== sceneSetting) {
-      result = { ...result, buttonSetting: JSON.parse(sceneSetting) as SwitchEntry["buttonSetting"] };
-    }
-    const backlightCondition = backlightSourceByGroup.get(groupId);
-    if (backlightCondition !== undefined && result.backlightCondition !== backlightCondition) {
-      result = { ...result, backlightCondition };
-    }
-    return result;
-  });
-}
-
-/** T-35: a link group left with fewer than two members dissolves. */
-function clearSingletonSettingLinks(rows: SwitchEntry[]): SwitchEntry[] {
-  const counts = new Map<string, number>();
-  for (const sw of rows) {
-    if (!sw.settingLinkGroupId) continue;
-    counts.set(sw.settingLinkGroupId, (counts.get(sw.settingLinkGroupId) ?? 0) + 1);
-  }
-  let changed = false;
-  const next = rows.map((sw) => {
-    if (sw.settingLinkGroupId && (counts.get(sw.settingLinkGroupId) ?? 0) <= 1) {
-      changed = true;
-      return { ...sw, settingLinkGroupId: undefined };
-    }
-    return sw;
-  });
-  return changed ? next : rows;
-}
 // ---------------------------------------------------------------------------
 
 function nextQsmNumber(switches: SwitchEntry[]): string {
@@ -235,6 +186,8 @@ export default function SwitchView({
   onBacklightLevelsChange,
   revisionChanges = {},
   canEdit = true,
+  externalSettingRequest = null,
+  overlayHostOnly = false,
 }: SwitchViewProps) {
   const [expandedFunctionIds, setExpandedFunctionIds] = useState<Set<string>>(new Set());
   const [expandedBacklightIds, setExpandedBacklightIds] = useState<Set<string>>(new Set());
@@ -242,12 +195,14 @@ export default function SwitchView({
   // Bulk setting: checked row ids and which panel type is applying to them.
   const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set());
   const [bulkApplyMode, setBulkApplyMode] = useState<"scene" | "backlight" | null>(null);
+  const consumedExternalRequestIdRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (overlayHostOnly) return;
     // Selections are per kind tab; keep stale ids from another tab out.
     setBulkSelectedIds(new Set());
     setBulkApplyMode(null);
-  }, [activeKind]);
+  }, [activeKind, overlayHostOnly]);
   const [areaBulkValues, setAreaBulkValues] = useState<Record<string, string>>({});
   const drag = useDragReorder(switches, commitSwitches, (sw) => sw.id, (sw) => switchGroupId(sw));
 
@@ -270,16 +225,15 @@ export default function SwitchView({
     // diffs and collaboration saves ride the normal commit path.
     onChange((current) => {
       const resolved = typeof next === "function" ? next(current) : next;
-      return normalizeSwitchPriorityFunctions(
-        clearSingletonSettingLinks(propagateSettingLinks(current, resolved)),
-      );
+      return normalizeSwitchPriorityFunctions(normalizeSwitchSettingLinksAfterCommit(current, resolved));
     });
   }
 
   useEffect(() => {
+    if (overlayHostOnly) return;
     const next = dedupeSwitchIds(switches);
     if (next !== switches && canEdit) onChange((current) => dedupeSwitchIds(current));
-  }, [switches, onChange, canEdit]);
+  }, [switches, onChange, canEdit, overlayHostOnly]);
 
   const filteredSwitches = useMemo(
     () => switches.filter((s) => s.kind === activeKind),
@@ -342,9 +296,10 @@ export default function SwitchView({
   );
 
   useEffect(() => {
+    if (overlayHostOnly) return;
     const normalized = normalizeQsmAssignments(switches);
     if (normalized !== switches && canEdit) onChange(normalized);
-  }, [normalizeQsmAssignments, switches, onChange, canEdit]);
+  }, [normalizeQsmAssignments, switches, onChange, canEdit, overlayHostOnly]);
 
   const highlightedKinds = useMemo(() => {
     const kinds = new Set<SwitchKind>();
@@ -429,11 +384,12 @@ export default function SwitchView({
   );
 
   useEffect(() => {
+    if (overlayHostOnly) return;
     const next = syncContactSwitchesWithCciOptions(switches, cciOptions);
     if (next !== switches && canEdit) {
       onChange((current) => syncContactSwitchesWithCciOptions(current, cciOptions));
     }
-  }, [cciOptions, switches, onChange, canEdit]);
+  }, [cciOptions, switches, onChange, canEdit, overlayHostOnly]);
 
   const hasButtonCount = activeKind === "lutronPd" || activeKind === "lutronPico";
   const hasCciDeviceColumn = activeKind === "contact";
@@ -804,13 +760,13 @@ export default function SwitchView({
 
   // One setting row represents a whole circuit group; read the first
   // non-empty member value (legacy data may only have some rows filled).
-  function getTargetValue(sw: SwitchEntry, target: SettingTarget): string {
+  const getTargetValue = useCallback((sw: SwitchEntry, target: SettingTarget): string => {
     for (const id of settingTargetIds(target)) {
       const value = getPercent(sw, id);
       if (value.trim() !== "") return value;
     }
     return "";
-  }
+  }, []);
 
   function handleTargetValueChange(sw: SwitchEntry, target: SettingTarget, raw: string): void {
     const value =
@@ -876,9 +832,9 @@ export default function SwitchView({
     return areaTargets.some((target) => !isCurtainTarget(target) && bulkModeAppliesToTarget(mode, target.isOnOff));
   }
 
-  function areaHasSetting(sw: SwitchEntry, area: SettingTarget[]): boolean {
+  const areaHasSetting = useCallback((sw: SwitchEntry, area: SettingTarget[]): boolean => {
     return area.some((target) => getTargetValue(sw, target).trim() !== "");
-  }
+  }, [getTargetValue]);
 
   function bulkTemplateRow(): SwitchEntry | null {
     return filteredSwitches.find((sw) => bulkSelectedIds.has(sw.id)) ?? null;
@@ -900,37 +856,16 @@ export default function SwitchView({
     const template = bulkTemplateRow();
     if (!template || bulkSelectedIds.size < 2) return;
     const ids = new Set(bulkSelectedIds);
-    commitSwitches((current) => {
-      const selected = current.filter((sw) => ids.has(sw.id));
-      if (selected.length < 2) return current;
-      // Joining: reuse the first existing group among the selection.
-      const groupId = selected.find((sw) => sw.settingLinkGroupId)?.settingLinkGroupId ?? createAppId();
-      const source = current.find((sw) => sw.id === template.id) ?? selected[0];
-      const serializedSetting = JSON.stringify(source.buttonSetting);
-      return current.map((sw) => {
-        if (!ids.has(sw.id)) return sw;
-        if (sw.id === source.id) return { ...sw, settingLinkGroupId: groupId };
-        return {
-          ...sw,
-          settingLinkGroupId: groupId,
-          buttonSetting: JSON.parse(serializedSetting) as SwitchEntry["buttonSetting"],
-          backlightCondition: source.backlightCondition,
-        };
-      });
-    });
+    commitSwitches((current) => linkSwitchSettingSelection(current, ids, createAppId, template.id));
     setBulkSelectedIds(new Set());
   }
 
   // T-35: remove only the checked rows from their link group. A group left
-  // with a single member dissolves via clearSingletonSettingLinks.
+  // with a single member dissolves via clearSingletonSwitchSettingLinks.
   function unlinkSelectedSwitches(): void {
     const ids = new Set(bulkSelectedIds);
     if (ids.size === 0) return;
-    commitSwitches((current) =>
-      current.map((sw) =>
-        ids.has(sw.id) && sw.settingLinkGroupId ? { ...sw, settingLinkGroupId: undefined } : sw,
-      ),
-    );
+    commitSwitches((current) => unlinkSwitchSettingSelection(current, ids));
     setBulkSelectedIds(new Set());
   }
 
@@ -978,6 +913,36 @@ export default function SwitchView({
     setExpandedBacklightIds(new Set());
     setBulkApplyMode(null);
   }
+
+  useEffect(() => {
+    if (!externalSettingRequest) return;
+    if (consumedExternalRequestIdRef.current === externalSettingRequest.requestId) return;
+    consumedExternalRequestIdRef.current = externalSettingRequest.requestId;
+
+    const active = switches.find((sw) => sw.id === externalSettingRequest.switchId);
+    if (!active) {
+      setExpandedFunctionIds(new Set());
+      setExpandedBacklightIds(new Set());
+      setBulkApplyMode(null);
+      return;
+    }
+
+    if (externalSettingRequest.tab === "backlight") {
+      setExpandedFunctionIds(new Set());
+      setExpandedBacklightIds(new Set([active.id]));
+      return;
+    }
+
+    setExpandedBacklightIds(new Set());
+    setExpandedFunctionIds(new Set([active.id]));
+    setExpandedAreaKeys(() => {
+      const next = new Set<string>();
+      for (const area of settingTargetGroups) {
+        if (areaHasSetting(active, area.targets)) next.add(`${active.id}:${area.id}`);
+      }
+      return next;
+    });
+  }, [areaHasSetting, externalSettingRequest, settingTargetGroups, switches]);
 
   useEffect(() => {
     if (expandedFunctionIds.size === 0 && expandedBacklightIds.size === 0) return;
@@ -1507,6 +1472,66 @@ export default function SwitchView({
         </div>
       </div>
     );
+  }
+
+  function renderSettingOverlay(): ReactNode {
+    const activeSetting = switches.find((sw) => expandedFunctionIds.has(sw.id));
+    const activeBacklight = switches.find((sw) => expandedBacklightIds.has(sw.id));
+    const active = activeSetting ?? activeBacklight;
+    if (!active) return null;
+    const overlay = (
+      <div className="setting-overlay" role="dialog" aria-modal="true">
+        <button
+          type="button"
+          className="setting-overlay-backdrop"
+          aria-label="Close settings"
+          onClick={closeSettingOverlay}
+        />
+        <div className="setting-overlay-panel">
+          <div className="setting-overlay-header">
+            <strong>
+              {switchSettingTitle(active)}
+            </strong>
+            <div className="setting-overlay-actions">
+              <button
+                type="button"
+                className={`btn btn-secondary btn-sm${activeSetting ? " is-active" : ""}`}
+                onClick={() => openFunctionSetting(active)}
+              >
+                Scene Value
+              </button>
+              <button
+                type="button"
+                className={`btn btn-secondary btn-sm${activeBacklight ? " is-active" : ""}`}
+                onClick={() => openBacklightSetting(active)}
+              >
+                Backlight
+              </button>
+              {bulkApplyMode ? (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => applyBulkSetting(active)}
+                  title="Copy this panel's settings to every checked row"
+                >
+                  Apply to {bulkSelectedIds.size} rows
+                </button>
+              ) : null}
+              <button type="button" className="btn btn-danger-ghost" onClick={closeSettingOverlay}>
+                Close
+              </button>
+            </div>
+          </div>
+          {activeSetting ? renderSettingPanel(activeSetting) : null}
+          {activeBacklight ? renderBacklightSettingPanel(activeBacklight) : null}
+        </div>
+      </div>
+    );
+    return typeof document === "undefined" ? null : createPortal(overlay, document.body);
+  }
+
+  if (overlayHostOnly) {
+    return <>{renderSettingOverlay()}</>;
   }
 
   return (
@@ -2274,61 +2299,7 @@ export default function SwitchView({
           </tfoot>
         </table>
       </ResizableMatrixScroll>
-      {(() => {
-        const activeSetting = switches.find((sw) => expandedFunctionIds.has(sw.id));
-        const activeBacklight = switches.find((sw) => expandedBacklightIds.has(sw.id));
-        const active = activeSetting ?? activeBacklight;
-        if (!active) return null;
-        const overlay = (
-          <div className="setting-overlay" role="dialog" aria-modal="true">
-            <button
-              type="button"
-              className="setting-overlay-backdrop"
-              aria-label="Close settings"
-              onClick={closeSettingOverlay}
-            />
-            <div className="setting-overlay-panel">
-              <div className="setting-overlay-header">
-                <strong>
-                  {switchSettingTitle(active)}
-                </strong>
-                <div className="setting-overlay-actions">
-                  <button
-                    type="button"
-                    className={`btn btn-secondary btn-sm${activeSetting ? " is-active" : ""}`}
-                    onClick={() => openFunctionSetting(active)}
-                  >
-                    Scene Value
-                  </button>
-                  <button
-                    type="button"
-                    className={`btn btn-secondary btn-sm${activeBacklight ? " is-active" : ""}`}
-                    onClick={() => openBacklightSetting(active)}
-                  >
-                    Backlight
-                  </button>
-                  {bulkApplyMode ? (
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-sm"
-                      onClick={() => applyBulkSetting(active)}
-                      title="Copy this panel's settings to every checked row"
-                    >
-                      Apply to {bulkSelectedIds.size} rows
-                    </button>
-                  ) : null}
-                  <button type="button" className="btn btn-danger-ghost" onClick={closeSettingOverlay}>
-                    Close
-                  </button>
-                </div>
-              </div>
-              {activeSetting ? renderSettingPanel(activeSetting) : null}
-              {activeBacklight ? renderBacklightSettingPanel(activeBacklight) : null}
-            </div>
-          </div>
-        );
-        return typeof document === "undefined" ? null : createPortal(overlay, document.body);
-      })()}
+      {renderSettingOverlay()}
       </>
     </section>
   );

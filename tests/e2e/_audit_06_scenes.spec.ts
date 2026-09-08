@@ -28,6 +28,16 @@ async function shot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: `${SHOT_DIR}/${name}.png`, fullPage: true }).catch(() => {});
 }
 
+async function confirmBulkChange(page: Page, expectedTexts: string[] = []): Promise<void> {
+  const dialog = page.locator(".scene-bulk-confirm-overlay");
+  await expect(dialog).toBeVisible({ timeout: 5000 });
+  for (const text of expectedTexts) {
+    await expect(dialog).toContainText(text);
+  }
+  await dialog.getByRole("button", { name: "Confirm", exact: true }).click();
+  await expect(dialog).toHaveCount(0, { timeout: 5000 });
+}
+
 /**
  * localStorage を完全クリアして隔離する。
  * ブラウザ storage をクリアした上でリロードし、プロジェクト名入力欄が
@@ -232,6 +242,7 @@ test.describe("Audit06 - Area Scene (SceneView)", () => {
 
     const applyBulk = page.locator("button").filter({ hasText: /^Apply Bulk$/ }).first();
     await applyBulk.click();
+    await confirmBulkChange(page, ["Target: All", "30%"]);
     await page.waitForTimeout(300);
 
     // percent 一括は On/Off 回路を除外し調光回路のみ 30 に。先頭 (調光) が 30
@@ -245,6 +256,7 @@ test.describe("Audit06 - Area Scene (SceneView)", () => {
     await offModeBtn.click();
     await page.waitForTimeout(100);
     await applyBulk.click();
+    await confirmBulkChange(page, ["Off"]);
     await page.waitForTimeout(300);
 
     // On/Off 回路 (scene-onoff-buttons) の Off ボタンが is-active になる
@@ -257,6 +269,7 @@ test.describe("Audit06 - Area Scene (SceneView)", () => {
     await onModeBtn.click();
     await page.waitForTimeout(100);
     await applyBulk.click();
+    await confirmBulkChange(page, ["On"]);
     await page.waitForTimeout(300);
     const onActive = page.locator(".scene-onoff-buttons button.is-active").filter({ hasText: /^On$/ });
     await expect(onActive.first()).toBeVisible({ timeout: 4000 });
@@ -267,6 +280,7 @@ test.describe("Audit06 - Area Scene (SceneView)", () => {
     await clearModeBtn.click();
     await page.waitForTimeout(100);
     await applyBulk.click();
+    await confirmBulkChange(page, ["Uneffected"]);
     await page.waitForTimeout(300);
     // 調光回路の Level が空に戻る
     await expect(levelInputs.first()).toHaveValue("", { timeout: 3000 });

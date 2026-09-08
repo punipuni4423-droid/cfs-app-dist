@@ -22,7 +22,7 @@ export default defineConfig({
   outputDir: ARTIFACT_DIR,
   reporter: [["line"]],
   use: {
-    baseURL: "http://localhost:3014",
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3014",
     trace: "off",
     screenshot: "only-on-failure",
     video: "off",

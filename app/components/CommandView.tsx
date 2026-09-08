@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type {
   BacklightLevelSetting,
@@ -37,6 +38,7 @@ import CurtainActionButtons from "./CurtainActionButtons";
 import ActionIconButton from "./ActionIconButton";
 import DragHandle from "./DragHandle";
 import { createAppId } from '../lib/id';
+import { normalizeSwitchSettingLinksAfterCommit } from "../lib/switchSettingLinks";
 
 interface CommandViewProps {
   switches: SwitchEntry[];
@@ -53,6 +55,14 @@ interface CommandViewProps {
   onChange: (next: SwitchEntry[]) => void;
   revisionChanges?: RevisionFieldChanges;
   canEdit?: boolean;
+  externalSettingRequest?: CommandSettingOverlayRequest | null;
+  overlayHostOnly?: boolean;
+}
+
+export interface CommandSettingOverlayRequest {
+  switchId: string;
+  tab: "scene" | "backlight";
+  requestId: number;
 }
 
 interface SwitchOption {
@@ -124,12 +134,15 @@ export default function CommandView({
   onChange,
   revisionChanges = {},
   canEdit = true,
+  externalSettingRequest = null,
+  overlayHostOnly = false,
 }: CommandViewProps) {
   const [expandedCommandIds, setExpandedCommandIds] = useState<Set<string>>(new Set());
   const [expandedBacklightIds, setExpandedBacklightIds] = useState<Set<string>>(new Set());
   const [expandedAreaKeys, setExpandedAreaKeys] = useState<Set<string>>(new Set());
   const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set());
   const [bulkApplyMode, setBulkApplyMode] = useState<"scene" | "backlight" | null>(null);
+  const consumedExternalRequestIdRef = useRef<number | null>(null);
   const drag = useDragReorder(switches, commitCommands, (sw) => sw.id);
 
   const commands = useMemo(
@@ -154,7 +167,7 @@ export default function CommandView({
 
   function commitCommands(next: SwitchEntry[]): void {
     if (!canEdit) return;
-    onChange(next);
+    onChange(normalizeSwitchSettingLinksAfterCommit(switches, next));
   }
 
   const switchOptions = useMemo((): SwitchOption[] => {
@@ -242,6 +255,7 @@ export default function CommandView({
       ...source,
       id: createAppId(),
       switchGroupId: createAppId(),
+      settingLinkGroupId: undefined,
       buttonSetting: {
         ...source.buttonSetting,
         sceneIds: [...source.buttonSetting.sceneIds],
@@ -369,6 +383,29 @@ export default function CommandView({
     setExpandedBacklightIds(new Set());
     setBulkApplyMode(null);
   }
+
+  useEffect(() => {
+    if (!externalSettingRequest) return;
+    if (consumedExternalRequestIdRef.current === externalSettingRequest.requestId) return;
+    consumedExternalRequestIdRef.current = externalSettingRequest.requestId;
+
+    const active = commands.find((command) => command.id === externalSettingRequest.switchId);
+    if (!active) {
+      setExpandedCommandIds(new Set());
+      setExpandedBacklightIds(new Set());
+      setBulkApplyMode(null);
+      return;
+    }
+
+    if (externalSettingRequest.tab === "backlight") {
+      setExpandedCommandIds(new Set());
+      setExpandedBacklightIds(new Set([active.id]));
+      return;
+    }
+
+    setExpandedBacklightIds(new Set());
+    setExpandedCommandIds(new Set([active.id]));
+  }, [commands, externalSettingRequest]);
 
   const settingOverlayOpen = expandedCommandIds.size > 0 || expandedBacklightIds.size > 0;
 
@@ -778,6 +815,65 @@ export default function CommandView({
     );
   }
 
+  function renderSettingOverlay(): ReactNode {
+    const activeSetting = commands.find((command) => expandedCommandIds.has(command.id));
+    const activeBacklight = commands.find((command) => expandedBacklightIds.has(command.id));
+    const active = activeSetting ?? activeBacklight;
+    if (!active) return null;
+    const overlay = (
+      <div className="setting-overlay" role="dialog" aria-modal="true">
+        <button
+          type="button"
+          className="setting-overlay-backdrop"
+          aria-label="Close settings"
+          onClick={closeSettingOverlay}
+        />
+        <div className="setting-overlay-panel">
+          <div className="setting-overlay-header">
+            <strong>{commandSettingTitle(active)}</strong>
+            <div className="setting-overlay-actions">
+              <button
+                type="button"
+                className={`btn btn-secondary btn-sm${activeSetting ? " is-active" : ""}`}
+                onClick={() => openCommandSetting(active.id)}
+              >
+                Scene Value
+              </button>
+              <button
+                type="button"
+                className={`btn btn-secondary btn-sm${activeBacklight ? " is-active" : ""}`}
+                onClick={() => openBacklightSetting(active.id)}
+              >
+                Backlight
+              </button>
+              {bulkApplyMode ? (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={!canEdit}
+                  onClick={() => applyBulkSetting(active)}
+                  title="Copy this panel's settings to every checked row"
+                >
+                  Apply to {bulkSelectedIds.size} rows
+                </button>
+              ) : null}
+              <button type="button" className="btn btn-danger-ghost" onClick={closeSettingOverlay}>
+                Close
+              </button>
+            </div>
+          </div>
+          {activeSetting ? renderSettingPanel(activeSetting) : null}
+          {activeBacklight ? renderBacklightPanel(activeBacklight) : null}
+        </div>
+      </div>
+    );
+    return typeof document === "undefined" ? null : createPortal(overlay, document.body);
+  }
+
+  if (overlayHostOnly) {
+    return <>{renderSettingOverlay()}</>;
+  }
+
   return (
     <section className="card card-padded fade-in">
       <div className="toolbar">
@@ -1022,60 +1118,7 @@ export default function CommandView({
           </tfoot>
         </table>
       </div>
-      {(() => {
-        const activeSetting = commands.find((command) => expandedCommandIds.has(command.id));
-        const activeBacklight = commands.find((command) => expandedBacklightIds.has(command.id));
-        const active = activeSetting ?? activeBacklight;
-        if (!active) return null;
-        const overlay = (
-          <div className="setting-overlay" role="dialog" aria-modal="true">
-            <button
-              type="button"
-              className="setting-overlay-backdrop"
-              aria-label="Close settings"
-              onClick={closeSettingOverlay}
-            />
-            <div className="setting-overlay-panel">
-              <div className="setting-overlay-header">
-                <strong>{commandSettingTitle(active)}</strong>
-                <div className="setting-overlay-actions">
-                  <button
-                    type="button"
-                    className={`btn btn-secondary btn-sm${activeSetting ? " is-active" : ""}`}
-                    onClick={() => openCommandSetting(active.id)}
-                  >
-                    Scene Value
-                  </button>
-                  <button
-                    type="button"
-                    className={`btn btn-secondary btn-sm${activeBacklight ? " is-active" : ""}`}
-                    onClick={() => openBacklightSetting(active.id)}
-                  >
-                    Backlight
-                  </button>
-                  {bulkApplyMode ? (
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-sm"
-                      disabled={!canEdit}
-                      onClick={() => applyBulkSetting(active)}
-                      title="Copy this panel's settings to every checked row"
-                    >
-                      Apply to {bulkSelectedIds.size} rows
-                    </button>
-                  ) : null}
-                  <button type="button" className="btn btn-danger-ghost" onClick={closeSettingOverlay}>
-                    Close
-                  </button>
-                </div>
-              </div>
-              {activeSetting ? renderSettingPanel(activeSetting) : null}
-              {activeBacklight ? renderBacklightPanel(activeBacklight) : null}
-            </div>
-          </div>
-        );
-        return typeof document === "undefined" ? null : createPortal(overlay, document.body);
-      })()}
+      {renderSettingOverlay()}
     </section>
   );
 }

@@ -82,7 +82,7 @@ export function dedupeRoomSceneIds(
     changed = true;
     const id = createId();
     seen.add(id);
-    return { ...scene, id };
+    return { ...scene, id, settingLinkGroupId: undefined };
   });
   return changed ? next : roomScenes;
 }

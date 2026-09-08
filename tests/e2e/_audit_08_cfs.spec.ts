@@ -20,13 +20,22 @@ import ExcelJS from 'exceljs';
 import * as fs from 'fs';
 import * as path from 'path';
 import { STORAGE_KEY } from '../../app/lib/constants';
+import type { ProjectData, ProjectRemark } from '../../app/types';
+import { appendRemarksSheet } from '../../app/lib/remarksExcelExport';
 import { installLocalEditingMocks } from './support/secure-sharing-mock';
 
-const SHOT_DIR = path.join('test-results', 'audit-08');
+const SHOT_DIR = process.env.CFS_AUDIT08_OUTPUT_DIR ?? path.join('test-results', 'audit-08');
 const PROJECT_NAME = 'AUDIT-08-Cfs';
 const ROOM_NAME = 'AUDIT-08-Room';
 const SECOND_ROOM_NAME = 'AUDIT-08-Room-B';
 const EMPTY_ROOM_NAME = 'AUDIT-08-Empty';
+const EXPORT_REMARKS: ProjectRemark[] = [
+  { id: 'export-note', title: 'General notes', body: 'First line\nSecond line', hasTable: false, columns: [], rows: [] },
+  { id: 'export-table', title: '制御条件', body: '日本語の本文\n改行を保持', hasTable: true,
+    columns: ['ID', 'Action and result', ''], rows: [['001', 'A longer action with wrapping\nSecond action', '=1+1'], ['02', '日本語の設定値', 'https://example.test']] },
+  { id: 'export-hidden', title: 'Hidden table', body: 'Body only', hasTable: false, columns: ['HIDDEN HEADER'], rows: [['HIDDEN VALUE']] },
+  { id: 'export-empty', title: '', body: '', hasTable: false, columns: [], rows: [] },
+];
 
 test.beforeEach(async ({ page }) => {
   await installLocalEditingMocks(page);
@@ -671,7 +680,7 @@ async function resetCfsPrefs(page: Page): Promise<void> {
  */
 async function setupAndOpenCfs(
   page: Page,
-  options: { includeSecondRoom?: boolean; includeEmptyRoom?: boolean } = {},
+  options: { includeSecondRoom?: boolean; includeEmptyRoom?: boolean; remarks?: ProjectRemark[]; remarkNameCollision?: boolean } = {},
 ): Promise<void> {
   // createProject 後は既にプロジェクト画面内 (openProject 不要)
   await createProject(page, PROJECT_NAME);
@@ -699,6 +708,16 @@ async function setupAndOpenCfs(
   if (options.includeEmptyRoom) {
     await seedEmptyRoomType(page, EMPTY_ROOM_NAME);
   }
+  if (options.remarks || options.remarkNameCollision) {
+    await page.evaluate(async ({ storageKey, projectName, remarks, collision }) => {
+      const projects = JSON.parse(localStorage.getItem(storageKey) ?? '[]') as ProjectData[];
+      const project = projects.find((item) => item.name === projectName)!;
+      project.remarks = remarks;
+      if (collision) project.roomTypes[1].name = 'rEmArKs';
+      localStorage.setItem(storageKey, JSON.stringify(projects));
+      await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projects }) });
+    }, { storageKey: STORAGE_KEY, projectName: PROJECT_NAME, remarks: options.remarks, collision: options.remarkNameCollision });
+  }
   // CFS view prefs を初期化してから再ナビゲート (トグル/フィルタを既定に)
   await resetCfsPrefs(page);
   await gotoRootRobust(page);
@@ -709,9 +728,52 @@ async function setupAndOpenCfs(
   await openCfsTab(page);
 }
 
+async function downloadExcel(page: Page, scope: 'All Rooms' | 'This Room Type', prefix: string): Promise<ExcelJS.Workbook> {
+  await page.getByRole('button', { name: 'Excel Export', exact: true }).click();
+  const pending = page.waitForEvent('download');
+  await page.getByRole('menu', { name: 'Excel export scope' }).getByRole('menuitem', { name: scope, exact: true }).click();
+  const download = await pending;
+  fs.mkdirSync(SHOT_DIR, { recursive: true });
+  const filePath = path.join(SHOT_DIR, `${prefix}-${download.suggestedFilename()}`);
+  await download.saveAs(filePath);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(filePath);
+  return workbook;
+}
+
+function remarkMasterCells(sheet: ExcelJS.Worksheet): ExcelJS.Cell[] {
+  const cells: ExcelJS.Cell[] = [];
+  sheet.eachRow((row) => row.eachCell((cell) => {
+    if (cell.master.address === cell.address && cell.value !== null) cells.push(cell);
+  }));
+  return cells;
+}
+
+function expectRemarksSheet(sheet: ExcelJS.Worksheet | undefined): void {
+  expect(sheet, 'All Rooms includes Remarks').toBeDefined();
+  const cells = remarkMasterCells(sheet!);
+  expect(cells.map((cell) => cell.value)).toEqual([
+    'General notes', 'First line\nSecond line', '制御条件', '日本語の本文\n改行を保持',
+    'ID', 'Action and result', 'Column 3', '001', 'A longer action with wrapping\nSecond action', '=1+1',
+    '02', '日本語の設定値', 'https://example.test', 'Hidden table', 'Body only', 'Untitled Remark', '',
+  ]);
+  for (const value of ['ID', '001', '=1+1', 'https://example.test']) {
+    const cell = cells.find((item) => item.value === value)!;
+    expect(cell.type).toBe(ExcelJS.ValueType.String);
+    expect(cell.alignment.wrapText).toBe(true);
+    for (const side of ['top', 'bottom', 'left', 'right'] as const) {
+      expect(cell.border[side]?.style).toBe('thin');
+      expect(cell.border[side]?.color?.argb).toBe('FFD1D5DB');
+    }
+  }
+  expect(sheet!.getColumn(1).width).toBeLessThan(sheet!.getColumn(2).width!);
+  expect(sheet!.getColumn(2).width).toBeLessThanOrEqual(48);
+  expect(sheet!.views[0].showGridLines).toBe(false);
+}
+
 test.describe('AUDIT-08 CFS 統合ビュー', () => {
-  // dev サーバーが遅く不安定なため timeout を延長し、各テストにリトライを 1 回付与。
-  test.describe.configure({ timeout: 150000, retries: 1 });
+  // Dev compilation can be slow; retry policy belongs to the config/CLI.
+  test.describe.configure({ timeout: 150000 });
 
   test('A. 統合マトリクスが生成され、サマリ・ベース列・関数列ヘッダが表示される', async ({ page }) => {
     await setupAndOpenCfs(page);
@@ -999,7 +1061,7 @@ test.describe('AUDIT-08 CFS 統合ビュー', () => {
   });
 
   test('G2. Project Excel で全 RoomType が 1 ブックの複数シートとして出力される', async ({ page }) => {
-    await setupAndOpenCfs(page, { includeSecondRoom: true, includeEmptyRoom: true });
+    await setupAndOpenCfs(page, { includeSecondRoom: true, includeEmptyRoom: true, remarks: [] });
 
     // T-23: 単一「Excel Export」ボタン → メニューから「All Rooms」を選択
     const exportBtn = page.getByRole('button', { name: /^Excel Export$/ }).first();
@@ -1051,6 +1113,105 @@ test.describe('AUDIT-08 CFS 統合ビュー', () => {
       expect(sheet.getCell(1, firstFunctionCol).border?.left?.style).toBe('medium');
       expect(sheet.getCell(1, firstFunctionCol).border?.top?.style).toBe('medium');
     }
+  });
+
+  test('G3. Remarks exports notes and tables without changing the single-room export or project data', async ({ page }) => {
+    await setupAndOpenCfs(page, { includeSecondRoom: true, includeEmptyRoom: true, remarks: EXPORT_REMARKS });
+    const before = await page.evaluate(async () => (await fetch('/api/projects')).json());
+    const workbook = await downloadExcel(page, 'All Rooms', 'remarks');
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([ROOM_NAME, SECOND_ROOM_NAME, EMPTY_ROOM_NAME, 'Remarks']);
+    expectRemarksSheet(workbook.getWorksheet('Remarks'));
+    const single = await downloadExcel(page, 'This Room Type', 'with-remarks');
+    expect(single.worksheets.map((sheet) => sheet.name)).toEqual(['CFS View']);
+    await page.getByRole('tab', { name: 'Remarks', exact: true }).click();
+    for (const mode of ['Edit', 'Preview']) {
+      await page.getByTestId('remarks-view').getByRole('tab', { name: mode, exact: true }).click();
+      const pending = page.waitForEvent('download');
+      await page.getByTestId('remarks-view').getByRole('button', { name: 'Excel Export', exact: true }).click();
+      const download = await pending;
+      expect(download.suggestedFilename()).toBe(`${PROJECT_NAME}_Remarks.xlsx`);
+      const filePath = path.join(SHOT_DIR, `standalone-${mode}-${download.suggestedFilename()}`);
+      await download.saveAs(filePath);
+      const standalone = new ExcelJS.Workbook();
+      await standalone.xlsx.readFile(filePath);
+      expect(standalone.worksheets.map((sheet) => sheet.name)).toEqual(['Remarks']);
+      // Workbook-local IDs differ because All Rooms contains preceding room sheets.
+      expect({ ...standalone.worksheets[0].model, id: 0 }).toEqual({ ...workbook.getWorksheet('Remarks')!.model, id: 0 });
+    }
+    expect(await page.evaluate(async () => (await fetch('/api/projects')).json())).toEqual(before);
+  });
+
+  test('G4. Remarks naming collision and sub-window export preserve project notes', async ({ page, context }) => {
+    // Popup requests must also remain isolated. Main-page routes take precedence.
+    await context.route('**/api/**', (route) => route.fulfill({ status: 403, contentType: 'application/json', body: '{}' }));
+    await setupAndOpenCfs(page, { includeSecondRoom: true, remarks: EXPORT_REMARKS, remarkNameCollision: true });
+    const main = await downloadExcel(page, 'All Rooms', 'collision');
+    expect(main.worksheets.map((sheet) => sheet.name)).toEqual([ROOM_NAME, 'rEmArKs', 'Remarks (2)']);
+    expectRemarksSheet(main.getWorksheet('Remarks (2)'));
+    for (const label of ['Sub Window', 'Fixed Window']) {
+      const pending = page.waitForEvent('popup');
+      await page.getByRole('button', { name: label, exact: true }).click();
+      const popup = await pending;
+      await expect(popup.locator('table.cfs-matrix-table')).toBeVisible({ timeout: 60000 });
+      const detached = await downloadExcel(popup, 'All Rooms', label.toLowerCase().replace(' ', '-'));
+      expect(detached.worksheets.map((sheet) => sheet.name)).toEqual([ROOM_NAME, 'rEmArKs', 'Remarks (2)']);
+      expectRemarksSheet(detached.getWorksheet('Remarks (2)'));
+      expect(detached.getWorksheet('Remarks (2)')!.model).toEqual(main.getWorksheet('Remarks (2)')!.model);
+      await popup.close();
+    }
+  });
+
+  test('G5. Remarks long text uses bounded physical rows and merged-cell borders without truncating or mutating data', async () => {
+    const body = Array.from({ length: 90 }, (_, index) => `本文 ${index + 1}: preserve every line`).join('\n');
+    const cellText = Array.from({ length: 80 }, (_, index) => `表内 ${index + 1}`).join('\n');
+    const notes: ProjectRemark[] = [
+      { id: 'long', title: 'Long note', body, hasTable: true, columns: ['ID', 'Long text'], rows: [['001', cellText], ['002', 'Last row']] },
+      { id: 'header-only', title: 'Header only', body: '', hasTable: true, columns: ['A', 'B', 'C', 'D', 'E', 'F'], rows: [] },
+      { id: 'no-columns', title: 'No columns', body: 'No table cells', hasTable: true, columns: [], rows: [['NOT VISIBLE']] },
+    ];
+    const before = JSON.stringify(notes);
+    const workbook = new ExcelJS.Workbook();
+    appendRemarksSheet(workbook, 'Remarks', notes);
+    expect(JSON.stringify(notes)).toBe(before);
+    fs.mkdirSync(SHOT_DIR, { recursive: true });
+    const filePath = path.join(SHOT_DIR, 'remarks-long.xlsx');
+    await workbook.xlsx.writeFile(filePath);
+    const loaded = new ExcelJS.Workbook();
+    await loaded.xlsx.readFile(filePath);
+    const sheet = loaded.getWorksheet('Remarks')!;
+    const cells = remarkMasterCells(sheet);
+    expect(cells.map((cell) => cell.value)).toEqual(['Long note', body, 'ID', 'Long text', '001', cellText, '002', 'Last row', 'Header only', '', 'A', 'B', 'C', 'D', 'E', 'F', 'No columns', 'No table cells']);
+    for (const text of [body, cellText, '001']) {
+      const master = cells.find((cell) => cell.value === text)!;
+      expect(sheet.getCell(Number(master.row) + 1, Number(master.col)).master.address).toBe(master.address);
+      expect(master.alignment.wrapText).toBe(true);
+    }
+    sheet.eachRow((row) => expect(row.height).toBeLessThanOrEqual(400));
+    for (const text of ['001', cellText, '002', 'Last row', 'A', 'F']) {
+      const master = cells.find((cell) => cell.value === text)!;
+      for (const side of ['top', 'bottom', 'left', 'right'] as const) expect(master.border[side]?.style).toBe('thin');
+    }
+  });
+
+  test('G6. Long Remarks columns share the same width budget in standalone and All Rooms exports', async ({ page }) => {
+    const longText = 'Confirm the entrance circuit state before changing the control mode and record the result. '.repeat(12);
+    await setupAndOpenCfs(page, { remarks: [{ id: 'long-width', title: 'Operating Procedure', body: '', hasTable: true,
+      columns: ['ID', 'Procedure', 'State'], rows: [['A', longText, 'OK']] }] });
+    const allRooms = await downloadExcel(page, 'All Rooms', 'long-width');
+    const expected = allRooms.getWorksheet('Remarks')!;
+    expect(expected.getColumn(2).width).toBeGreaterThan(140);
+    expect(expected.getColumn(1).width).toBeLessThanOrEqual(12);
+    expect(expected.getColumn(3).width).toBeLessThanOrEqual(12);
+    expect(expected.getCell('B4').value).toBe(longText);
+    await page.getByRole('tab', { name: 'Remarks', exact: true }).click();
+    const pending = page.waitForEvent('download');
+    await page.getByTestId('remarks-view').getByRole('button', { name: 'Excel Export', exact: true }).click();
+    const download = await pending;
+    const filePath = path.join(SHOT_DIR, 'standalone-long-width.xlsx');
+    await download.saveAs(filePath);
+    const standalone = new ExcelJS.Workbook();
+    await standalone.xlsx.readFile(filePath);
+    expect({ ...standalone.worksheets[0].model, id: 0 }).toEqual({ ...expected.model, id: 0 });
   });
 
   test('H. ハイライトトグル (Individual Override / FFE / Energy Saving) が機能する', async ({ page }) => {

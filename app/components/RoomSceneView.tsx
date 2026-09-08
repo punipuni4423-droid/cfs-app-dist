@@ -22,6 +22,7 @@ import type {
 } from "../types";
 import { createEmptyRoomScene, normalizeBacklightLevels } from "../lib/constants";
 import { ensureRoomScenes, isPmsScene, sortRoomScenesByGroup } from "../lib/roomScenes";
+import { normalizeRoomSceneSettingLinksAfterCommit } from "../lib/roomSceneSettingLinks";
 import { useDragReorder } from "../lib/useDragReorder";
 import ActionIconButton from "./ActionIconButton";
 import DragHandle from "./DragHandle";
@@ -281,6 +282,7 @@ export default function RoomSceneView({
     const copied: RoomScene = {
       ...source,
       id: createAppId(),
+      settingLinkGroupId: undefined,
       areaSceneSelections: (source.areaSceneSelections ?? []).map((selection) => ({ ...selection })),
       settings: source.settings.map((setting) => ({ ...setting })),
     };
@@ -292,7 +294,8 @@ export default function RoomSceneView({
     if (!canEdit) return;
     // Keep the stored order grouped as the tab shows it (PMS before Door
     // Magnet) so CFS columns and exports never interleave the groups.
-    onChange(sortRoomScenesByGroup(next));
+    const sorted = sortRoomScenesByGroup(next);
+    onChange(normalizeRoomSceneSettingLinksAfterCommit(effectiveRoomScenes, sorted));
   }
 
   function areaKey(sceneId: string, areaId: string): string {

@@ -301,6 +301,10 @@ export interface RoomScene {
   detail: string;
   triggerCondition: string;
   backlightCondition: string;
+  // T-84: permanent setting link for CFS Scene columns. Linked RoomScenes
+  // sync areaSceneSelections, Individual Override settings, and Backlight
+  // condition; scene identity fields stay local.
+  settingLinkGroupId?: string;
   areaSceneSelections: RoomSceneAreaSceneSelection[];
   settings: SceneCircuitSetting[];
 }
@@ -372,12 +376,22 @@ export interface ProjectSettings {
   programmingName: ProgrammingNameSettings;
 }
 
+export interface ProjectRemark {
+  id: string;
+  title: string;
+  body: string;
+  hasTable: boolean;
+  columns: string[];
+  rows: string[][];
+}
+
 export interface ProjectData {
   id: string;
   name: string;
   updatedAt: string;
   lastUpdatedBy?: CollaborationEditorInfo | null;
   settings?: ProjectSettings;
+  remarks?: ProjectRemark[];
   locations: LocationMaster[];
   fixtures: FixtureMaster[];
   circuits: CircuitEntry[];
@@ -403,6 +417,6 @@ export interface TrashData {
   roomTypes: DeletedRoomTypeItem[];
 }
 
-export type ProjectTab = 'area' | 'fixture' | 'rooms';
+export type ProjectTab = 'area' | 'fixture' | 'rooms' | 'remarks';
 
 export type RoomsSubTab = 'circuit' | 'deviceAssign' | 'areaScene' | 'scene' | 'switch' | 'command' | 'backlight' | 'cfs' | 'pdu';

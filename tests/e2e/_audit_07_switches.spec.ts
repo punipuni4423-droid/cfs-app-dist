@@ -11,7 +11,7 @@
  *       よって隔離・シード・検証はすべて /api/projects 経由で行う。
  *       プロジェクト作成はUI、エリア/回路/シーンの注入はAPI、という方針。
  *
- * 対象: http://localhost:3014
+ * 対象: PLAYWRIGHT_BASE_URL (未指定時は http://localhost:3014)
  */
 import { test, expect, type Page } from '@playwright/test';
 import { STORAGE_KEY } from '../../app/lib/constants';
@@ -21,7 +21,6 @@ const SHOT_DIR = 'test-results/audit-07';
 const PROJECT_NAME = 'AUDIT-07-Sw';
 const ROOM_NAME = 'AUDIT-07-Room';
 const PROJECT_DRAFT_STORAGE_KEY = 'cfs-project-drafts-v2';
-const PLAYWRIGHT_BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:3014';
 
 // 型定義 app/types.ts SwitchKind に存在する全種別
 const ALL_SWITCH_KINDS = ['contact', 'lutronPd', 'lutronPico', 'command', 'tstat', 'pir', 'qsm'];
@@ -33,6 +32,7 @@ interface ApiProject {
   name: string;
   roomTypes: Array<{
     id: string;
+    circuitIds?: string[];
     switches: Array<{
       buttonSetting: { sceneIds: string[]; sceneId: string; circuitSettings: Array<{ circuitId: string; percentage: string }> };
       backlightCondition: string;
@@ -84,6 +84,7 @@ async function apiPutProjects(page: Page, projects: ApiProject[]): Promise<void>
     await page.goto('/', { waitUntil: 'domcontentloaded' });
   }
   await page.evaluate(async ({ nextProjects, storageKey, draftKey }) => {
+    sessionStorage.clear();
     localStorage.setItem(storageKey, JSON.stringify(nextProjects));
     localStorage.setItem(draftKey, JSON.stringify(nextProjects));
     await fetch('/api/projects', {
@@ -114,6 +115,7 @@ async function isolate(page: Page): Promise<void> {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.evaluate(() => {
     try { localStorage.clear(); } catch { /* ignore */ }
+    try { sessionStorage.clear(); } catch { /* ignore */ }
   });
   // Step 5: アプリロード後に autosave が発火しないよう、すぐに about:blank に退避してから
   //         タイマーが切れるまで待つ
@@ -219,6 +221,7 @@ async function seedAreasCircuitsScenes(page: Page): Promise<void> {
   ];
 
   const rt = project.roomTypes[0] as ApiProject['roomTypes'][number] & { scenes: unknown[] };
+  rt.circuitIds = project.circuits.map((circuit) => String((circuit as { id: unknown }).id));
   // Bedroom に 2 シーン、Bathroom に 1 シーン
   rt.scenes = [
     { id: 'audit-scene-a1', areaId: 'audit-area-a', name: 'Welcome', settings: [{ circuitId: 'audit-cir-1', percentage: '80' }] },
@@ -228,6 +231,32 @@ async function seedAreasCircuitsScenes(page: Page): Promise<void> {
   rt.switches = [];
 
   await apiPutProjects(page, projects);
+}
+
+function hasSeededSwitchHarnessData(projects: ApiProject[]): boolean {
+  const project = projects[0] as (ApiProject & { locations?: unknown[]; circuits?: Array<{ id?: unknown }> }) | undefined;
+  const rt = project?.roomTypes?.[0] as
+    | (ApiProject['roomTypes'][number] & { scenes?: unknown[] })
+    | undefined;
+  const circuitIds = (project?.circuits ?? []).map((circuit) => String(circuit.id ?? ""));
+  const scopedCircuitIds = new Set(rt?.circuitIds ?? []);
+  return Boolean(
+    project &&
+      rt &&
+      (project.locations ?? []).length >= 2 &&
+      circuitIds.length >= 3 &&
+      circuitIds.every((id) => id && scopedCircuitIds.has(id)) &&
+      (rt.scenes ?? []).length >= 3,
+  );
+}
+
+async function waitForSeededSwitchHarnessData(page: Page): Promise<void> {
+  for (let i = 0; i < 8; i += 1) {
+    const projects = await apiGetProjects(page);
+    if (hasSeededSwitchHarnessData(projects)) return;
+    await page.waitForTimeout(400);
+  }
+  throw new Error('audit_07 seed did not survive autosave/session restore isolation');
 }
 
 /** サーバ DB から現在のプロジェクトのルームタイプ[0].switches を取得 */
@@ -279,42 +308,15 @@ async function fullSetup(page: Page): Promise<void> {
   await seedAreasCircuitsScenes(page);
   // 開いている UI ページの autosave がシードを上書きしないよう一旦退避してから開き直す
   // autosave タイマー (1200ms) が発火し終えるのを確実に待ってから about:blank へ
-  await page.waitForTimeout(1800);
   await page.goto('about:blank');
-  // autosave が書き戻したかもしれないデータを page.request (Node.js fetch) で取得し直す
-  const afterSeedResp = await page.request.get(`${PLAYWRIGHT_BASE_URL}/api/projects`);
-  const afterSeedBody = await afterSeedResp.json();
-  const afterSeedProjects: ApiProject[] = afterSeedBody.projects ?? [];
-  // autosave によってシードデータが上書きされていた場合、シードを再注入する
-  if (afterSeedProjects.length > 0 && afterSeedProjects[0]?.roomTypes?.[0]) {
-    const proj = afterSeedProjects[0] as ApiProject & { locations: unknown[]; circuits: unknown[] };
-    const rt = proj.roomTypes[0] as ApiProject['roomTypes'][number] & { scenes: unknown[] };
-    // scenes が消えていたら再注入
-    if (!rt.scenes || (rt.scenes as unknown[]).length === 0) {
-      proj.locations = [
-        { id: 'audit-area-a', name: 'Bedroom', number: '1', color: '#FFC7CE' },
-        { id: 'audit-area-b', name: 'Bathroom', number: '2', color: '#C6EFCE' },
-      ];
-      proj.circuits = [
-        { id: 'audit-cir-1', circuitGroupId: 'g1', daliFixtureGroupId: '', designerNumber: 'D-001', internalNumber: 'I-001', dimmingType: 'DALI', fixture: '', pcs: '1', detail: 'Ceiling', area: 'audit-area-a', ffe: false, energySaving: false },
-        { id: 'audit-cir-2', circuitGroupId: 'g2', daliFixtureGroupId: '', designerNumber: 'D-002', internalNumber: 'I-002', dimmingType: 'Switch', fixture: '', pcs: '1', detail: 'Lamp', area: 'audit-area-a', ffe: false, energySaving: false },
-        { id: 'audit-cir-3', circuitGroupId: 'g3', daliFixtureGroupId: '', designerNumber: 'D-003', internalNumber: 'I-003', dimmingType: 'DALI', fixture: '', pcs: '1', detail: 'Mirror', area: 'audit-area-b', ffe: false, energySaving: false },
-      ];
-      rt.scenes = [
-        { id: 'audit-scene-a1', areaId: 'audit-area-a', name: 'Welcome', settings: [{ circuitId: 'audit-cir-1', percentage: '80' }] },
-        { id: 'audit-scene-a2', areaId: 'audit-area-a', name: 'Relax', settings: [{ circuitId: 'audit-cir-1', percentage: '20' }] },
-        { id: 'audit-scene-b1', areaId: 'audit-area-b', name: 'Bright', settings: [{ circuitId: 'audit-cir-3', percentage: '100' }] },
-      ];
-      rt.switches = rt.switches ?? [];
-      await apiPutProjects(page, afterSeedProjects);
-    }
-  }
+  await page.waitForTimeout(1800);
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   // "Loading projects." が消えるまで待つ
   await page.waitForFunction(
     () => !document.body.textContent?.includes('Loading projects'),
     { timeout: 20000 },
   );
+  await waitForSeededSwitchHarnessData(page);
   await reopenProjectRoomSwitch(page);
 }
 
@@ -325,6 +327,9 @@ const KIND_CHIP = (label: string) =>
 test.describe('AUDIT-07 Switch management', () => {
   test.beforeEach(async ({ page }) => {
     await installLocalEditingMocks(page);
+    await page.addInitScript(() => {
+      try { sessionStorage.clear(); } catch { /* ignore */ }
+    });
   });
 
   // 各テストは fullSetup() で隔離するため独立。1テストの失敗で他を隠さない。

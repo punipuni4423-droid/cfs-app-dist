@@ -396,6 +396,51 @@ test.describe("Area Scene overview", () => {
     await expect(page.locator(".scene-table")).toBeVisible();
   });
 
+  test("confirms shared bulk changes before applying in edit mode", async ({ page }, testInfo) => {
+    const state = await installLocalEditingMocks(page);
+    state.projects = [makeProject() as unknown as Record<string, unknown>];
+
+    await openRoomTypeSubTab(page, "Area Scene");
+    await page.locator(".scene-area-chip").filter({ hasText: "Bedroom" }).first().click();
+    const bulkPanel = page.locator(".scene-bulk-panel").first();
+    await expect(bulkPanel).toBeVisible({ timeout: 5000 });
+    const levelInputs = page.locator(".scene-table tbody .scene-level-input");
+    await expect(levelInputs.first()).toBeVisible({ timeout: 5000 });
+    const beforeValues = await levelInputs.evaluateAll((inputs) =>
+      inputs.map((input) => (input as HTMLInputElement).value),
+    );
+
+    const bulkInput = bulkPanel.locator(".scene-bulk-control .scene-level-input").first();
+    await bulkInput.fill("45");
+    await bulkPanel.getByRole("button", { name: "Apply Bulk", exact: true }).click();
+    const confirmOverlay = page.locator(".scene-bulk-confirm-overlay");
+    await expect(confirmOverlay).toBeVisible({ timeout: 5000 });
+    await expect(confirmOverlay).toContainText("Target: All");
+    await expect(confirmOverlay).toContainText("45%");
+    await confirmOverlay.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(confirmOverlay).toHaveCount(0, { timeout: 5000 });
+    await expect(levelInputs.evaluateAll((inputs) =>
+      inputs.map((input) => (input as HTMLInputElement).value),
+    )).resolves.toEqual(beforeValues);
+
+    await bulkPanel.getByRole("button", { name: "Apply Bulk", exact: true }).click();
+    await expect(confirmOverlay).toBeVisible({ timeout: 5000 });
+    await page.screenshot({ path: testInfo.outputPath("area-scene-bulk-confirm.png"), fullPage: false });
+    await page.keyboard.press("Escape");
+    await expect(confirmOverlay).toHaveCount(0, { timeout: 5000 });
+    await expect(levelInputs.evaluateAll((inputs) =>
+      inputs.map((input) => (input as HTMLInputElement).value),
+    )).resolves.toEqual(beforeValues);
+
+    await bulkPanel.getByRole("button", { name: "Apply Bulk", exact: true }).click();
+    await expect(confirmOverlay).toBeVisible({ timeout: 5000 });
+    await confirmOverlay.getByRole("button", { name: "Confirm", exact: true }).click();
+    await expect(confirmOverlay).toHaveCount(0, { timeout: 5000 });
+    await expect(levelInputs.evaluateAll((inputs) =>
+      inputs.map((input) => (input as HTMLInputElement).value),
+    )).resolves.toEqual(beforeValues.map(() => "45"));
+  });
+
   test("keeps CFS base columns sticky when scene columns grow", async ({ page }) => {
     const state = await installLocalEditingMocks(page);
     const project = makeProject();

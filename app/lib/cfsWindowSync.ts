@@ -4,6 +4,7 @@ import type {
   FixtureMaster,
   LocationMaster,
   ProgrammingNameSettings,
+  ProjectRemark,
   RoomType,
 } from "../types";
 
@@ -24,6 +25,7 @@ export interface CfsWindowSnapshot {
   // Every room type of the project (revision snapshots stripped) so a
   // pinned-mode window can show a fixed room type and switch on its own.
   roomTypeEntries?: CfsWindowRoomTypeEntry[];
+  projectRemarks?: ProjectRemark[];
   devices: DeviceMaster[];
   // T-33: fixture masters for the zone Total VA column. Optional so snapshots
   // from an older main-window build stay renderable (the column shows "-").

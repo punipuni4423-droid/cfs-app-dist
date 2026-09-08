@@ -5,21 +5,28 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as Reac
 import { createPortal } from "react-dom";
 import { backlightPaleColor } from "../lib/backlightColors";
 import CfsLinkMapPanel from "./CfsLinkMapPanel";
+import CommandView, { type CommandSettingOverlayRequest } from "./CommandView";
+import SceneView, { type AreaSceneSettingOverlayRequest } from "./SceneView";
+import SwitchView, { type SwitchSettingOverlayRequest } from "./SwitchView";
 import type {
+  BacklightLevelSetting,
   CircuitEntry,
   CfsRowDisplaySettings,
   CfsRowKind,
+  DeviceAssignment,
   DeviceMaster,
   FixtureMaster,
   InspectionMark,
   LocationMaster,
   ProgrammingNameSettings,
   ProgrammingNameToken,
+  ProjectRemark,
   RevisionFieldChanges,
   RoomType,
   RoomScene,
   Scene,
   SwitchEntry,
+  TriggerMaster,
 } from "../types";
 import { buildAreaAddressAssignmentMap, normalizeProgrammingToken } from "../lib/programming";
 import { buildCfsLinkageGraph, sourceIdsForIssue, type CfsLinkIssue } from "../lib/cfsLinkageGraph";
@@ -61,6 +68,7 @@ import {
   type MergeInfo,
 } from "../lib/cfsTableModel";
 import { appendCfsSheet, loadExcelJs, type CfsExcelHeaderGroups, type CfsExcelSheetModel } from "../lib/cfsExcelExport";
+import { appendRemarksSheet } from "../lib/remarksExcelExport";
 import {
   rowTotalVaValues,
   rowZoneLowHighEndValues,
@@ -68,6 +76,7 @@ import {
   type CfsZoneVaContext,
 } from "../lib/cfsBaseColumnValues";
 import { cfsTargetsForRow, type CfsResolvedTarget } from "../lib/cfsTargets";
+import { isLowHighEndEligibleDimmingTypes } from "../lib/lowHighEnd";
 import { analyzeStaleHvacLinks, repairStaleHvacLinks } from "../lib/staleHvacLinkRepair";
 import {
   buildCfsZoneRows,
@@ -93,10 +102,22 @@ import {
 import { isPmsScene, sortRoomScenesByGroup } from "../lib/roomScenes";
 import { CFS_ROW_DISPLAY_OPTIONS, normalizeCfsRowDisplaySettings } from "../lib/cfsRowDisplay";
 import { buildSettingLinkGroups } from "../lib/settingLinkGroups";
+import {
+  linkSwitchSettingSelection,
+  normalizeSwitchSettingLinksAfterCommit,
+  unlinkSwitchSettingSelection,
+} from "../lib/switchSettingLinks";
+import {
+  linkRoomSceneSettingSelection,
+  normalizeRoomSceneSettingLinksAfterCommit,
+  unlinkRoomSceneSettingSelection,
+} from "../lib/roomSceneSettingLinks";
 import { normalizeBacklightLevels } from "../lib/constants";
 import CfsBaseColumnMenu from "./CfsBaseColumnMenu";
 import DragHandle from "./DragHandle";
 import CfsFilterMenu from "./CfsFilterMenu";
+import CfsSettingNameButton from "./CfsSettingNameButton";
+import { ActionIcon } from "./ActionIconButton";
 
 interface CfsProjectExcelRoomTypeEntry {
   roomType: RoomType;
@@ -111,14 +132,19 @@ interface CfsViewProps {
   roomType: RoomType;
   circuits: CircuitEntry[];
   projectRoomTypeEntries?: CfsProjectExcelRoomTypeEntry[];
+  projectRemarks?: ProjectRemark[];
   devices: DeviceMaster[];
   // T-33: fixture masters for the zone Total VA column. Optional so read-only
   // embeddings without fixture data keep working (the column shows "-").
   fixtures?: FixtureMaster[];
   locations: LocationMaster[];
   onScenesChange?: (next: Scene[]) => void;
-  onRoomScenesChange?: (next: RoomScene[]) => void;
-  onSwitchesChange?: (next: SwitchEntry[]) => void;
+  onRoomScenesChange?: (next: RoomScene[] | ((current: RoomScene[]) => RoomScene[])) => void;
+  onDeviceAssignmentsChange?: (next: DeviceAssignment[]) => void;
+  onSwitchesChange?: (next: SwitchEntry[] | ((current: SwitchEntry[]) => SwitchEntry[])) => void;
+  backlightLevels?: BacklightLevelSetting[];
+  onBacklightLevelsChange?: (next: BacklightLevelSetting[]) => void;
+  triggerMasters?: TriggerMaster[];
   onInspectionMarksChange?: (next: InspectionMark[]) => void;
   programmingNameSettings?: ProgrammingNameSettings;
   onProgrammingNameSettingsChange?: (next: ProgrammingNameSettings) => void;
@@ -187,6 +213,8 @@ export interface InspectionRevisionTarget {
 type InspectionEditScope = "areaScene" | "override";
 type InspectionDraftSource = "areaScene" | "roomScene" | "switch";
 type InspectionTarget = CfsResolvedTarget;
+type LowHighEndField = "lowEnd" | "highEnd";
+type LowHighEndBaseColumnKey = "zoneLowEnd" | "zoneHighEnd";
 
 interface InspectionDraftRef extends InspectionTarget {
   key: string;
@@ -206,6 +234,20 @@ interface InspectionHistorySnapshot {
   baselineValues: Record<string, string>;
 }
 
+interface LowHighEndDraft {
+  key: string;
+  assignmentId: string;
+  field: LowHighEndField;
+  rowId: string;
+  label: string;
+  previousValue: string;
+  value: string;
+}
+
+interface LowHighEndHistorySnapshot {
+  drafts: Record<string, LowHighEndDraft>;
+}
+
 interface InspectionHistoryControls {
   active: boolean;
   canUndo: boolean;
@@ -217,6 +259,15 @@ interface InspectionHistoryControls {
 interface InspectionPopoverState {
   rowId: string;
   colId: string;
+  top: number;
+  left: number;
+  width: number;
+  maxHeight: number;
+}
+
+interface LowHighEndPopoverState {
+  rowId: string;
+  field: LowHighEndField;
   top: number;
   left: number;
   width: number;
@@ -245,6 +296,8 @@ interface CfsScrollEndSpace {
 const INSPECTION_ON_OFF_VALUES = ["On", "Off", "Blinking (Short)", "Blinking (Long)", "0.5 sec", "Uneffected"] as const;
 const INSPECTION_CURTAIN_VALUES = ["Open", "Close", "Stop", "Uneffected"] as const;
 const INSPECTION_HISTORY_LIMIT = 100;
+const LOW_HIGH_END_HISTORY_LIMIT = 100;
+const LOW_HIGH_END_STEPS = [-10, -1, 1, 10] as const;
 const INSPECTION_PERCENT_PRESET_VALUES = [
   { label: "0%", value: "0" },
   { label: "100%", value: "100" },
@@ -259,6 +312,37 @@ const INSPECTION_PERCENT_QUICK_VALUES = ["Raise", "Lower", "Uneffected"] as cons
 const CFS_LEGACY_PREFS_KEY = "cfs-view-preferences-v1";
 const CFS_PREFS_KEY = "cfs-view-preferences-v2";
 const SHOW_CFS_LINK_ISSUE_SURFACE = false;
+
+function lowHighEndFieldForBaseColumn(key: BaseColumnKey): LowHighEndField | null {
+  if (key === "zoneLowEnd") return "lowEnd";
+  if (key === "zoneHighEnd") return "highEnd";
+  return null;
+}
+
+function lowHighEndBaseColumnForField(field: LowHighEndField): LowHighEndBaseColumnKey {
+  return field === "lowEnd" ? "zoneLowEnd" : "zoneHighEnd";
+}
+
+function lowHighEndFieldLabel(field: LowHighEndField): string {
+  return field === "lowEnd" ? "Low End" : "High End";
+}
+
+function lowHighEndDraftKey(assignmentId: string, field: LowHighEndField): string {
+  return `${assignmentId}:${field}`;
+}
+
+function formatLowHighEndNumber(value: number): string {
+  const rounded = Math.round(value * 100) / 100;
+  return String(rounded);
+}
+
+function normalizeLowHighEndInput(value: string): string {
+  const trimmed = value.trim().replace(/%$/, "");
+  if (!trimmed) return "";
+  const numeric = Number.parseFloat(trimmed);
+  if (!Number.isFinite(numeric)) return "";
+  return formatLowHighEndNumber(Math.min(100, Math.max(0, numeric)));
+}
 
 // Settings that are meaningful across projects (used as the first-open seed).
 interface CfsStoredSeedPrefs {
@@ -478,6 +562,26 @@ function HeaderSplitText({ value }: { value: string }): ReactNode {
 
 function isPriorityTriggerColumn(col: FunctionColumn): boolean {
   return col.category === "switch" && col.source?.isPriorityFunction === true;
+}
+
+type CfsSettingLinkKind = "switchCommand" | "roomScene";
+type CfsSwitchSettingLinkColumn = FunctionColumn & { category: "switch" | "command"; source: SwitchEntry };
+type CfsRoomSceneSettingLinkColumn = FunctionColumn & { category: "scene"; roomScene: RoomScene };
+type CfsSettingLinkColumn = CfsSwitchSettingLinkColumn | CfsRoomSceneSettingLinkColumn;
+
+function isCfsSettingLinkSelectableColumn(col: FunctionColumn): col is CfsSettingLinkColumn {
+  return (
+    ((col.category === "switch" || col.category === "command") && Boolean(col.source)) ||
+    (col.category === "scene" && Boolean(col.roomScene))
+  );
+}
+
+function settingLinkKindForColumn(col: CfsSettingLinkColumn): CfsSettingLinkKind {
+  return col.category === "scene" ? "roomScene" : "switchCommand";
+}
+
+function settingLinkGroupIdForColumn(col: CfsSettingLinkColumn): string | undefined {
+  return col.category === "scene" ? col.roomScene?.settingLinkGroupId : col.source?.settingLinkGroupId;
 }
 
 function PirHeaderText({
@@ -1088,12 +1192,17 @@ export default function CfsView({
   roomType,
   circuits,
   projectRoomTypeEntries,
+  projectRemarks = [],
   devices,
   fixtures = [],
   locations,
   onScenesChange,
   onRoomScenesChange,
+  onDeviceAssignmentsChange,
   onSwitchesChange,
+  backlightLevels,
+  onBacklightLevelsChange,
+  triggerMasters = [],
   onInspectionMarksChange,
   programmingNameSettings,
   onProgrammingNameSettingsChange,
@@ -1176,6 +1285,11 @@ export default function CfsView({
   const inspectionUndoStackRef = useRef<InspectionHistorySnapshot[]>([]);
   const inspectionRedoStackRef = useRef<InspectionHistorySnapshot[]>([]);
   const [inspectionHistoryVersion, setInspectionHistoryVersion] = useState(0);
+  const [lowHighEndDrafts, setLowHighEndDrafts] = useState<Record<string, LowHighEndDraft>>({});
+  const lowHighEndUndoStackRef = useRef<LowHighEndHistorySnapshot[]>([]);
+  const lowHighEndRedoStackRef = useRef<LowHighEndHistorySnapshot[]>([]);
+  const [lowHighEndHistoryVersion, setLowHighEndHistoryVersion] = useState(0);
+  const [lowHighEndPopover, setLowHighEndPopover] = useState<LowHighEndPopoverState | null>(null);
   const [inspectionPopover, setInspectionPopover] = useState<InspectionPopoverState | null>(null);
   const [inspectionSessionBaseline, setInspectionSessionBaseline] = useState<InspectionCompletionPayload | null>(null);
   const [inspectionSessionSavedRevision, setInspectionSessionSavedRevision] = useState(false);
@@ -1185,8 +1299,13 @@ export default function CfsView({
   const [inspectionSelectionEnd, setInspectionSelectionEnd] = useState<InspectionCellCoord | null>(null);
   const [inspectionPasteTarget, setInspectionPasteTarget] = useState<InspectionCellCoord | null>(null);
   const [inspectionClipboard, setInspectionClipboard] = useState<InspectionClipboard | null>(null);
+  const [cfsEditMode, setCfsEditMode] = useState(false);
+  const [selectedSettingLinkColumnIds, setSelectedSettingLinkColumnIds] = useState<Set<string>>(new Set());
   const [cfsScrollEndSpace, setCfsScrollEndSpace] = useState<CfsScrollEndSpace>({ inline: 0, block: 352 });
   const [showLinkMap, setShowLinkMap] = useState(false);
+  const [cfsSwitchSettingRequest, setCfsSwitchSettingRequest] = useState<SwitchSettingOverlayRequest | null>(null);
+  const [cfsCommandSettingRequest, setCfsCommandSettingRequest] = useState<CommandSettingOverlayRequest | null>(null);
+  const [cfsAreaSceneSettingRequest, setCfsAreaSceneSettingRequest] = useState<AreaSceneSettingOverlayRequest | null>(null);
   const [repairedLinkTargetIds, setRepairedLinkTargetIds] = useState<Set<string>>(new Set());
   const [lastHvacRepairSummary, setLastHvacRepairSummary] = useState<{ count: number; skipped: number } | null>(null);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
@@ -1200,11 +1319,24 @@ export default function CfsView({
   const tableRef = useRef<HTMLTableElement | null>(null);
   const cfsMatrixScrollRef = useRef<HTMLDivElement | null>(null);
   const inspectionPopoverRef = useRef<HTMLDivElement | null>(null);
+  const lowHighEndPopoverRef = useRef<HTMLDivElement | null>(null);
   const inspectionRoomTypeIdRef = useRef(roomType.id);
   const inspectionDraftsTouchedRef = useRef(false);
   const pointerDraggedFunctionColumnGroupKeyRef = useRef("");
   const mouseDraggedFunctionColumnGroupKeyRef = useRef("");
+  const cfsSettingRequestIdRef = useRef(0);
   const { settings: appSettings } = useAppSettings();
+  const lowHighEndDraftList = useMemo(() => Object.values(lowHighEndDrafts), [lowHighEndDrafts]);
+  const canLowHighEndUndo = lowHighEndHistoryVersion >= 0 && lowHighEndUndoStackRef.current.length > 0;
+  const canLowHighEndRedo = lowHighEndHistoryVersion >= 0 && lowHighEndRedoStackRef.current.length > 0;
+  const lowHighEndDraftSessionActive = lowHighEndDraftList.length > 0 || canLowHighEndUndo || canLowHighEndRedo;
+  const clearLowHighEndDraftSession = useCallback((): void => {
+    setLowHighEndDrafts({});
+    lowHighEndUndoStackRef.current = [];
+    lowHighEndRedoStackRef.current = [];
+    setLowHighEndHistoryVersion((value) => value + 1);
+    setLowHighEndPopover(null);
+  }, []);
   const activeProgrammingNameSettings = useMemo(
     () => normalizeProgrammingNameSettings(programmingNameSettings),
     [programmingNameSettings],
@@ -1243,13 +1375,32 @@ export default function CfsView({
     () => ({ circuits, fixtureByName }),
     [circuits, fixtureByName],
   );
+  const circuitById = useMemo(() => new Map(circuits.map((circuit) => [circuit.id, circuit])), [circuits]);
+  const deviceAssignmentById = useMemo(
+    () => new Map(roomType.deviceAssignments.map((assignment) => [assignment.id, assignment])),
+    [roomType.deviceAssignments],
+  );
   const zoneEndContext = useMemo<CfsZoneEndContext>(
-    () => ({
-      circuitById: new Map(circuits.map((circuit) => [circuit.id, circuit])),
-      assignmentById: new Map(roomType.deviceAssignments.map((assignment) => [assignment.id, assignment])),
-      deviceByModel,
-    }),
-    [circuits, deviceByModel, roomType.deviceAssignments],
+    () => {
+      const assignmentById = new Map(deviceAssignmentById);
+      for (const draft of lowHighEndDraftList) {
+        const assignment = assignmentById.get(draft.assignmentId);
+        if (!assignment) continue;
+        const nextAssignment: DeviceAssignment = { ...assignment };
+        if (draft.value.trim() === "") {
+          delete nextAssignment[draft.field];
+        } else {
+          nextAssignment[draft.field] = draft.value;
+        }
+        assignmentById.set(draft.assignmentId, nextAssignment);
+      }
+      return {
+        circuitById,
+        assignmentById,
+        deviceByModel,
+      };
+    },
+    [circuitById, deviceAssignmentById, deviceByModel, lowHighEndDraftList],
   );
   const areaAddressByAssignmentCircuit = useMemo(
     () => buildAreaAddressAssignmentMap(roomType.deviceAssignments, circuits, locations),
@@ -1727,7 +1878,10 @@ export default function CfsView({
     setInspectionSelectionEnd(null);
     setInspectionPasteTarget(null);
     setInspectionClipboard(null);
-  }, [roomType.id]);
+    clearLowHighEndDraftSession();
+    setCfsEditMode(false);
+    setSelectedSettingLinkColumnIds(new Set());
+  }, [clearLowHighEndDraftSession, roomType.id]);
 
   useEffect(() => {
     if (inspectionMode) return;
@@ -1739,6 +1893,16 @@ export default function CfsView({
     setInspectionSelectionEnd(null);
     setInspectionPasteTarget(null);
     setInspectionClipboard(null);
+  }, [inspectionMode]);
+
+  useEffect(() => {
+    if (canEdit) return;
+    clearLowHighEndDraftSession();
+  }, [canEdit, clearLowHighEndDraftSession]);
+
+  useEffect(() => {
+    if (!inspectionMode) return;
+    setLowHighEndPopover(null);
   }, [inspectionMode]);
 
   useEffect(() => {
@@ -1789,6 +1953,36 @@ export default function CfsView({
     };
   }, [inspectionPopover]);
 
+  useEffect(() => {
+    if (!lowHighEndPopover) return;
+    function closeOnOutsideClick(event: PointerEvent): void {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (lowHighEndPopoverRef.current?.contains(target)) return;
+      setLowHighEndPopover(null);
+    }
+    function closeOnEscape(event: KeyboardEvent): void {
+      if (event.key === "Escape") setLowHighEndPopover(null);
+    }
+    const openedAt = Date.now();
+    function closeOnScroll(event: Event): void {
+      if (Date.now() - openedAt < 400) return;
+      const target = event.target;
+      if (target instanceof Node && lowHighEndPopoverRef.current?.contains(target)) return;
+      setLowHighEndPopover(null);
+    }
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("scroll", closeOnScroll, true);
+    window.addEventListener("resize", closeOnScroll);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("scroll", closeOnScroll, true);
+      window.removeEventListener("resize", closeOnScroll);
+    };
+  }, [lowHighEndPopover]);
+
   // T-33: orderBaseColumns inserts the new zone columns right after Type for
   // saved orders that predate them (instead of appending at the end).
   const orderedBaseColumns = useMemo(() => orderBaseColumns(baseColumnOrder), [baseColumnOrder]);
@@ -1808,32 +2002,60 @@ export default function CfsView({
   );
   const visibleFunctionColumns = orderedFunctionColumns.filter((col) => !hiddenFunctionColumns.has(col.id));
   const hiddenFunctionColumnList = orderedFunctionColumns.filter((col) => hiddenFunctionColumns.has(col.id));
+  const visibleSettingLinkColumnKey = visibleFunctionColumns
+    .filter(isCfsSettingLinkSelectableColumn)
+    .map((col) => col.id)
+    .join("\u0000");
+  const visibleSettingLinkColumnIds = useMemo(
+    () =>
+      new Set(
+        visibleSettingLinkColumnKey
+          ? visibleSettingLinkColumnKey.split("\u0000")
+          : [],
+      ),
+    [visibleSettingLinkColumnKey],
+  );
+  const canEnterCfsEditMode = Boolean(canEdit && (onSwitchesChange || onRoomScenesChange || onScenesChange || onDeviceAssignmentsChange));
+  const canEditSettingLinksFromCfs = Boolean(cfsEditMode && canEdit && !inspectionMode && (onSwitchesChange || onRoomScenesChange));
+  const visibleSettingLinkColumnsById = new Map<string, CfsSettingLinkColumn>();
+  for (const col of visibleFunctionColumns) {
+    if (isCfsSettingLinkSelectableColumn(col)) visibleSettingLinkColumnsById.set(col.id, col);
+  }
+  const selectedVisibleSettingLinkColumns = Array.from(selectedSettingLinkColumnIds)
+    .map((id) => visibleSettingLinkColumnsById.get(id))
+    .filter((col): col is CfsSettingLinkColumn => Boolean(col));
+  const selectedSettingLinkCount = selectedVisibleSettingLinkColumns.length;
+  const selectedSettingLinkKinds = new Set(selectedVisibleSettingLinkColumns.map(settingLinkKindForColumn));
+  const selectedSettingLinkKind =
+    selectedSettingLinkKinds.size === 1 ? Array.from(selectedSettingLinkKinds)[0] : null;
+  const selectedSettingLinkHasMixedKinds = selectedSettingLinkKinds.size > 1;
+  const selectedSettingLinkHasLinkedColumn = selectedVisibleSettingLinkColumns.some((col) =>
+    Boolean(settingLinkGroupIdForColumn(col)),
+  );
 
-  // T-58: column id -> link group id/color/symbol for the header link band.
-  // The header render consumes ONLY this generic map, so when scene/command
-  // columns gain their own link mechanism (T-40 phase 2) they can join the
-  // same display by adding entries here. Colors come from the shared helper
-  // and therefore always match the Switch tab badges. Display only: this map
-  // never feeds the Excel export or the column model.
+  // T-58/T-84: column id -> link group id/color/symbol for the header link
+  // band. The header render consumes ONLY this generic map. Switch, Command,
+  // and Scene setting-link columns share the same symbol/color series.
+  // Display only: this map never feeds the Excel export or the column model.
   const functionColumnLinkGroups = useMemo(() => {
     const map = new Map<string, { groupId: string; color: string; symbol: string }>();
-    const groups = buildSettingLinkGroups(roomType.switches);
+    const groups = buildSettingLinkGroups(roomType.switches, roomType.roomScenes);
     if (groups.size === 0) return map;
     for (const col of orderedFunctionColumns) {
-      if (col.category !== "switch") continue;
-      const groupId = col.source?.settingLinkGroupId;
+      if (col.category !== "switch" && col.category !== "command" && col.category !== "scene") continue;
+      const groupId = col.category === "scene" ? col.roomScene?.settingLinkGroupId : col.source?.settingLinkGroupId;
       if (!groupId) continue;
       const info = groups.get(groupId);
       if (info) map.set(col.id, { groupId, color: info.color, symbol: info.symbol });
     }
     return map;
-  }, [orderedFunctionColumns, roomType.switches]);
+  }, [orderedFunctionColumns, roomType.roomScenes, roomType.switches]);
 
-  // T-60: Link panel model — every setting-link group of the current room
-  // type in symbol order (= first-appearance order, identical to the Switch
-  // tab), with its members rendered as "switch name − button name".
+  // T-60/T-84: Link panel model — every setting-link group of the current
+  // room type in symbol order (= switch/command first-appearance order, then
+  // room-scene first appearance), with readable source members.
   const settingLinkPanelGroups = useMemo(() => {
-    const infos = buildSettingLinkGroups(roomType.switches);
+    const infos = buildSettingLinkGroups(roomType.switches, roomType.roomScenes);
     const groups = new Map<string, { groupId: string; color: string; symbol: string; members: string[] }>();
     for (const [groupId, info] of infos) {
       groups.set(groupId, { groupId, color: info.color, symbol: info.symbol, members: [] });
@@ -1843,8 +2065,20 @@ export default function CfsView({
       if (!groupId) continue;
       groups.get(groupId)?.members.push(`${displaySwitchName(sw)} − ${sw.buttonLabel.trim() || "-"}`);
     }
+    for (const scene of sortRoomScenesByGroup(roomType.roomScenes)) {
+      const groupId = scene.settingLinkGroupId;
+      if (!groupId) continue;
+      const context = [roomSceneButtonLabel(scene), roomSceneConditionLabel(scene)]
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join(" / ");
+      const label = [context ? `Scene ${context}` : "Scene", roomSceneFunctionName(scene)]
+        .filter(Boolean)
+        .join(" − ");
+      groups.get(groupId)?.members.push(label);
+    }
     return Array.from(groups.values());
-  }, [roomType.switches]);
+  }, [roomType.roomScenes, roomType.switches]);
 
   // T-60: vertical link-line info per visible column. Recomputed inline (not
   // useMemo) because visibleFunctionColumns is itself derived per render.
@@ -1854,32 +2088,29 @@ export default function CfsView({
     hiddenSettingLinkGroupIds,
   );
 
-  // T-60: absolute-positioned line spans for one header/body cell covering
-  // `cols`. Interior edges of merged header cells are positioned with the
-  // fixed column width (the CFS table is table-layout: fixed), so the lines
-  // stay on the member columns even when a merged cell mixes linked and
-  // unlinked columns. Returns null when the cell needs no line.
+  // Merged cells take priority: only paint edges that coincide with the
+  // cell's outer boundary. Interior column lines resume in the next row.
   const renderSettingLinkLineSpans = (cols: ReadonlyArray<Pick<FunctionColumn, "id">>): ReactNode[] | null => {
     const spans: ReactNode[] = [];
     cols.forEach((col, index) => {
       const line = settingLinkLineByColId.get(col.id);
       if (!line) return;
-      if (line.left) {
+      if (line.left && index === 0) {
         spans.push(
           <span
             key={`${col.id}-link-line-l`}
             className="cfs-link-col-line cfs-link-col-line-left"
-            style={{ backgroundColor: line.color, left: index * CFS_FUNCTION_COLUMN_WIDTH }}
+            style={{ backgroundColor: line.color }}
             aria-hidden="true"
           />,
         );
       }
-      if (line.right) {
+      if (line.right && index === cols.length - 1) {
         spans.push(
           <span
             key={`${col.id}-link-line-r`}
             className="cfs-link-col-line cfs-link-col-line-right"
-            style={{ backgroundColor: line.color, right: (cols.length - 1 - index) * CFS_FUNCTION_COLUMN_WIDTH }}
+            style={{ backgroundColor: line.color }}
             aria-hidden="true"
           />,
         );
@@ -1906,6 +2137,29 @@ export default function CfsView({
       return next;
     });
   }, [prefsLoaded, projectId, roomType.id, functionColumnGroups, hiddenFunctionColumnGroupKeys]);
+
+  useEffect(() => {
+    setSelectedSettingLinkColumnIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (visibleSettingLinkColumnIds.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [visibleSettingLinkColumnIds]);
+
+  useEffect(() => {
+    if (canEditSettingLinksFromCfs) return;
+    setSelectedSettingLinkColumnIds(new Set());
+  }, [canEditSettingLinksFromCfs]);
+
+  useEffect(() => {
+    if (canEnterCfsEditMode) return;
+    setCfsEditMode(false);
+  }, [canEnterCfsEditMode]);
+
   const displaySortedRows =
     sortMode === "programmingName"
       ? zoneRows
@@ -2062,6 +2316,60 @@ export default function CfsView({
       });
     };
   }, [onInspectionHistoryChange]);
+
+  function currentLowHighEndHistorySnapshot(): LowHighEndHistorySnapshot {
+    return {
+      drafts: cloneInspectionData(lowHighEndDrafts),
+    };
+  }
+
+  function lowHighEndHistorySnapshotsEqual(
+    before: LowHighEndHistorySnapshot | undefined,
+    after: LowHighEndHistorySnapshot,
+  ): boolean {
+    if (!before) return false;
+    return JSON.stringify(before) === JSON.stringify(after);
+  }
+
+  function pushLowHighEndHistorySnapshot(): void {
+    const snapshot = currentLowHighEndHistorySnapshot();
+    if (lowHighEndHistorySnapshotsEqual(lowHighEndUndoStackRef.current.at(-1), snapshot)) return;
+    lowHighEndUndoStackRef.current = [
+      ...lowHighEndUndoStackRef.current.slice(-(LOW_HIGH_END_HISTORY_LIMIT - 1)),
+      snapshot,
+    ];
+    lowHighEndRedoStackRef.current = [];
+    setLowHighEndHistoryVersion((value) => value + 1);
+  }
+
+  function restoreLowHighEndHistorySnapshot(snapshot: LowHighEndHistorySnapshot): void {
+    setLowHighEndDrafts(cloneInspectionData(snapshot.drafts));
+    setLowHighEndPopover(null);
+  }
+
+  function undoLowHighEndHistory(): void {
+    const previous = lowHighEndUndoStackRef.current.at(-1);
+    if (!previous) return;
+    lowHighEndUndoStackRef.current = lowHighEndUndoStackRef.current.slice(0, -1);
+    lowHighEndRedoStackRef.current = [
+      ...lowHighEndRedoStackRef.current.slice(-(LOW_HIGH_END_HISTORY_LIMIT - 1)),
+      currentLowHighEndHistorySnapshot(),
+    ];
+    setLowHighEndHistoryVersion((value) => value + 1);
+    restoreLowHighEndHistorySnapshot(previous);
+  }
+
+  function redoLowHighEndHistory(): void {
+    const next = lowHighEndRedoStackRef.current.at(-1);
+    if (!next) return;
+    lowHighEndRedoStackRef.current = lowHighEndRedoStackRef.current.slice(0, -1);
+    lowHighEndUndoStackRef.current = [
+      ...lowHighEndUndoStackRef.current.slice(-(LOW_HIGH_END_HISTORY_LIMIT - 1)),
+      currentLowHighEndHistorySnapshot(),
+    ];
+    setLowHighEndHistoryVersion((value) => value + 1);
+    restoreLowHighEndHistorySnapshot(next);
+  }
 
   function selectionCopyEnabled(): boolean {
     if (!inspectionSelectionRect) return false;
@@ -3196,6 +3504,9 @@ export default function CfsView({
         const sheetName = safeExcelSheetName(entry.roomType.name, `Room ${index + 1}`, usedSheetNames);
         appendCfsSheet(workbook, sheetName, buildProjectCfsExcelSheetModel(entry));
       });
+      if (projectRemarks.length > 0) {
+        appendRemarksSheet(workbook, safeExcelSheetName("Remarks", "Remarks", usedSheetNames), projectRemarks);
+      }
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -3325,6 +3636,257 @@ export default function CfsView({
       .map((part) => part.trim())
       .filter((part) => part && part !== "-")
       .join(" / ") || "-";
+  }
+
+  function areaSceneSettingTargetId(col: FunctionColumn): string {
+    if (!col.roomScene) return "";
+    for (const selection of col.roomScene.areaSceneSelections ?? []) {
+      const sceneId = selection.sceneId.trim();
+      if (!sceneId) continue;
+      const scene = scenesById.get(sceneId);
+      if (scene && (!selection.areaId || scene.areaId === selection.areaId)) return scene.id;
+    }
+    return "";
+  }
+
+  function cfsSettingOverlayKind(col: FunctionColumn): "Area Scene" | "Command" | "Switch" {
+    if (col.category === "scene") return "Area Scene";
+    return col.category === "command" ? "Command" : "Switch";
+  }
+
+  function editableCfsSettingColumns(cols: readonly FunctionColumn[]): FunctionColumn[] {
+    const targets = new Map<string, FunctionColumn>();
+    for (const col of cols) {
+      const id = col.category === "scene" ? areaSceneSettingTargetId(col) : col.source?.id;
+      if (!id) continue;
+      const key = `${col.category}:${id}`;
+      if (!targets.has(key)) targets.set(key, col);
+    }
+    return Array.from(targets.values());
+  }
+
+  function cfsSettingEditTitle(col: FunctionColumn): string {
+    if (col.category === "scene") {
+      if (!onScenesChange) return "Settings are not available in this view";
+      if (!areaSceneSettingTargetId(col)) return "Select an Area Scene before editing";
+      if (!canEdit) return "Start editing to change settings";
+      if (inspectionMode) return "Finish InspectionMode before editing settings";
+      return "Open Area Scene Setting Overlay";
+    }
+    if (!onSwitchesChange) return "Settings are not available in this view";
+    if (!canEdit) return "Start editing to change settings";
+    if (inspectionMode) return "Finish InspectionMode before editing settings";
+    return `Open ${col.category === "command" ? "Command" : "Switch"} Setting Overlay`;
+  }
+
+  function openCfsSettingOverlay(col: FunctionColumn): void {
+    if (!cfsEditMode) return;
+    if (col.category === "scene") {
+      const sceneId = areaSceneSettingTargetId(col);
+      if (!sceneId || !onScenesChange || !canEdit || inspectionMode) return;
+      cfsSettingRequestIdRef.current += 1;
+      setCfsSwitchSettingRequest(null);
+      setCfsCommandSettingRequest(null);
+      setCfsAreaSceneSettingRequest({ sceneId, requestId: cfsSettingRequestIdRef.current });
+      return;
+    }
+    if (!col.source || !onSwitchesChange || !canEdit || inspectionMode) return;
+    cfsSettingRequestIdRef.current += 1;
+    const requestId = cfsSettingRequestIdRef.current;
+    setCfsAreaSceneSettingRequest(null);
+    if (col.category === "command") {
+      setCfsSwitchSettingRequest(null);
+      setCfsCommandSettingRequest({ switchId: col.source.id, tab: "scene", requestId });
+      return;
+    }
+    if (col.category === "switch") {
+      setCfsCommandSettingRequest(null);
+      setCfsSwitchSettingRequest({ switchId: col.source.id, tab: "function", requestId });
+    }
+  }
+
+  function renderCfsSettingName(cols: readonly FunctionColumn[], name: string, iconOnly = false): ReactNode {
+    const content = iconOnly ? null : <HeaderSplitText value={name || "-"} />;
+    const targets = editableCfsSettingColumns(cols);
+    const col = targets[0];
+    if (!cfsEditMode || !canEdit || !col) return content;
+    const kind = cfsSettingOverlayKind(col);
+    const disabled =
+      !(col.category === "scene" ? onScenesChange && areaSceneSettingTargetId(col) : onSwitchesChange && col.source) ||
+      !canEdit ||
+      inspectionMode;
+    return (
+      <CfsSettingNameButton
+        label={`${iconOnly ? "Edit" : "Open"} ${kind} Setting Overlay for ${functionColumnLabel(col)}`}
+        iconOnly={iconOnly}
+        title={cfsSettingEditTitle(col)}
+        disabled={disabled}
+        options={targets.map((target) => ({ id: target.id, label: target.condition.trim() || functionColumnLabel(target) }))}
+        onSelect={(id) => {
+          const target = targets.find((item) => item.id === id);
+          if (target) openCfsSettingOverlay(target);
+        }}
+      >
+        {content}
+      </CfsSettingNameButton>
+    );
+  }
+
+  function toggleCfsEditMode(): void {
+    if (!canEnterCfsEditMode) return;
+    if (cfsEditMode) {
+      setSelectedSettingLinkColumnIds(new Set());
+      setLowHighEndPopover(null);
+      setCfsEditMode(false);
+      return;
+    }
+    setCfsEditMode(true);
+  }
+
+  function canChangeSettingLinkColumn(col: CfsSettingLinkColumn): boolean {
+    if (!canEditSettingLinksFromCfs) return false;
+    return col.category === "scene" ? Boolean(onRoomScenesChange) : Boolean(onSwitchesChange);
+  }
+
+  function toggleSettingLinkColumnSelection(col: FunctionColumn, checked: boolean): void {
+    if (!canEditSettingLinksFromCfs || !isCfsSettingLinkSelectableColumn(col)) return;
+    if (!canChangeSettingLinkColumn(col)) return;
+    const nextKind = settingLinkKindForColumn(col);
+    if (checked && selectedSettingLinkKind && selectedSettingLinkKind !== nextKind) return;
+    setSelectedSettingLinkColumnIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(col.id);
+      else next.delete(col.id);
+      return next;
+    });
+  }
+
+  function linkSelectedCfsSettingColumns(): void {
+    if (!canEditSettingLinksFromCfs || selectedSettingLinkCount < 2 || selectedSettingLinkHasMixedKinds) return;
+    if (selectedSettingLinkKind === "roomScene") {
+      if (!onRoomScenesChange) return;
+      const sceneIds = new Set(
+        selectedVisibleSettingLinkColumns
+          .map((col) => (col.category === "scene" ? col.roomScene?.id : ""))
+          .filter((id): id is string => Boolean(id)),
+      );
+      const templateId = selectedVisibleSettingLinkColumns.find((col) => col.category === "scene")?.roomScene?.id;
+      onRoomScenesChange((current) => {
+        const linked = linkRoomSceneSettingSelection(current, sceneIds, createAppId, templateId);
+        return normalizeRoomSceneSettingLinksAfterCommit(current, linked);
+      });
+      setSelectedSettingLinkColumnIds(new Set());
+      return;
+    }
+
+    if (!onSwitchesChange) return;
+    const switchIds = new Set(
+      selectedVisibleSettingLinkColumns
+        .map((col) => (col.category === "scene" ? "" : col.source?.id))
+        .filter((id): id is string => Boolean(id)),
+    );
+    const templateId = selectedVisibleSettingLinkColumns.find((col) => col.category !== "scene")?.source?.id;
+    onSwitchesChange((current) => {
+      const linked = linkSwitchSettingSelection(current, switchIds, createAppId, templateId);
+      return normalizeSwitchSettingLinksAfterCommit(current, linked);
+    });
+    setSelectedSettingLinkColumnIds(new Set());
+  }
+
+  function unlinkSelectedCfsSettingColumns(): void {
+    if (!canEditSettingLinksFromCfs || selectedSettingLinkCount === 0 || selectedSettingLinkHasMixedKinds) return;
+    if (selectedSettingLinkKind === "roomScene") {
+      if (!onRoomScenesChange) return;
+      const sceneIds = new Set(
+        selectedVisibleSettingLinkColumns
+          .map((col) => (col.category === "scene" ? col.roomScene?.id : ""))
+          .filter((id): id is string => Boolean(id)),
+      );
+      onRoomScenesChange((current) => {
+        const unlinked = unlinkRoomSceneSettingSelection(current, sceneIds);
+        return normalizeRoomSceneSettingLinksAfterCommit(current, unlinked);
+      });
+      setSelectedSettingLinkColumnIds(new Set());
+      return;
+    }
+
+    if (!onSwitchesChange) return;
+    const switchIds = new Set(
+      selectedVisibleSettingLinkColumns
+        .map((col) => (col.category === "scene" ? "" : col.source?.id))
+        .filter((id): id is string => Boolean(id)),
+    );
+    onSwitchesChange((current) => {
+      const unlinked = unlinkSwitchSettingSelection(current, switchIds);
+      return normalizeSwitchSettingLinksAfterCommit(current, unlinked);
+    });
+    setSelectedSettingLinkColumnIds(new Set());
+  }
+
+  function renderCfsColumnControls(cols: readonly FunctionColumn[]): ReactNode {
+    const editing = cfsEditMode && canEdit;
+    if (!editing && (hideSettingLinkBadges || !cols.some((col) => functionColumnLinkGroups.has(col.id)))) return null;
+    return (
+      <div
+        className={`cfs-header-controls-grid${editing ? " cfs-setting-link-select-grid" : ""}`}
+        style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(0, 1fr))` }}
+      >
+        {cols.map((col) => {
+          const linkInfo = functionColumnLinkGroups.get(col.id);
+          const linkColumn = isCfsSettingLinkSelectableColumn(col) ? col : null;
+          const checked = Boolean(linkColumn && selectedSettingLinkColumnIds.has(col.id));
+          const mixedKindBlocked =
+            Boolean(
+              linkColumn &&
+              !checked &&
+              selectedSettingLinkKind &&
+              selectedSettingLinkKind !== settingLinkKindForColumn(linkColumn),
+            );
+          const handlerBlocked = Boolean(linkColumn && !canChangeSettingLinkColumn(linkColumn));
+          const selectable = Boolean(linkColumn && !mixedKindBlocked && !handlerBlocked);
+          const title = linkColumn
+            ? handlerBlocked
+              ? "Settings are not available in this view"
+              : mixedKindBlocked
+                ? "Scene columns cannot be linked with Switch or Command columns"
+                : `Select ${functionColumnLabel(col)} for setting link`
+            : "Settings are not available for this column";
+          return (
+            <div key={col.id} className="cfs-header-column-controls" data-column-id={col.id}>
+              {editing ? (
+                <label
+                  className={`cfs-setting-link-select-cell${checked ? " is-selected" : ""}${
+                    selectable ? "" : " is-disabled"
+                  }`}
+                  title={title}
+                >
+                  <input
+                    type="checkbox"
+                    aria-label={title}
+                    checked={checked}
+                    disabled={!canEditSettingLinksFromCfs || !selectable}
+                    onChange={(event) => toggleSettingLinkColumnSelection(col, event.target.checked)}
+                    onClick={(event) => event.stopPropagation()}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => event.stopPropagation()}
+                  />
+                </label>
+              ) : null}
+              {editing ? renderCfsSettingName([col], "", true) : null}
+              {linkInfo && !hideSettingLinkBadges ? (
+                <span
+                  className="cfs-link-text-label cfs-header-link-label"
+                  style={{ backgroundColor: linkInfo.color }}
+                  title={`Setting link group ${linkInfo.symbol}`}
+                >
+                  {`Link ${linkInfo.symbol}`}
+                </span>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    );
   }
 
   function rowTargetIds(row: CfsZoneRow): InspectionTarget[] {
@@ -3597,13 +4159,25 @@ export default function CfsView({
     );
     for (const draft of drafts) {
       const key = inspectionDraftKey(draft.sourceType, draft.sourceId, draft.targetId);
-      const existing = byKey.get(key);
+      const existing = inspectionMarksByKey.get(key) ?? byKey.get(key);
+      const scope = draft.scope === "areaScene" ? "areaScene" : "override";
+      // Reusing unchanged marks lets live synchronization and draft saving settle.
+      if (
+        existing &&
+        existing.scope === scope &&
+        existing.label === draft.label &&
+        existing.previousValue === draft.previousValue &&
+        existing.value === draft.value
+      ) {
+        byKey.set(key, existing);
+        continue;
+      }
       byKey.set(key, {
         id: existing?.id ?? createAppId(),
         sourceType: draft.sourceType,
         sourceId: draft.sourceId,
         targetId: draft.targetId,
-        scope: draft.scope === "areaScene" ? "areaScene" : "override",
+        scope,
         label: draft.label,
         previousValue: draft.previousValue,
         value: draft.value,
@@ -3810,6 +4384,7 @@ export default function CfsView({
   }, [canEdit, clearInspectionLocalSession, inspectionMode]);
 
   function startInspectionMode(): void {
+    if (!canEdit) return;
     setInspectionDialog({ kind: "start" });
   }
 
@@ -3916,6 +4491,7 @@ export default function CfsView({
     const model = inspectionCellModel(row, col);
     if (!model.editable) return;
     const position = inspectionPopoverPosition(event.currentTarget, model.dimmingType);
+    setLowHighEndPopover(null);
     setInspectionPopover({ ...position, rowId: row.id, colId: col.id });
   }
 
@@ -4316,6 +4892,266 @@ export default function CfsView({
       default:
         return [];
     }
+  }
+
+  function lowHighEndAssignmentForRow(row: CfsZoneRow): DeviceAssignment | undefined {
+    return (row.assignmentIds ?? [])
+      .map((id) => deviceAssignmentById.get(id))
+      .find((assignment): assignment is DeviceAssignment => Boolean(assignment));
+  }
+
+  function isLowHighEndRowEligible(row: CfsZoneRow): boolean {
+    if (row.isBacklight || row.isHvac || row.isCurtain) return false;
+    const originalDimmingTypes = [...row.circuits, ...(row.zoneExtraCircuits ?? [])].map(
+      (item) => circuitById.get(item.id)?.dimmingType ?? item.dimmingType,
+    );
+    return isLowHighEndEligibleDimmingTypes(originalDimmingTypes);
+  }
+
+  function lowHighEndRawValue(assignment: DeviceAssignment, field: LowHighEndField): string {
+    return (assignment[field] ?? "").trim();
+  }
+
+  function lowHighEndRowLabel(row: CfsZoneRow): string {
+    const zone = rowZoneValues(row).find((value) => value.trim()) || row.zone || row.address || "-";
+    const detail = row.circuits.map((item) => item.detail).find((value) => value.trim());
+    return [zone, detail ?? ""]
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .join(" / ");
+  }
+
+  function lowHighEndCellModel(row: CfsZoneRow, key: BaseColumnKey): {
+    editable: boolean;
+    field: LowHighEndField | null;
+    draft: LowHighEndDraft | undefined;
+    key: string;
+    assignmentId: string;
+    inputValue: string;
+    resolvedValue: string;
+    previousValue: string;
+    label: string;
+  } {
+    const field = lowHighEndFieldForBaseColumn(key);
+    if (!field) {
+      return {
+        editable: false,
+        field: null,
+        draft: undefined,
+        key: "",
+        assignmentId: "",
+        inputValue: "",
+        resolvedValue: "",
+        previousValue: "",
+        label: "",
+      };
+    }
+    const assignment = lowHighEndAssignmentForRow(row);
+    const draftKey = assignment ? lowHighEndDraftKey(assignment.id, field) : "";
+    const draft = draftKey ? lowHighEndDrafts[draftKey] : undefined;
+    const displayValues = rowZoneLowHighEndValues(row, lowHighEndBaseColumnForField(field), zoneEndContext);
+    const resolvedValue = displayValues[0]?.trim() ?? "";
+    const previousValue = assignment ? draft?.previousValue ?? lowHighEndRawValue(assignment, field) : "";
+    return {
+      editable: Boolean(cfsEditMode && canEdit && onDeviceAssignmentsChange && assignment && isLowHighEndRowEligible(row)),
+      field,
+      draft,
+      key: draftKey,
+      assignmentId: assignment?.id ?? "",
+      inputValue: draft ? draft.value : resolvedValue,
+      resolvedValue,
+      previousValue,
+      label: lowHighEndRowLabel(row),
+    };
+  }
+
+  function changeLowHighEndDraft(row: CfsZoneRow, key: LowHighEndBaseColumnKey, value: string): void {
+    const model = lowHighEndCellModel(row, key);
+    const field = model.field;
+    const draftKey = model.key;
+    const assignmentId = model.assignmentId;
+    if (!model.editable || !field || !draftKey || !assignmentId) return;
+    const normalizedValue = normalizeLowHighEndInput(value);
+    const currentValue = model.draft?.value ?? model.previousValue;
+    if (normalizeLowHighEndInput(currentValue) === normalizedValue) return;
+
+    pushLowHighEndHistorySnapshot();
+    setLowHighEndDrafts((prev) => {
+      const previousValue = prev[draftKey]?.previousValue ?? model.previousValue;
+      const next = { ...prev };
+      if (normalizeLowHighEndInput(previousValue) === normalizedValue) {
+        delete next[draftKey];
+      } else {
+        next[draftKey] = {
+          key: draftKey,
+          assignmentId,
+          field,
+          rowId: row.id,
+          label: model.label,
+          previousValue,
+          value: normalizedValue,
+        };
+      }
+      return next;
+    });
+  }
+
+  function stepLowHighEndDraft(row: CfsZoneRow, key: LowHighEndBaseColumnKey, delta: number): void {
+    const model = lowHighEndCellModel(row, key);
+    if (!model.editable) return;
+    const baseValue = model.draft?.value.trim() ? model.draft.value : model.resolvedValue || model.previousValue;
+    const numeric = Number.parseFloat(baseValue.trim().replace(/%$/, ""));
+    const nextValue = Math.min(100, Math.max(0, Math.round((Number.isFinite(numeric) ? numeric : 0) + delta)));
+    changeLowHighEndDraft(row, key, String(nextValue));
+  }
+
+  function confirmLowHighEndDrafts(): void {
+    if (!canEdit || !onDeviceAssignmentsChange || lowHighEndDraftList.length === 0) return;
+    const draftsByAssignment = new Map<string, LowHighEndDraft[]>();
+    for (const draft of lowHighEndDraftList) {
+      const list = draftsByAssignment.get(draft.assignmentId) ?? [];
+      list.push(draft);
+      draftsByAssignment.set(draft.assignmentId, list);
+    }
+    const nextAssignments = roomType.deviceAssignments.map((assignment) => {
+      const drafts = draftsByAssignment.get(assignment.id);
+      if (!drafts) return assignment;
+      const nextAssignment: DeviceAssignment = { ...assignment };
+      for (const draft of drafts) {
+        if (draft.value.trim() === "") {
+          delete nextAssignment[draft.field];
+        } else {
+          nextAssignment[draft.field] = draft.value;
+        }
+      }
+      return nextAssignment;
+    });
+    onDeviceAssignmentsChange(nextAssignments);
+    clearLowHighEndDraftSession();
+  }
+
+  function lowHighEndPopoverPosition(trigger: HTMLElement): Omit<LowHighEndPopoverState, "rowId" | "field"> {
+    const rect = trigger.getBoundingClientRect();
+    const margin = 8;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const width = Math.min(Math.max(rect.width + 120, 248), viewportWidth - margin * 2);
+    const expectedHeight = 228;
+    const maxHeight = Math.min(expectedHeight, viewportHeight - margin * 2);
+    const spaceBelow = viewportHeight - rect.bottom - margin;
+    const spaceAbove = rect.top - margin;
+    const flipUp = spaceBelow < expectedHeight && spaceAbove > spaceBelow;
+    const rawTop = flipUp ? rect.top - maxHeight - 6 : rect.bottom + 6;
+    return {
+      top: Math.max(margin, Math.min(rawTop, viewportHeight - maxHeight - margin)),
+      left: Math.max(margin, Math.min(rect.left, viewportWidth - width - margin)),
+      width,
+      maxHeight,
+    };
+  }
+
+  function openLowHighEndPopover(row: CfsZoneRow, key: LowHighEndBaseColumnKey, event: ReactMouseEvent<HTMLElement>): void {
+    const model = lowHighEndCellModel(row, key);
+    if (!model.editable || !model.field) return;
+    setInspectionPopover(null);
+    setLowHighEndPopover({
+      ...lowHighEndPopoverPosition(event.currentTarget),
+      rowId: row.id,
+      field: model.field,
+    });
+  }
+
+  function renderLowHighEndCellContent(row: CfsZoneRow, key: BaseColumnKey, values: string[]): ReactNode {
+    const model = lowHighEndCellModel(row, key);
+    const content = renderStack(values);
+    if (!model.editable || !model.field) return content;
+    const active = lowHighEndPopover?.rowId === row.id && lowHighEndPopover.field === model.field;
+    const baseKey = lowHighEndBaseColumnForField(model.field);
+    return (
+      <button
+        type="button"
+        className={`cfs-inspection-cell-trigger cfs-low-high-cell-trigger${active ? " is-active" : ""}`}
+        aria-label={`Edit ${lowHighEndFieldLabel(model.field)} ${model.label}`}
+        title={`Edit ${lowHighEndFieldLabel(model.field)}`}
+        aria-haspopup="dialog"
+        aria-expanded={active}
+        onClick={(event) => openLowHighEndPopover(row, baseKey, event)}
+      >
+        {content}
+        <ActionIcon name="edit" />
+      </button>
+    );
+  }
+
+  function renderLowHighEndPopover(): ReactNode {
+    if (!lowHighEndPopover || typeof document === "undefined") return null;
+    const row = displayedRows.find((item) => item.id === lowHighEndPopover.rowId);
+    if (!row) return null;
+    const baseKey = lowHighEndBaseColumnForField(lowHighEndPopover.field);
+    const model = lowHighEndCellModel(row, baseKey);
+    if (!model.editable || !model.field) return null;
+    const title = lowHighEndFieldLabel(model.field);
+    const originalValue = model.previousValue || model.resolvedValue || "-";
+    const popover = (
+      <div
+        ref={lowHighEndPopoverRef}
+        className="cfs-inspection-popover cfs-low-high-popover"
+        role="dialog"
+        aria-label={`Low High End editor ${title}`}
+        style={{
+          position: "fixed",
+          top: lowHighEndPopover.top,
+          left: lowHighEndPopover.left,
+          width: lowHighEndPopover.width,
+          maxHeight: lowHighEndPopover.maxHeight,
+          zIndex: 7000,
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <div className="cfs-inspection-popover-head">
+          <div className="cfs-inspection-popover-title" title={model.label}>{model.label}</div>
+          <div className="cfs-inspection-current-value" title="Current value">{originalValue}</div>
+        </div>
+        <div className="cfs-inspection-popover-body">
+          <input
+            className="cfs-inspection-input cfs-inspection-popover-input"
+            type="text"
+            value={model.inputValue}
+            inputMode="decimal"
+            autoComplete="off"
+            spellCheck={false}
+            autoFocus
+            aria-label={`${title} draft value`}
+            placeholder="Master"
+            onChange={(event) => changeLowHighEndDraft(row, baseKey, event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") setLowHighEndPopover(null);
+            }}
+          />
+          <div className="cfs-inspection-step-grid" aria-label="Low High End adjustment">
+            {LOW_HIGH_END_STEPS.map((step) => (
+              <button
+                key={step}
+                type="button"
+                className="cfs-inspection-step-button"
+                onClick={() => stepLowHighEndDraft(row, baseKey, step)}
+              >
+                {step > 0 ? `+${step}` : step}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="cfs-inspection-popover-actions">
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => setLowHighEndPopover(null)}>
+            OK
+          </button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => changeLowHighEndDraft(row, baseKey, "")}>
+            Master
+          </button>
+        </div>
+      </div>
+    );
+    return createPortal(popover, document.body);
   }
 
   function inspectionAreaSceneNameForTarget(
@@ -5228,6 +6064,57 @@ export default function CfsView({
           </CfsFilterMenu>
           </div>
           <div className="cfs-matrix-actions">
+            <div className="cfs-setting-link-select-actions" role="group" aria-label="CFS setting link selection">
+              <button
+                type="button"
+                className={`btn btn-secondary${cfsEditMode ? " is-active" : ""}`}
+                aria-pressed={cfsEditMode}
+                disabled={!canEnterCfsEditMode}
+                onClick={toggleCfsEditMode}
+                title={
+                  !canEnterCfsEditMode
+                    ? "Settings are not available in this view"
+                    : "Toggle CFS setting and Low/High End editing"
+                }
+              >
+                Edit
+              </button>
+              {cfsEditMode ? (
+                <>
+                  <span className="cfs-setting-link-selected-count">{selectedSettingLinkCount} selected</span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={
+                      !canEditSettingLinksFromCfs ||
+                      selectedSettingLinkCount < 2 ||
+                      selectedSettingLinkHasMixedKinds
+                    }
+                    onClick={linkSelectedCfsSettingColumns}
+                    title={
+                      selectedSettingLinkHasMixedKinds
+                        ? "Scene columns cannot be linked with Switch or Command columns"
+                        : "Link selected setting columns so their settings stay in sync"
+                    }
+                  >
+                    Link
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={
+                      !canEditSettingLinksFromCfs ||
+                      !selectedSettingLinkHasLinkedColumn ||
+                      selectedSettingLinkHasMixedKinds
+                    }
+                    onClick={unlinkSelectedCfsSettingColumns}
+                    title="Remove only the selected setting columns from their setting link group"
+                  >
+                    Unlink
+                  </button>
+                </>
+              ) : null}
+            </div>
             <button
               type="button"
               className={`btn btn-secondary cfs-inspection-toggle${inspectionMode ? " is-active" : ""}`}
@@ -5339,6 +6226,39 @@ export default function CfsView({
             </button>
           </div>
         </div>
+        {lowHighEndDraftSessionActive ? (
+          <div className="cfs-inspection-draft-bar cfs-low-high-draft-bar" aria-label="Low/High End draft controls">
+            <span className="cfs-low-high-draft-label">Low/High End</span>
+            <span className="cfs-inspection-draft-count">{lowHighEndDraftList.length} draft</span>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={!canLowHighEndUndo}
+              onClick={undoLowHighEndHistory}
+            >
+              Undo
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={!canLowHighEndRedo}
+              onClick={redoLowHighEndHistory}
+            >
+              Redo
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={clearLowHighEndDraftSession}>
+              Discard
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!canEdit || lowHighEndDraftList.length === 0}
+              onClick={confirmLowHighEndDrafts}
+            >
+              Confirm
+            </button>
+          </div>
+        ) : null}
         {inspectionMode ? (
           <div className="cfs-inspection-draft-bar" aria-label="Inspection draft controls">
             <div className="cfs-inspection-scope-toggle" role="group" aria-label="Inspection edit scope">
@@ -5542,6 +6462,75 @@ export default function CfsView({
         />
       ) : null}
 
+      {!inspectionMode && onScenesChange ? (
+        <SceneView
+          key={`cfs-area-scene-setting-host:${roomType.id}`}
+          overlayHostOnly
+          scenes={roomType.scenes}
+          locations={locations}
+          circuits={circuits}
+          fixtures={fixtures ?? []}
+          hvacAssignments={roomType.hvacAssignments}
+          hvacSeasons={roomType.hvacSeasons}
+          curtainAssignments={roomType.curtainAssignments ?? []}
+          switches={roomType.switches}
+          onChange={onScenesChange}
+          revisionChanges={revisionDiff?.sceneFields}
+          canEdit={canEdit}
+          roomTypeName={roomType.name}
+          roomType={roomType}
+          devices={devices}
+          programmingNameSettings={activeProgrammingNameSettings}
+          externalSettingRequest={cfsAreaSceneSettingRequest}
+        />
+      ) : null}
+
+      {!inspectionMode && onSwitchesChange ? (
+        <>
+          <SwitchView
+            key={`cfs-switch-setting-host:${roomType.id}`}
+            overlayHostOnly
+            switches={roomType.switches}
+            scenes={roomType.scenes}
+            locations={locations}
+            circuits={circuits}
+            activeKind={roomType.switches.find((sw) => sw.id === cfsSwitchSettingRequest?.switchId)?.kind ?? "lutronPd"}
+            onActiveKindChange={() => undefined}
+            onChange={onSwitchesChange}
+            deviceAssignments={roomType.deviceAssignments}
+            cfsRows={roomType.rows}
+            curtainAssignments={roomType.curtainAssignments ?? []}
+            hvacAssignments={roomType.hvacAssignments}
+            hvacSeasons={roomType.hvacSeasons}
+            triggerMasters={triggerMasters}
+            backlightLevels={backlightLevels ?? roomType.backlightLevels}
+            onBacklightLevelsChange={onBacklightLevelsChange}
+            revisionChanges={revisionDiff?.switchFields}
+            canEdit={canEdit}
+            externalSettingRequest={cfsSwitchSettingRequest}
+          />
+          <CommandView
+            key={`cfs-command-setting-host:${roomType.id}`}
+            overlayHostOnly
+            switches={roomType.switches}
+            scenes={roomType.scenes}
+            locations={locations}
+            circuits={circuits}
+            deviceAssignments={roomType.deviceAssignments}
+            cfsRows={roomType.rows}
+            curtainAssignments={roomType.curtainAssignments ?? []}
+            hvacAssignments={roomType.hvacAssignments}
+            hvacSeasons={roomType.hvacSeasons}
+            backlightLevels={backlightLevels ?? roomType.backlightLevels}
+            triggerMasters={triggerMasters}
+            onChange={(next) => onSwitchesChange(next)}
+            revisionChanges={revisionDiff?.switchFields}
+            canEdit={canEdit}
+            externalSettingRequest={cfsCommandSettingRequest}
+          />
+        </>
+      ) : null}
+
       {hiddenFunctionColumnList.length > 0 ? (
         <div className="cfs-hidden-column-strip" aria-label="Hidden CFS columns">
           <div className="cfs-hidden-column-group">
@@ -5620,30 +6609,13 @@ export default function CfsView({
               ))}
               <th className="cfs-scroll-end-inline-cell" aria-hidden="true" />
             </tr>
-            <tr
-              className={
-                !hideSettingLinkBadges &&
-                buttonHeaderGroups.some((group) => group.cols.some((col) => functionColumnLinkGroups.has(col.id)))
-                  ? "cfs-button-row-with-link-labels"
-                  : undefined
-              }
-            >
+            <tr>
               {buttonHeaderGroups.map((group, index) => {
-                // T-58/T-60/T-65: linked columns carry a "Link <symbol>" text
-                // label (design option 3: same wording and group color as the
-                // Switch tab Setting button) centered under the button name,
-                // plus the T-60 vertical highlight lines for checked groups.
-                // While labels are shown the row above gains bottom padding
-                // (uniform across ALL button heads); hiding the labels
-                // restores the pre-T-65 height. Excel output stays untouched.
-                const linkInfo = group.cols.map((col) => functionColumnLinkGroups.get(col.id)).find(Boolean);
                 const linkLines = renderSettingLinkLineSpans(group.cols);
                 return (
                 <th
                   key={`${group.key}-${index}`}
                   className={`cfs-function-head cfs-button-head${group.startsSwitchGroup ? " cfs-switch-group-start" : ""}${
-                    linkInfo ? " cfs-header-link-cell" : ""
-                  }${
                     linkLines ? " cfs-link-col-cell" : ""
                   }${
                     group.cols.some((col) =>
@@ -5655,17 +6627,6 @@ export default function CfsView({
                   colSpan={group.colSpan}
                 >
                   {linkLines}
-                  {/* T-61/T-65: the Link panel "Show labels" toggle hides
-                      every label; the lines are independent of it. */}
-                  {linkInfo && !hideSettingLinkBadges ? (
-                    <span
-                      className="cfs-link-text-label cfs-header-link-label"
-                      style={{ backgroundColor: linkInfo.color }}
-                      title={`Setting link group ${linkInfo.symbol} (linked with the Switch tab)`}
-                    >
-                      {`Link ${linkInfo.symbol}`}
-                    </span>
-                  ) : null}
                   {group.kind === "pir" && group.pirLabels ? (
                     <PirHeaderText
                       labels={group.pirLabels}
@@ -5691,27 +6652,32 @@ export default function CfsView({
               {functionNameHeaderGroups.map((group, index) => {
                 const linkLines = renderSettingLinkLineSpans(group.cols);
                 return (
-                <th
-                  key={`${group.key}-${index}`}
-                  className={`cfs-function-head cfs-function-name-head${group.startsSwitchGroup ? " cfs-switch-group-start" : ""}${
-                    linkLines ? " cfs-link-col-cell" : ""
-                  }${
-                    group.cols.some((col) =>
-                      hasChangedFunctionColumnFields(col, ["buttonFunction", "kind", "sceneType", "detail"]),
-                    )
-                      ? " revision-changed-cell"
-                      : ""
-                  }`}
-                  colSpan={group.colSpan}
-                >
-                  {linkLines}
-                  <HeaderSplitText value={group.functionName || "-"} />
-                </th>
+                  <th
+                    key={`${group.key}-${index}`}
+                    className={`cfs-function-head cfs-function-name-head${group.startsSwitchGroup ? " cfs-switch-group-start" : ""}${
+                      linkLines ? " cfs-link-col-cell" : ""
+                    }${
+                      group.cols.some((col) =>
+                        hasChangedFunctionColumnFields(col, ["buttonFunction", "kind", "sceneType", "detail"]),
+                      )
+                        ? " revision-changed-cell"
+                        : ""
+                    }`}
+                    colSpan={group.colSpan}
+                  >
+                    {linkLines}
+                    {renderCfsSettingName(group.cols, group.functionName)}
+                  </th>
                 );
               })}
               <th className="cfs-scroll-end-inline-cell" aria-hidden="true" />
             </tr>
-            <tr>
+            <tr className={
+              (cfsEditMode && canEdit) ||
+              (!hideSettingLinkBadges && visibleFunctionColumns.some((col) => functionColumnLinkGroups.has(col.id)))
+                ? "cfs-condition-row-with-controls"
+                : undefined
+            }>
               {conditionHeaderGroups.map((group, index) => {
                 const isPriority = group.cols.some(isPriorityTriggerColumn);
                 const linkLines = renderSettingLinkLineSpans(group.cols);
@@ -5736,6 +6702,7 @@ export default function CfsView({
                   >
                     {linkLines}
                     <HeaderSplitText value={group.condition || "-"} />
+                    {renderCfsColumnControls(group.cols)}
                   </th>
                 );
               })}
@@ -5947,15 +6914,23 @@ export default function CfsView({
                           </td>
                         );
                       }
+                      const lowHighEndField = lowHighEndFieldForBaseColumn(col.key);
+                      const lowHighEndDraft = lowHighEndField
+                        ? lowHighEndCellModel(row, col.key).draft
+                        : undefined;
                       return (
                         <td
                           key={col.key}
                           className={`cfs-sticky-base cfs-base-${col.key}${col.key === "area" ? " cfs-location-cell" : ""}${
                             isChangedBaseCell ? " revision-changed-cell" : ""
+                          }${
+                            lowHighEndDraft ? " cfs-low-high-draft-cell" : ""
                           }`}
                           style={{ left: stickyOffsets.get(col.key) ?? 0 }}
                         >
-                          {renderStack(baseValues(row, col.key))}
+                          {lowHighEndField
+                            ? renderLowHighEndCellContent(row, col.key, baseValues(row, col.key))
+                            : renderStack(baseValues(row, col.key))}
                         </td>
                       );
                     })}
@@ -5970,6 +6945,10 @@ export default function CfsView({
                         ? inspectionDraftSummaryForCell(row, col)
                         : { hasDraft: false, hasChanged: false, scope: "" };
                       const isSelectedInspectionCell = inspectionMode && isInspectionCellSelected(row.id, col.id);
+                      const isSelectedSettingLinkCell =
+                        cfsEditMode &&
+                        isCfsSettingLinkSelectableColumn(col) &&
+                        selectedSettingLinkColumnIds.has(col.id);
                       const isPasteTargetCell =
                         inspectionMode &&
                         inspectionPasteTarget?.rowId === row.id &&
@@ -6015,6 +6994,8 @@ export default function CfsView({
                           }${
                             isSelectedInspectionCell ? " cfs-inspection-selected-cell" : ""
                           }${
+                            isSelectedSettingLinkCell ? " cfs-setting-link-selected-cell" : ""
+                          }${
                             isPasteTargetCell ? " cfs-inspection-paste-target-cell" : ""
                           }${
                             isLinkIssueCell ? " cfs-link-error-cell" : ""
@@ -6044,6 +7025,7 @@ export default function CfsView({
           </tbody>
         </table>
       </div>
+      {renderLowHighEndPopover()}
       {renderInspectionPopover()}
       {renderInspectionRevisionDialog()}
     </section>

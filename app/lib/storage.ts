@@ -13,6 +13,7 @@ import type {
   LocationMaster,
   PduDeviceCount,
   ProjectData,
+  ProjectRemark,
   RoomType,
   RoomScene,
   Scene,
@@ -218,6 +219,7 @@ function isRoomScene(value: unknown): value is RoomScene {
     typeof v.detail === 'string' &&
     typeof v.triggerCondition === 'string' &&
     (!('backlightCondition' in v) || typeof v.backlightCondition === 'string') &&
+    (!('settingLinkGroupId' in v) || typeof v.settingLinkGroupId === 'string' || typeof v.settingLinkGroupId === 'undefined') &&
     areaSceneSelectionsOk &&
     Array.isArray(v.settings) &&
     v.settings.every(isSceneCircuitSetting)
@@ -841,6 +843,38 @@ function migrateCircuitEntry(value: unknown): CircuitEntry | null {
   };
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function isProjectRemark(value: unknown): value is ProjectRemark {
+  if (value === null || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.id === 'string' &&
+    typeof v.title === 'string' &&
+    typeof v.body === 'string' &&
+    typeof v.hasTable === 'boolean' &&
+    isStringArray(v.columns) &&
+    Array.isArray(v.rows) &&
+    v.rows.every(isStringArray)
+  );
+}
+
+function migrateProjectRemarks(value: unknown): ProjectRemark[] | undefined | null {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return null;
+  if (!value.every(isProjectRemark)) return null;
+  return value.map((remark) => ({
+    id: remark.id,
+    title: remark.title,
+    body: remark.body,
+    hasTable: remark.hasTable,
+    columns: [...remark.columns],
+    rows: remark.rows.map((row) => [...row]),
+  }));
+}
+
 function migrateProject(value: unknown): ProjectData | null {
   if (value === null || typeof value !== 'object') return null;
   const v = value as Record<string, unknown>;
@@ -863,6 +897,8 @@ function migrateProject(value: unknown): ProjectData | null {
     .map((c) => migrateCircuitEntry(c))
     .filter((c): c is CircuitEntry => c !== null);
   const migratedSettings = migrateProjectSettings(v.settings);
+  const migratedRemarks = migrateProjectRemarks(v.remarks);
+  if (migratedRemarks === null) return null;
 
   return normalizeProjectRoomTypeCircuitIds({
     id: typeof v.id === 'string' && v.id !== '' ? v.id : createAppId(),
@@ -870,6 +906,7 @@ function migrateProject(value: unknown): ProjectData | null {
     updatedAt: v.updatedAt,
     lastUpdatedBy: migrateCollaborationEditorInfo(v.lastUpdatedBy),
     ...(migratedSettings ? { settings: migratedSettings } : {}),
+    ...(migratedRemarks ? { remarks: migratedRemarks } : {}),
     locations: migratedLocations,
     fixtures: migratedFixtures,
     circuits: migratedCircuits,
@@ -939,6 +976,7 @@ function isProjectData(value: unknown): value is ProjectData {
     typeof v.updatedAt === 'string' &&
     (!('lastUpdatedBy' in v) || migrateCollaborationEditorInfo(v.lastUpdatedBy) !== null || v.lastUpdatedBy === null) &&
     (!('settings' in v) || isProjectSettings(v.settings)) &&
+    (!('remarks' in v) || (Array.isArray(v.remarks) && v.remarks.every(isProjectRemark))) &&
     Array.isArray(v.locations) &&
     v.locations.every(isLocationMaster) &&
     Array.isArray(v.fixtures) &&

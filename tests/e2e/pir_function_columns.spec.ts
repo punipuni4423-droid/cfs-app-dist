@@ -129,8 +129,16 @@ test("PIR supports additional Function rows through Switch, CFS, and Excel expor
   await expect(cfsHeaderRows.nth(2)).toContainText("Vacancy Hold");
   await expect(cfsHeaderRows.nth(2)).not.toContainText("PIR1");
 
-  const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: /Excel Export/ }).click();
+  const exportButton = page.getByRole("button", { name: /^Excel Export$/ }).first();
+  await expect(exportButton).toBeVisible();
+  await expect(exportButton).toBeEnabled();
+  await exportButton.click();
+
+  const exportMenu = page.getByRole("menu", { name: "Excel export scope" });
+  await expect(exportMenu).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download", { timeout: 20_000 });
+  await exportMenu.getByRole("menuitem", { name: "This Room Type" }).click();
   const download = await downloadPromise;
   const workbookPath = await download.path();
   expect(workbookPath).toBeTruthy();

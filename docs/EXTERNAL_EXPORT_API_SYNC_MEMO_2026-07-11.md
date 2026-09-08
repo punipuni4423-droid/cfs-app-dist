@@ -67,3 +67,34 @@ For future CFS changes that touch data, API, or export behavior, include this li
 - Project export: updated. The distribution template contains only public Supabase configuration; release packaging audits for Service Role keys. Project JSON shape remains compatible and does not contain authentication tokens.
 
 `External sync: XC API list updated, LD API list updated, Project export updated.`
+
+## 2026-09-07 T-92 Low/High End と InspectionMode の共存
+
+- XC API list: no change。Low/High End は既存 DeviceAssignment.lowEnd/highEnd へ独立して確定し、InspectionMark・シーン値の書き戻し契約は変更しない。
+- LD API list: no change。target ID・bridge payload は変更しない。
+- Project export: no change。保存形式・storage v14・既存の import/export 経路は変更しない。InspectionMode の開始/終了/Revert と Low/High draft の相互非干渉を対象 E2E で確認する。
+
+## 2026-09-07 T-93 統合 Edit と名前セルの設定入口
+
+- XC API list: no change。EditはCFSのUI状態のみ。InspectionMode/LowHighの書き戻しフィールドは既存どおり。
+- LD API list: no change。条件メニューは既存source.idを選び、データやtarget IDの形を変更しない。
+- Project export: no change。名前セル結合、設定伝播、storage v14、Excel用の列モデルは変更しない。Edit状態やメニュー選択はProject JSONに保存しない。
+
+## 2026-09-08 T-97 All Rooms Excel の Remarks 同梱
+
+- XC API list: no change。Inspection API・データ契約は変更しない。
+- LD API list: no change。bridge payload・対象RoomType・logical IDは変更しない。
+- Project export: updated (All Rooms Excelのみ)。既存RoomTypeシートの末尾にRemarksを追加する。0件時は省略、同名RoomTypeとの衝突はRemarks側を連番名にする。単一RoomType Excel・Project JSON・Share JSON・storage v14・永続データは不変。
+- 内部のread-only CFSウィンドウsnapshotへoptional `projectRemarks`を追加。Sub Window/Fixed WindowのAll Roomsでも同じプロジェクトのRemarksを出力する。旧snapshotの項目欠落は空扱いとし、外部APIには追加しない。
+
+`External sync: XC API list no change, LD API list no change, Project export updated.`
+
+## 2026-09-08 T-102 Remarks単体Excel
+
+- XC API list / LD API list: no change。データ契約・Inspection・target IDは不変。
+- Project export: updated (Remarksタブの単体Excel追加のみ)。既存appendRemarksSheetを再利用し `{Project}_Remarks.xlsx` を出力する。All Rooms/単一RoomType Excel・Project/Share JSON・storage v14・内部ウィンドウsnapshotは不変。Remarks Edit/Previewの幅切替はCSSだけで保存値を変更しない。
+
+## 2026-09-08 T-103 Remarksの内容比例幅
+
+- XC API list / LD API list: no change。API・保存データ・logical ID・内部ウィンドウsnapshotは不変。
+- Project export: updated (単体/All RoomsのRemarks列幅のみ)。列ごとの48上限を表全体180の幅予算へ変更し、最小8を確保した残り幅を内容量に比例配分する。23列以上は最小幅を優先する。シート共通の列幅であり、レスポンシブなPreviewとのピクセル一致は意図しない。罫線・行高算定・シート構成・単一RoomType Excel・Project/Share JSON・storage v14は不変。

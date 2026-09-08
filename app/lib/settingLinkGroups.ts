@@ -1,13 +1,14 @@
-import type { SwitchEntry } from "../types";
+import type { RoomScene, SwitchEntry } from "../types";
 
 /**
- * T-35/T-58: shared color/symbol assignment for switch setting-link groups
- * (SwitchEntry.settingLinkGroupId).
+ * T-35/T-58/T-84: shared color/symbol assignment for setting-link groups
+ * (SwitchEntry.settingLinkGroupId / RoomScene.settingLinkGroupId).
  *
  * The Switch tab badges and the CFS column-header link bands MUST show the
  * same color for the same group, so both screens derive their colors from
  * this module. Groups are numbered by FIRST APPEARANCE ORDER in the room
- * type's switches array; do not change that rule in one screen only.
+ * type's switches array, then the room scene array; do not change that rule
+ * in one screen only.
  */
 
 // T-35: group colors avoid the configured-state teal (#0f766e) and the area
@@ -37,15 +38,18 @@ export interface SettingLinkGroupInfo {
 
 /**
  * Builds groupId -> { color, symbol } for every setting-link group, ordered
- * by the group's first appearance in the given switches array (the exact
- * logic the Switch tab has used since T-35).
+ * by the group's first appearance in the given switches array, then room
+ * scenes. Passing only switches preserves the exact Switch tab order used
+ * since T-35.
  */
 export function buildSettingLinkGroups(
   switches: readonly SwitchEntry[],
+  roomScenes: readonly RoomScene[] = [],
 ): Map<string, SettingLinkGroupInfo> {
   const map = new Map<string, SettingLinkGroupInfo>();
-  for (const sw of switches) {
-    const groupId = sw.settingLinkGroupId;
+  const rows: ReadonlyArray<Pick<SwitchEntry | RoomScene, "settingLinkGroupId">> = [...switches, ...roomScenes];
+  for (const row of rows) {
+    const groupId = row.settingLinkGroupId;
     if (!groupId || map.has(groupId)) continue;
     const index = map.size;
     map.set(groupId, {

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { DragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import type { DragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type {
   CircuitEntry,
   CurtainAssignment,
@@ -31,6 +32,7 @@ import {
   findFirstAreaSceneTargetAreaId,
   type AreaSceneSourceInput,
 } from "../lib/areaSceneMatrix";
+import { formatLevel } from "../lib/cfsValueResolver";
 import {
   bulkModeAppliesToTarget,
   clampPercentValue,
@@ -68,6 +70,17 @@ interface SceneViewProps {
   roomType?: RoomType;
   devices?: DeviceMaster[];
   programmingNameSettings?: ProgrammingNameSettings;
+  externalSettingRequest?: AreaSceneSettingOverlayRequest | null;
+  overlayHostOnly?: boolean;
+  initialSelectedAreaId?: string;
+  initialSelectedSceneId?: string;
+  embeddedSettingOverlay?: boolean;
+  suppressSceneNormalization?: boolean;
+}
+
+export interface AreaSceneSettingOverlayRequest {
+  sceneId: string;
+  requestId: number;
 }
 
 type CircuitMode = "designer" | "internal";
@@ -76,6 +89,57 @@ type FixtureKind = "DL" | "Indirect" | "Mixed" | "Unknown";
 type BulkTarget = "all" | "checked" | "dl" | "indirect" | "onOff";
 type BulkMode = BulkSettingMode;
 type SceneDropPosition = "before" | "after";
+
+type BulkOption<T extends string> = {
+  value: T;
+  label: string;
+};
+
+interface AreaSceneBulkPreviewItem {
+  circuit: CircuitEntry;
+  rowNumber: string;
+  designerNumber: string;
+  detail: string;
+  currentDisplay: string;
+  nextDisplay: string;
+  nextValue: string;
+}
+
+interface AreaSceneBulkConfirmation {
+  sceneId: string;
+  targetLabel: string;
+  modeLabel: string;
+  items: AreaSceneBulkPreviewItem[];
+}
+
+const BULK_TARGET_OPTIONS: BulkOption<BulkTarget>[] = [
+  { value: "all", label: "All" },
+  { value: "checked", label: "Check" },
+  { value: "dl", label: "DL" },
+  { value: "indirect", label: "Indirect" },
+  { value: "onOff", label: "On/Off" },
+];
+
+const BULK_MODE_OPTIONS: BulkOption<BulkMode>[] = [
+  { value: "percent", label: "%" },
+  { value: "on", label: "On" },
+  { value: "off", label: "Off" },
+  { value: "blinkShort", label: "Blinking (Short)" },
+  { value: "blinkLong", label: "Blinking (Long)" },
+  { value: "halfSec", label: "0.5 sec" },
+  { value: "clear", label: "Uneffected" },
+  { value: "raise", label: "Raise" },
+  { value: "lower", label: "Lower" },
+];
+
+function labelForOption<T extends string>(options: BulkOption<T>[], value: T): string {
+  return options.find((option) => option.value === value)?.label ?? value;
+}
+
+function formatBulkPreviewValue(value: string, dimmingType: string): string {
+  const trimmed = value.trim();
+  return trimmed ? formatLevel(trimmed, dimmingType) : "Uneffected";
+}
 const PERCENT_LEVEL_VALUES = ["Raise", "Lower"];
 const ON_OFF_LEVEL_VALUES = ["On", "Off", "Blinking (Short)", "Blinking (Long)", "0.5 sec", "Uneffected"];
 
@@ -118,9 +182,15 @@ export default function SceneView({
   roomType,
   devices = [],
   programmingNameSettings,
+  externalSettingRequest = null,
+  overlayHostOnly = false,
+  initialSelectedAreaId = "",
+  initialSelectedSceneId = "",
+  embeddedSettingOverlay = false,
+  suppressSceneNormalization = false,
 }: SceneViewProps) {
-  const [selectedAreaId, setSelectedAreaId] = useState("");
-  const [selectedSceneId, setSelectedSceneId] = useState("");
+  const [selectedAreaId, setSelectedAreaId] = useState(initialSelectedAreaId);
+  const [selectedSceneId, setSelectedSceneId] = useState(initialSelectedSceneId);
   const [circuitMode, setCircuitMode] = useState<CircuitMode>("designer");
   const [viewMode, setViewMode] = useState<SceneViewMode>("edit");
   const [draggingSceneId, setDraggingSceneId] = useState<string | null>(null);
@@ -132,7 +202,9 @@ export default function SceneView({
   const [bulkValue, setBulkValue] = useState("");
   const [bulkTarget, setBulkTarget] = useState<BulkTarget>("all");
   const [bulkMode, setBulkMode] = useState<BulkMode>("percent");
+  const [bulkConfirmation, setBulkConfirmation] = useState<AreaSceneBulkConfirmation | null>(null);
   const [lightingCollapsed, setLightingCollapsed] = useState(false);
+  const [settingOverlaySceneId, setSettingOverlaySceneId] = useState<string | null>(null);
   const checkboxDragValueRef = useRef<boolean | null>(null);
   const checkboxDragStartRef = useRef<{
     circuitId: string;
@@ -141,6 +213,7 @@ export default function SceneView({
     y: number;
     active: boolean;
   } | null>(null);
+  const consumedExternalRequestIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     function activateCheckboxDrag(clientX: number, clientY: number, buttons: number): boolean {
@@ -273,7 +346,7 @@ export default function SceneView({
   }, [areaCircuits]);
 
   useEffect(() => {
-    if (!canEdit) return;
+    if (!canEdit || overlayHostOnly || suppressSceneNormalization) return;
     let changed = false;
     const normalizedScenes = scenes.map((scene) => {
       const settings = normalizeSceneSettingsByCircuitGroup(scene.settings, circuits);
@@ -282,7 +355,7 @@ export default function SceneView({
       return { ...scene, settings };
     });
     if (changed) onChange(normalizedScenes);
-  }, [canEdit, circuits, onChange, scenes]);
+  }, [canEdit, circuits, onChange, scenes, overlayHostOnly, suppressSceneNormalization]);
 
   const selectedArea = availableAreas.find((l) => l.id === selectedAreaId);
   const isHvacAreaScene = selectedAreaId === HVAC_AREA_ID;
@@ -299,10 +372,69 @@ export default function SceneView({
     [selectedAreaId, areaSceneSource],
   );
   const selectedScene = areaScenes.find((s) => s.id === selectedSceneId);
+  const settingOverlayScene = settingOverlaySceneId
+    ? scenes.find((scene) => scene.id === settingOverlaySceneId) ?? null
+    : null;
+  const settingOverlayOpen = Boolean(settingOverlayScene);
   const allAreaCircuitsChecked =
     areaCircuits.length > 0 && areaCircuits.every((c) => checkedCircuitIds.has(c.id));
   const canAddSelectedAreaScene =
     canEdit && selectedAreaId !== "" && (areaCircuits.length > 0 || areaHvacItems.length > 0 || areaCurtainItems.length > 0 || areaPicoLedItems.length > 0);
+
+  useEffect(() => {
+    if (!externalSettingRequest) return;
+    if (consumedExternalRequestIdRef.current === externalSettingRequest.requestId) return;
+    consumedExternalRequestIdRef.current = externalSettingRequest.requestId;
+
+    const scene = scenes.find((candidate) => candidate.id === externalSettingRequest.sceneId);
+    if (!scene) {
+      setSettingOverlaySceneId(null);
+      return;
+    }
+    setSelectedAreaId(scene.areaId);
+    setSelectedSceneId(scene.id);
+    setViewMode("edit");
+    setSettingOverlaySceneId(scene.id);
+  }, [externalSettingRequest, scenes]);
+
+  useEffect(() => {
+    if (!settingOverlaySceneId) return;
+    if (scenes.some((scene) => scene.id === settingOverlaySceneId)) return;
+    setSettingOverlaySceneId(null);
+  }, [scenes, settingOverlaySceneId]);
+
+  function closeSettingOverlay(): void {
+    setSettingOverlaySceneId(null);
+  }
+
+  useEffect(() => {
+    if (!settingOverlayOpen || bulkConfirmation) return;
+    function handleEscape(event: KeyboardEvent): void {
+      if (event.key === "Escape") closeSettingOverlay();
+    }
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [settingOverlayOpen, bulkConfirmation]);
+
+  useEffect(() => {
+    if (!bulkConfirmation) return;
+    function handleEscape(event: KeyboardEvent): void {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setBulkConfirmation(null);
+    }
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [bulkConfirmation]);
+
+  useEffect(() => {
+    if (!settingOverlayOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [settingOverlayOpen]);
 
   function getAreaCircuitCount(areaId: string): number {
     return (
@@ -455,8 +587,7 @@ export default function SceneView({
   }
 
   function stepBulk(delta: number): void {
-    setBulkMode("percent");
-    applyBulkPercentValue(stepPercentValue(bulkValue, delta));
+    setBulkPercentValue(stepPercentValue(bulkValue, delta));
   }
 
   function targetCircuitsForBulk(): CircuitEntry[] {
@@ -481,42 +612,67 @@ export default function SceneView({
     });
   }
 
-  function applyBulkMode(mode: BulkMode): void {
-    if (!selectedScene) return;
-    const targetBase = targetCircuitsForBulk();
-    const targets = targetBase
+  function setBulkPercentValue(rawValue: string): void {
+    setBulkMode("percent");
+    setBulkValue(clampPercentValue(rawValue));
+  }
+
+  function buildBulkConfirmation(mode: BulkMode, rawValue = bulkValue): AreaSceneBulkConfirmation | null {
+    if (!selectedScene) return null;
+    const valueForMode = mode === "percent" ? clampPercentValue(rawValue) : rawValue;
+    if (mode === "percent" && !valueForMode) return null;
+
+    const targets = targetCircuitsForBulk()
       .map((circuit) => ({
         circuit,
-        value: settingValueForBulkMode(mode, isOnOff(circuit), bulkValue),
+        value: settingValueForBulkMode(mode, isOnOff(circuit), valueForMode),
       }))
       .filter((item): item is { circuit: CircuitEntry; value: string } => item.value !== null);
-    if (targets.length === 0) return;
+    if (targets.length === 0) return null;
+
+    return {
+      sceneId: selectedScene.id,
+      targetLabel: labelForOption(BULK_TARGET_OPTIONS, bulkTarget),
+      modeLabel: mode === "percent" ? `Percent ${valueForMode}%` : labelForOption(BULK_MODE_OPTIONS, mode),
+      items: targets.map(({ circuit, value }, index) => ({
+        circuit,
+        rowNumber: String(index + 1),
+        designerNumber: circuit.designerNumber.trim() || "(Unset)",
+        detail: circuit.detail.trim() || "-",
+        currentDisplay: formatBulkPreviewValue(
+          sceneSettingValueForCircuitGroup(selectedScene.settings, circuits, circuit),
+          circuit.dimmingType,
+        ),
+        nextDisplay: formatBulkPreviewValue(value, circuit.dimmingType),
+        nextValue: value,
+      })),
+    };
+  }
+
+  function requestBulkApply(mode: BulkMode): void {
+    const valueForMode = mode === "percent" ? clampPercentValue(bulkValue) : bulkValue;
+    if (mode === "percent") setBulkValue(valueForMode);
+    setBulkMode(mode);
+    setBulkConfirmation(buildBulkConfirmation(mode, valueForMode));
+  }
+
+  function confirmBulkApply(): void {
+    if (!bulkConfirmation) return;
+    if (!selectedScene || selectedScene.id !== bulkConfirmation.sceneId) {
+      setBulkConfirmation(null);
+      return;
+    }
+    const targets = bulkConfirmation.items;
     updateSelectedScene((scene) =>
       targets.reduce(
         (next, item) => ({
           ...next,
-          settings: setSceneSettingValueForCircuitGroup(next.settings, circuits, item.circuit, item.value),
+          settings: setSceneSettingValueForCircuitGroup(next.settings, circuits, item.circuit, item.nextValue),
         }),
         scene,
       ),
     );
-  }
-
-  function applyBulkPercentValue(rawValue: string): void {
-    const value = clampPercentValue(rawValue);
-    setBulkMode("percent");
-    setBulkValue(value);
-    if (!selectedScene || !value) return;
-    const targets = targetCircuitsForBulk().filter((c) => !isOnOff(c));
-    updateSelectedScene((scene) =>
-      targets.reduce(
-        (next, circuit) => ({
-          ...next,
-          settings: setSceneSettingValueForCircuitGroup(next.settings, circuits, circuit, value),
-        }),
-        scene,
-      ),
-    );
+    setBulkConfirmation(null);
   }
 
   function canApplyBulkMode(mode: BulkMode): boolean {
@@ -629,6 +785,122 @@ export default function SceneView({
     setCircuitChecked(circuitId, checked);
   }
 
+  function renderBulkConfirmation(): ReactNode {
+    if (!bulkConfirmation) return null;
+    const titleId = `scene-bulk-confirm-title-${bulkConfirmation.sceneId}`;
+    const overlay = (
+      <div className="setting-overlay scene-bulk-confirm-overlay" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <button
+          type="button"
+          className="setting-overlay-backdrop"
+          aria-label="Cancel bulk change"
+          onClick={() => setBulkConfirmation(null)}
+        />
+        <div className="setting-overlay-panel scene-bulk-confirm-panel">
+          <div className="setting-overlay-header">
+            <div>
+              <strong id={titleId}>Confirm Bulk Change</strong>
+              <div className="scene-bulk-confirm-summary">
+                <span>Target: {bulkConfirmation.targetLabel}</span>
+                <span>Mode: {bulkConfirmation.modeLabel}</span>
+                <span>{bulkConfirmation.items.length} targets</span>
+              </div>
+            </div>
+            <div className="setting-overlay-actions">
+              <button type="button" className="btn btn-danger-ghost" onClick={() => setBulkConfirmation(null)}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-primary" onClick={confirmBulkApply} disabled={!canEdit}>
+                Confirm
+              </button>
+            </div>
+          </div>
+          <div className="matrix-scroll scene-bulk-confirm-scroll">
+            <table className="matrix-table master-table scene-bulk-confirm-table" aria-label="Bulk target preview">
+              <thead>
+                <tr>
+                  <th>No</th>
+                  <th>Designer#</th>
+                  <th>Detail</th>
+                  <th>Current</th>
+                  <th>New</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bulkConfirmation.items.map((item) => (
+                  <tr key={item.circuit.id}>
+                    <td className="col-center">{item.rowNumber}</td>
+                    <td><span className="cell-readonly">{item.designerNumber}</span></td>
+                    <td><span className="cell-readonly">{item.detail}</span></td>
+                    <td><span className="cell-readonly">{item.currentDisplay}</span></td>
+                    <td><span className="cell-readonly">{item.nextDisplay}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+    return typeof document === "undefined" ? null : createPortal(overlay, document.body);
+  }
+
+  function renderSettingOverlay(): ReactNode {
+    if (!settingOverlayScene) return null;
+    const areaScenesForOverlay = scenes.filter((scene) => scene.areaId === settingOverlayScene.areaId);
+    const settingOverlayTitle = sceneName(
+      settingOverlayScene,
+      Math.max(0, areaScenesForOverlay.findIndex((scene) => scene.id === settingOverlayScene.id)),
+    );
+    const overlay = (
+      <div className="setting-overlay" role="dialog" aria-modal="true">
+        <button
+          type="button"
+          className="setting-overlay-backdrop"
+          aria-label="Close settings"
+          onClick={closeSettingOverlay}
+        />
+        <div className="setting-overlay-panel">
+          <div className="setting-overlay-header">
+            <strong>Area Scene Setting / {settingOverlayTitle}</strong>
+            <div className="setting-overlay-actions">
+              <button type="button" className="btn btn-danger-ghost" onClick={closeSettingOverlay}>
+                Close
+              </button>
+            </div>
+          </div>
+          <SceneView
+            key={`area-scene-setting-overlay:${settingOverlayScene.id}:${externalSettingRequest?.requestId ?? 0}`}
+            scenes={scenes}
+            locations={locations}
+            circuits={circuits}
+            fixtures={fixtures}
+            hvacAssignments={hvacAssignments}
+            hvacSeasons={hvacSeasons}
+            curtainAssignments={curtainAssignments}
+            switches={switches}
+            onChange={onChange}
+            revisionChanges={revisionChanges}
+            canEdit={canEdit}
+            roomTypeName={roomTypeName}
+            roomType={roomType}
+            devices={devices}
+            programmingNameSettings={programmingNameSettings}
+            initialSelectedAreaId={settingOverlayScene.areaId}
+            initialSelectedSceneId={settingOverlayScene.id}
+            embeddedSettingOverlay
+            suppressSceneNormalization
+          />
+        </div>
+      </div>
+    );
+    return typeof document === "undefined" ? null : createPortal(overlay, document.body);
+  }
+
+  if (overlayHostOnly) {
+    return <>{renderSettingOverlay()}</>;
+  }
+
   if (locations.length === 0) {
     return (
       <section className="card card-padded fade-in">
@@ -640,7 +912,8 @@ export default function SceneView({
   }
 
   return (
-    <section className="card card-padded fade-in scene-view">
+    <section className={`card card-padded fade-in scene-view${embeddedSettingOverlay ? " scene-view-setting-overlay-content" : ""}`}>
+      {!embeddedSettingOverlay ? (
       <div className="scene-view-mode-bar" role="tablist" aria-label="Area Scene view mode">
         <button
           type="button"
@@ -663,8 +936,9 @@ export default function SceneView({
           Overview
         </button>
       </div>
+      ) : null}
 
-      {viewMode === "overview" ? (
+      {!embeddedSettingOverlay && viewMode === "overview" ? (
         <AreaSceneOverview
           scenes={scenes}
           locations={locations}
@@ -711,7 +985,7 @@ export default function SceneView({
                 key={scene.id}
                 type="button"
                 role="tab"
-                draggable
+                draggable={!embeddedSettingOverlay}
                 aria-selected={active}
                 className={[
                   "scene-tab",
@@ -740,6 +1014,8 @@ export default function SceneView({
           })}
         </div>
         <div className="scene-toolbar-actions">
+          {!embeddedSettingOverlay ? (
+          <>
           <ActionIconButton
             icon="plus"
             label="Add Scene"
@@ -761,6 +1037,8 @@ export default function SceneView({
             onClick={handleRemoveScene}
             disabled={!canEdit || !selectedScene}
           />
+          </>
+          ) : null}
           <button
             type="button"
             className="header-toggle"
@@ -787,150 +1065,19 @@ export default function SceneView({
               disabled={!canEdit}
             />
             {!isHvacAreaScene ? (
-            <div className="scene-bulk-panel">
-              <div className="scene-bulk-targets" role="group" aria-label="Bulk target">
-                {[
-                  ["all", "All"] as const,
-                  ["checked", "Check"] as const,
-                  ["dl", "DL"] as const,
-                  ["indirect", "Indirect"] as const,
-                  ["onOff", "On/Off"] as const,
-                ].map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    className={`scene-bulk-target${bulkTarget === value ? " scene-bulk-target-active" : ""}`}
-                    onClick={() => setBulkTarget(value)}
-                    disabled={!canEdit}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <div className="scene-level-control scene-bulk-control">
-                <input
-                  className="cell-input scene-level-input"
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="1"
-                  value={bulkValue}
-                  onChange={(e) => applyBulkPercentValue(e.target.value)}
-                  onFocus={() => setBulkMode("percent")}
-                  disabled={!canEdit || !hasBulkTargetsForMode("percent")}
-                />
-                <div className="scene-step-grid" aria-label="Bulk level adjustment">
-                  <button type="button" onClick={() => stepBulk(1)} disabled={!canEdit}>+1</button>
-                  <button type="button" onClick={() => stepBulk(10)} disabled={!canEdit}>+10</button>
-                  <button type="button" onClick={() => stepBulk(-1)} disabled={!canEdit}>-1</button>
-                  <button type="button" onClick={() => stepBulk(-10)} disabled={!canEdit}>-10</button>
-                </div>
-              </div>
-              <div className="scene-bulk-mode-buttons" role="group" aria-label="Percent On Off Blinking Uneffected Raise Lower">
-                <button
-                  type="button"
-                  className={`scene-bulk-target${bulkMode === "percent" ? " scene-bulk-target-active" : ""}`}
-                  onClick={() => {
-                    setBulkMode("percent");
-                    applyBulkMode("percent");
-                  }}
-                  disabled={!canEdit || !canApplyBulkMode("percent")}
-                >
-                  %
-                </button>
-                <button
-                  type="button"
-                  className={`scene-bulk-target${bulkMode === "on" ? " scene-bulk-target-active" : ""}`}
-                  onClick={() => {
-                    setBulkMode("on");
-                    applyBulkMode("on");
-                  }}
-                  disabled={!canEdit || !canApplyBulkMode("on")}
-                >
-                  On
-                </button>
-                <button
-                  type="button"
-                  className={`scene-bulk-target${bulkMode === "off" ? " scene-bulk-target-active" : ""}`}
-                  onClick={() => {
-                    setBulkMode("off");
-                    applyBulkMode("off");
-                  }}
-                  disabled={!canEdit || !canApplyBulkMode("off")}
-                >
-                  Off
-                </button>
-                <button
-                  type="button"
-                  className={`scene-bulk-target${bulkMode === "blinkShort" ? " scene-bulk-target-active" : ""}`}
-                  onClick={() => {
-                    setBulkMode("blinkShort");
-                    applyBulkMode("blinkShort");
-                  }}
-                  disabled={!canEdit || !canApplyBulkMode("blinkShort")}
-                >
-                  Blinking (Short)
-                </button>
-                <button
-                  type="button"
-                  className={`scene-bulk-target${bulkMode === "blinkLong" ? " scene-bulk-target-active" : ""}`}
-                  onClick={() => {
-                    setBulkMode("blinkLong");
-                    applyBulkMode("blinkLong");
-                  }}
-                  disabled={!canEdit || !canApplyBulkMode("blinkLong")}
-                >
-                  Blinking (Long)
-                </button>
-                <button
-                  type="button"
-                  className={`scene-bulk-target${bulkMode === "halfSec" ? " scene-bulk-target-active" : ""}`}
-                  onClick={() => {
-                    setBulkMode("halfSec");
-                    applyBulkMode("halfSec");
-                  }}
-                  disabled={!canEdit || !canApplyBulkMode("halfSec")}
-                >
-                  0.5 sec
-                </button>
-                <button
-                  type="button"
-                  className={`scene-bulk-target${bulkMode === "clear" ? " scene-bulk-target-active" : ""}`}
-                  onClick={() => {
-                    setBulkMode("clear");
-                    applyBulkMode("clear");
-                  }}
-                  disabled={!canEdit || !canApplyBulkMode("clear")}
-                >
-                  Uneffected
-                </button>
-                <button
-                  type="button"
-                  className={`scene-bulk-target${bulkMode === "raise" ? " scene-bulk-target-active" : ""}`}
-                  onClick={() => {
-                    setBulkMode("raise");
-                    applyBulkMode("raise");
-                  }}
-                  disabled={!canEdit || !canApplyBulkMode("raise")}
-                >
-                  Raise
-                </button>
-                <button
-                  type="button"
-                  className={`scene-bulk-target${bulkMode === "lower" ? " scene-bulk-target-active" : ""}`}
-                  onClick={() => {
-                    setBulkMode("lower");
-                    applyBulkMode("lower");
-                  }}
-                  disabled={!canEdit || !canApplyBulkMode("lower")}
-                >
-                  Lower
-                </button>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => applyBulkMode(bulkMode)} disabled={!canEdit || !canApplyBulkMode(bulkMode)}>
-                  Apply Bulk
-                </button>
-              </div>
-            </div>
+            <AreaSceneBulkPanel
+              canEdit={canEdit}
+              bulkTarget={bulkTarget}
+              bulkMode={bulkMode}
+              bulkValue={bulkValue}
+              onTargetChange={setBulkTarget}
+              onModeChange={setBulkMode}
+              onPercentValueChange={setBulkPercentValue}
+              onStep={stepBulk}
+              onApply={() => requestBulkApply(bulkMode)}
+              canApplyMode={canApplyBulkMode}
+              hasTargetsForMode={hasBulkTargetsForMode}
+            />
             ) : null}
           </div>
 
@@ -1115,7 +1262,92 @@ export default function SceneView({
       )}
       </>
       )}
+      {renderBulkConfirmation()}
     </section>
+  );
+}
+
+function AreaSceneBulkPanel({
+  canEdit,
+  bulkTarget,
+  bulkMode,
+  bulkValue,
+  onTargetChange,
+  onModeChange,
+  onPercentValueChange,
+  onStep,
+  onApply,
+  canApplyMode,
+  hasTargetsForMode,
+}: {
+  canEdit: boolean;
+  bulkTarget: BulkTarget;
+  bulkMode: BulkMode;
+  bulkValue: string;
+  onTargetChange: (target: BulkTarget) => void;
+  onModeChange: (mode: BulkMode) => void;
+  onPercentValueChange: (value: string) => void;
+  onStep: (delta: number) => void;
+  onApply: () => void;
+  canApplyMode: (mode: BulkMode) => boolean;
+  hasTargetsForMode: (mode: BulkMode) => boolean;
+}): React.JSX.Element {
+  return (
+    <div className="scene-bulk-panel">
+      <div className="scene-bulk-targets" role="group" aria-label="Bulk target">
+        {BULK_TARGET_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={`scene-bulk-target${bulkTarget === option.value ? " scene-bulk-target-active" : ""}`}
+            onClick={() => onTargetChange(option.value)}
+            disabled={!canEdit}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      <div className="scene-level-control scene-bulk-control">
+        <input
+          className="cell-input scene-level-input"
+          type="number"
+          min="0"
+          max="100"
+          step="1"
+          value={bulkValue}
+          onChange={(e) => onPercentValueChange(e.target.value)}
+          onFocus={() => onModeChange("percent")}
+          disabled={!canEdit || !hasTargetsForMode("percent")}
+        />
+        <div className="scene-step-grid" aria-label="Bulk level adjustment">
+          <button type="button" onClick={() => onStep(1)} disabled={!canEdit || !hasTargetsForMode("percent")}>+1</button>
+          <button type="button" onClick={() => onStep(10)} disabled={!canEdit || !hasTargetsForMode("percent")}>+10</button>
+          <button type="button" onClick={() => onStep(-1)} disabled={!canEdit || !hasTargetsForMode("percent")}>-1</button>
+          <button type="button" onClick={() => onStep(-10)} disabled={!canEdit || !hasTargetsForMode("percent")}>-10</button>
+        </div>
+      </div>
+      <div className="scene-bulk-mode-buttons" role="group" aria-label="Percent On Off Blinking Uneffected Raise Lower">
+        {BULK_MODE_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={`scene-bulk-target${bulkMode === option.value ? " scene-bulk-target-active" : ""}`}
+            onClick={() => onModeChange(option.value)}
+            disabled={!canEdit || !hasTargetsForMode(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={onApply}
+          disabled={!canEdit || !canApplyMode(bulkMode)}
+        >
+          Apply Bulk
+        </button>
+      </div>
+    </div>
   );
 }
 

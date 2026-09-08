@@ -16,6 +16,7 @@ import type {
   PduDeviceCount,
   ProgrammingNameSettings,
   ProjectData,
+  ProjectRemark,
   ProjectTab,
   RoomType,
   RoomTypeRevision,
@@ -39,6 +40,7 @@ import { buildProjectCircuitSuggestions } from "../lib/projectCircuitSuggestions
 import { duplicateRoomType } from "../lib/roomTypeCopy";
 import { cfsWindowChannelName, cfsWindowUrl, stripRoomTypeForWindow, type CfsWindowMessage, type CfsWindowRoomTypeEntry, type CfsWindowSnapshot } from "../lib/cfsWindowSync";
 import { circuitsForRoomType, inferRoomTypeCircuitIds, normalizeProjectRoomTypeCircuitIds, syncProjectRoomTypeLinks } from "../lib/roomTypeSync";
+import { normalizeRoomSceneSettingLinksAfterCommit } from "../lib/roomSceneSettingLinks";
 import { setFfeOnCircuitsUsingFixtures } from "../lib/circuitGroups";
 import {
   buildRevisionChangeEntries,
@@ -51,6 +53,7 @@ import RevisionDiffPanel, { type RevisionBaseOption } from "./RevisionDiffPanel"
 import TabsBar, { type TabDef } from "./TabsBar";
 import LocationsView from "./LocationsView";
 import FixturesView from "./FixturesView";
+import RemarksView from "./RemarksView";
 import DeviceAssignView from "./DeviceAssignView";
 import RoomsView from "./RoomsView";
 import CircuitsView from "./CircuitsView";
@@ -78,7 +81,7 @@ const HISTORY_LIMIT = 50;
 const PROJECT_NAV_STORAGE_PREFIX = "cfs-project-navigation-v1:";
 const IDLE_AUTO_SAVE_REVISION_NOTE = "Auto-saved draft after 15 minutes idle.";
 
-const VALID_PROJECT_TABS: readonly ProjectTab[] = ["area", "fixture", "rooms"];
+const VALID_PROJECT_TABS: readonly ProjectTab[] = ["area", "fixture", "rooms", "remarks"];
 const VALID_ROOM_SUB_TABS: readonly RoomsSubTab[] = [
   "circuit",
   "deviceAssign",
@@ -603,13 +606,14 @@ export default function ProjectScreen({
       roomType: stripRoomTypeForWindow(activeRoomType),
       circuits: activeRoomTypeCircuits,
       roomTypeEntries: cfsWindowRoomTypeEntries,
+      projectRemarks: project.remarks,
       devices,
       fixtures: project.fixtures,
       locations: project.locations,
       programmingNameSettings,
       sentAt: Date.now(),
     };
-  }, [project.name, activeRoomType, activeRoomTypeCircuits, cfsWindowRoomTypeEntries, devices, project.fixtures, project.locations, programmingNameSettings]);
+  }, [project.name, project.remarks, activeRoomType, activeRoomTypeCircuits, cfsWindowRoomTypeEntries, devices, project.fixtures, project.locations, programmingNameSettings]);
 
   useEffect(() => {
     if (typeof BroadcastChannel === "undefined") return;
@@ -1181,6 +1185,13 @@ export default function ProjectScreen({
   const setLocations = useCallback(
     (next: LocationMaster[]): void => {
       updateProject((p) => ({ ...p, locations: next }));
+    },
+    [updateProject],
+  );
+
+  const setRemarks = useCallback(
+    (next: ProjectRemark[]): void => {
+      updateProject((p) => ({ ...p, remarks: next }));
     },
     [updateProject],
   );
@@ -2088,6 +2099,14 @@ export default function ProjectScreen({
     payload: InspectionCompletionPayload,
     options: { hasDraft: boolean },
   ): void => {
+    const currentRoomType = project.roomTypes.find((rt) => rt.id === roomTypeId);
+    if (!currentRoomType || inspectionPayloadsEqual({
+      scenes: currentRoomType.scenes,
+      roomScenes: currentRoomType.roomScenes,
+      switches: currentRoomType.switches,
+      inspectionMarks: currentRoomType.inspectionMarks ?? [],
+    }, payload)) return;
+
     setInspectionSessionEntries((entries) => {
       const existing = entries.find((entry) => entry.roomTypeId === roomTypeId);
       const roomType = project.roomTypes.find((rt) => rt.id === roomTypeId);
@@ -2354,7 +2373,10 @@ export default function ProjectScreen({
     (next: RoomScene[] | ((current: RoomScene[]) => RoomScene[])): void => {
       updateActiveRoomType((rt) => ({
         ...rt,
-        roomScenes: typeof next === "function" ? next(rt.roomScenes) : next,
+        roomScenes: normalizeRoomSceneSettingLinksAfterCommit(
+          rt.roomScenes,
+          typeof next === "function" ? next(rt.roomScenes) : next,
+        ),
       }));
     },
     [updateActiveRoomType],
@@ -2405,6 +2427,7 @@ export default function ProjectScreen({
     { id: "area", label: "Area" },
     { id: "fixture", label: "Fixture" },
     { id: "rooms", label: "Room Type" },
+    { id: "remarks", label: "Remarks" },
   ];
 
   // Room type selector row (sits between parent tabs and sub tabs).
@@ -2997,6 +3020,9 @@ export default function ProjectScreen({
       {activeTab === "fixture" && (
         <FixturesView fixtures={project.fixtures} onChange={setFixtures} />
       )}
+      {activeTab === "remarks" && (
+        <RemarksView projectName={project.name} remarks={project.remarks ?? []} onChange={setRemarks} />
+      )}
 
       {activeTab === "rooms" && !activeRoomType && (
         <>
@@ -3176,12 +3202,17 @@ export default function ProjectScreen({
                 roomType={activeRoomType}
                 circuits={activeRoomTypeCircuits}
                 projectRoomTypeEntries={cfsWindowRoomTypeEntries}
+                projectRemarks={project.remarks}
                 devices={devices}
                 fixtures={project.fixtures}
                 locations={project.locations}
                 onScenesChange={setScenes}
                 onRoomScenesChange={setRoomScenes}
+                onDeviceAssignmentsChange={setDeviceAssignments}
                 onSwitchesChange={setSwitches}
+                backlightLevels={activeRoomType.backlightLevels}
+                onBacklightLevelsChange={setBacklightLevels}
+                triggerMasters={triggerMasters}
                 onInspectionMarksChange={setInspectionMarks}
                 programmingNameSettings={project.settings?.programmingName}
                 onProgrammingNameSettingsChange={setProgrammingNameSettings}

@@ -12,9 +12,9 @@
  * T-65 (design option 3, T-63): the CFS header badge and the panel's
  * swatch+symbol row are replaced by a "Link <symbol>" text pill — the exact
  * Switch tab wording — filled with the shared group color (white text). The
- * header pill sits centered UNDER the button name; while labels are shown
- * the button-name row gains uniform bottom padding, and hiding them via the
- * renamed "Show labels" checkbox restores the compact height.
+ * T-98 moves header pills to the last (condition) row alongside Edit
+ * controls. That row compacts when labels and Edit are both off. Lines
+ * stop at merged cell interiors and resume in the separate cells below.
  *
  *  - Toolbar gets a "Link" button right of "Highlights". Its panel lists the
  *    current room type's setting-link groups in symbol order (A, B, ...)
@@ -35,8 +35,7 @@
  *    HIDDEN group set (hiddenSettingLinkGroups) so new groups default to
  *    visible. The old Display menu no longer has a "Link" item.
  *  - Display only: sticky base columns and the Excel export are untouched;
- *    every button-head cell keeps one identical height (taller only while
- *    labels are shown).
+ *    every condition-head cell keeps one identical height.
  *
  * データ保護: installLocalEditingMocks で /api/projects を全モック。
  */
@@ -355,14 +354,12 @@ test.describe("T-60 CFS Link button + panel + column highlight lines", () => {
     // ...and strictly below the group/category band's own top edge.
     expect(topEdge!.minLineTop).toBeGreaterThan(topEdge!.groupBandTop + 2);
 
-    // Uniform layout: while labels are shown the button-name row is taller
-    // (T-65 padding is applied per-row, never per-cell), so every
-    // button-header cell — linked or not — keeps ONE identical height, and
-    // sticky base columns stay sticky.
+    // T-98: labels and controls occupy the last (condition) row. Its
+    // padding is uniform for linked/unlinked cells; base columns stay sticky.
     const headerInfo = await page.evaluate(() => {
-      const heads = Array.from(document.querySelectorAll("table.cfs-matrix-table thead .cfs-button-head"));
+      const heads = Array.from(document.querySelectorAll("table.cfs-matrix-table thead .cfs-condition-head"));
       return heads.map((th) => ({
-        linked: th.classList.contains("cfs-header-link-cell"),
+        linked: Boolean(th.querySelector(".cfs-header-link-label")),
         height: Math.round(th.getBoundingClientRect().height * 100) / 100,
       }));
     });
@@ -518,21 +515,20 @@ test.describe("T-60 CFS Link button + panel + column highlight lines", () => {
     await expect(badgeToggle()).toBeChecked();
     await expect(page.locator(BADGE)).toHaveCount(4);
     expect((await lineColors(page)).length).toBe(2);
-    const buttonRowHeight = () =>
+    const conditionRowHeight = () =>
       page.evaluate(() => {
-        const row = document.querySelectorAll("table.cfs-matrix-table thead tr")[1];
+        const row = document.querySelectorAll("table.cfs-matrix-table thead tr")[3];
         return row ? Math.round(row.getBoundingClientRect().height * 100) / 100 : null;
       });
-    const rowHeightLabelsOn = await buttonRowHeight();
+    const rowHeightLabelsOn = await conditionRowHeight();
 
     // OFF -> every label disappears; the lines are untouched, and the
-    // button-name row returns to its compact (pre-T-65) height because the
-    // label padding is gated together with the labels.
+    // condition row returns to its compact height when Edit is also off.
     await badgeToggle().uncheck();
     await page.keyboard.press("Escape");
     await expect(page.locator(BADGE)).toHaveCount(0);
     expect((await lineColors(page)).length).toBe(2);
-    const rowHeightLabelsOff = await buttonRowHeight();
+    const rowHeightLabelsOff = await conditionRowHeight();
     expect(rowHeightLabelsOn).toBeTruthy();
     expect(rowHeightLabelsOff).toBeTruthy();
     expect(rowHeightLabelsOff!).toBeLessThan(rowHeightLabelsOn!);

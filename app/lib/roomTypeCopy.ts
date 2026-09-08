@@ -198,6 +198,7 @@ export function duplicateRoomType(
   const copiedRoomScenes = sourceRoomScenes.map((scene) => ({
     ...cloneProjectData(scene),
     id: mapKnownId(roomSceneIdMap, scene.id),
+    settingLinkGroupId: undefined,
     areaSceneSelections: (scene.areaSceneSelections ?? []).map((selection) => ({
       ...cloneProjectData(selection),
       sceneId: mapKnownId(sceneIdMap, selection.sceneId),

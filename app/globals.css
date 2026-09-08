@@ -3755,6 +3755,17 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   text-align: center;
 }
 
+.cfs-low-high-draft-bar {
+  justify-content: flex-start;
+}
+
+.cfs-low-high-draft-label {
+  min-width: 6.8rem;
+  color: var(--color-text-primary);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
 .cfs-inspection-selection-tools {
   display: inline-flex;
   align-items: center;
@@ -6552,7 +6563,8 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   color: #56308f;
 }
 
-.revision-changed-cell {
+/* Preserve the semantic override color without raising its priority over inspection or link errors. */
+.revision-changed-cell:not(:where(.cfs-individual-override-cell)) {
   background: #fff3b0 !important;
   box-shadow: inset 0 0 0 1px #e7c84f;
 }
@@ -6618,6 +6630,176 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   color: var(--color-text-muted);
   font-weight: 700;
   margin-top: 0.2rem;
+}
+
+.cfs-setting-name-button {
+  display: flex;
+  position: relative;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 2rem;
+  padding: 0.2rem;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.cfs-setting-name-button:hover:not(:disabled),
+.cfs-setting-name-button:focus-visible,
+.cfs-setting-icon-button:hover:not(:disabled),
+.cfs-setting-icon-button:focus-visible {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.cfs-setting-name-button:focus-visible,
+.cfs-setting-icon-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.cfs-setting-name-button:disabled,
+.cfs-setting-icon-button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.cfs-setting-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.cfs-setting-icon-button > svg,
+.cfs-low-high-cell-trigger > svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cfs-setting-condition-menu {
+  z-index: 6000;
+  overflow: auto;
+  padding: 5px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+
+.cfs-setting-condition-menu button {
+  display: block;
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.4rem 0.6rem;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.cfs-setting-condition-menu button:hover,
+.cfs-setting-condition-menu button:focus-visible {
+  background: var(--color-accent-soft);
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.cfs-setting-link-select-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.cfs-setting-link-select-actions .is-active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.cfs-setting-link-selected-count {
+  min-width: 4.4rem;
+  color: var(--color-text-secondary);
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.cfs-header-controls-grid {
+  display: grid;
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  right: 4px;
+  align-items: center;
+  gap: 0;
+  min-height: 22px;
+}
+
+.cfs-header-column-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  height: 22px;
+}
+
+.cfs-setting-link-select-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 22px;
+}
+
+.cfs-setting-link-select-cell input {
+  width: 0.92rem;
+  height: 0.92rem;
+  margin: 0;
+  accent-color: var(--color-accent);
+}
+
+.cfs-setting-link-select-cell.is-selected {
+  border-radius: 0.35rem;
+  background: rgba(15, 122, 131, 0.12);
+}
+
+.cfs-setting-link-select-cell.is-disabled {
+  opacity: 0.36;
+  cursor: not-allowed;
+}
+
+.cfs-setting-link-selected-cell {
+  box-shadow: inset 0 0 0 2px rgba(15, 122, 131, 0.42);
 }
 
 .cfs-button-head,
@@ -6771,6 +6953,19 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 .cfs-inspection-cell-trigger > .cfs-cell-stack,
 .cfs-inspection-cell-trigger > div:not(.cfs-cell-stack) {
   width: 100%;
+}
+
+.cfs-low-high-cell-trigger {
+  position: relative;
+  min-height: calc(var(--cfs-body-row-height) - 0.35rem);
+  padding-right: 15px;
+}
+
+.cfs-low-high-cell-trigger > svg {
+  position: absolute;
+  right: 1px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .cfs-inspection-popover {
@@ -7094,6 +7289,17 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
     inset 0 0 0 3px rgba(15, 118, 110, 0.42);
 }
 
+.cfs-sticky-base.cfs-low-high-draft-cell {
+  background: #fff8ed;
+  box-shadow: inset 0 0 0 2px rgba(181, 120, 25, 0.72);
+}
+
+.cfs-sticky-base.cfs-low-high-draft-cell.revision-changed-cell {
+  box-shadow:
+    inset 0 0 0 2px rgba(181, 120, 25, 0.72),
+    inset 0 0 0 3px rgba(15, 118, 110, 0.42);
+}
+
 .cfs-function-cell.cfs-inspection-selected-cell {
   background: #eef6ff;
   box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.52);
@@ -7286,7 +7492,8 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   gap: 0;
 }
 
-.action-icon-button svg {
+.action-icon-button svg,
+.remarks-export-button svg {
   flex: 0 0 auto;
   width: 0.95rem;
   height: 0.95rem;
@@ -7966,6 +8173,15 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+}
+
+.setting-overlay-panel > .scene-view-setting-overlay-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .scene-area-bar {
@@ -8671,6 +8887,39 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
 }
 
+.scene-bulk-confirm-overlay {
+  inset: 0;
+  z-index: 5200;
+  align-items: center;
+  padding: 1rem;
+}
+
+.scene-bulk-confirm-panel {
+  width: min(920px, calc(100vw - 2rem));
+  height: auto;
+  max-height: calc(100vh - 2rem);
+}
+
+.scene-bulk-confirm-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.65rem;
+  margin-top: 0.35rem;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.scene-bulk-confirm-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0.75rem;
+}
+
+.scene-bulk-confirm-table {
+  min-width: 720px;
+}
+
 .setting-overlay-header {
   position: sticky;
   top: 0;
@@ -9263,7 +9512,7 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 0.28rem;
+  width: 4px;
   pointer-events: none;
   z-index: 1;
 }
@@ -9277,7 +9526,7 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 }
 
 /* Link panel group blocks: swatch + 🔗symbol checkbox row and the
-   "switch name − button name" member list. */
+   setting-link member list. */
 .cfs-link-menu-empty {
   color: var(--color-text-muted);
   font-size: 0.82rem;
@@ -9318,17 +9567,9 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   padding: 0.3rem 0.1rem 0.1rem;
 }
 
-/* T-65 */
-/* Link display design option 3 (T-63): the CFS column header and the Link
-   panel reuse the Switch tab's "Link A" wording as a mini pill filled with
-   the shared group color (white text, same tokens as the T-63 mock). The
-   header pill sits centered UNDER the button name, so the button-name row
-   gains bottom padding while labels are shown (applied per-row, uniform for
-   every button head, so all header cells keep identical heights); hiding
-   the labels via "Show labels" restores the exact pre-T-65 header height.
-   The retired .cfs-header-link-badge / .cfs-link-menu-symbol rules above
-   (T-58 / T-60 blocks) are intentionally left in place; that markup no
-   longer renders. */
+/* Shared Link pills retain the Switch group colors. T-98 puts header pills,
+   pencils and selectors on the last row, with uniform row-level padding.
+   The row compacts only when both Edit and Show labels are off. */
 .cfs-link-text-label {
   display: inline-flex;
   align-items: center;
@@ -9344,16 +9585,15 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 }
 
 .cfs-header-link-label {
-  position: absolute;
-  bottom: 3px;
-  left: 50%;
-  transform: translateX(-50%);
+  flex: 0 0 auto;
+  position: relative;
   pointer-events: none;
   z-index: 2;
 }
 
-.cfs-matrix-table thead tr.cfs-button-row-with-link-labels th.cfs-button-head {
-  padding-bottom: 1.3rem;
+.cfs-matrix-table thead tr.cfs-condition-row-with-controls th.cfs-condition-head {
+  position: relative;
+  padding-bottom: 32px;
 }
 
 /* T-68 */
@@ -9457,4 +9697,284 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 /* CFS tab Reserved rows: same foreground fix (bg #c4c9cf unchanged). */
 .cfs-reserved-row {
   color: var(--reserved-cell-fg);
+}
+
+/* T-37: project-level Remarks tab. */
+.remarks-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  gap: 0.85rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 1rem;
+}
+
+.remarks-toolbar {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.remarks-toolbar .screen-section-title {
+  margin-bottom: 0;
+}
+
+.remarks-mode-tabs {
+  flex: 0 0 auto;
+}
+
+.remarks-export-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.remarks-empty p {
+  margin: 0 0 0.75rem;
+}
+
+.remarks-edit-list,
+.remarks-preview-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  gap: 0.75rem;
+}
+
+.remarks-note,
+.remarks-preview-note {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  padding: 0.85rem;
+}
+
+.remarks-view .cell-input {
+  background: #fff;
+  border-color: var(--color-border-strong);
+}
+
+.remarks-view .cell-input:hover {
+  border-color: #d1d5db;
+}
+
+.remarks-view .cell-input:focus-visible {
+  border-color: var(--color-accent);
+}
+
+.remarks-note.is-dragging {
+  opacity: 0.58;
+}
+
+.remarks-note.is-drop-before {
+  border-top-color: var(--color-accent);
+  box-shadow: inset 0 3px 0 var(--color-accent);
+}
+
+.remarks-note.is-drop-after {
+  border-bottom-color: var(--color-accent);
+  box-shadow: inset 0 -3px 0 var(--color-accent);
+}
+
+.remarks-note-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.remarks-note-fields {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.remarks-title-input {
+  font-weight: 700;
+}
+
+.remarks-body-input {
+  min-height: 7rem;
+  height: auto;
+  resize: vertical;
+  overflow: auto;
+  line-height: 1.45;
+}
+
+.remarks-note-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.remarks-table-panel {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-border-strong);
+}
+
+.remarks-table-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.remarks-preset-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.remarks-table-wrap,
+.remarks-preview-table-wrap {
+  margin-top: 0.75rem;
+  width: max-content;
+  min-width: 0;
+  max-width: 100%;
+  min-block-size: 0;
+  border-color: #d1d5db;
+  border-radius: var(--radius-sm);
+}
+
+.matrix-table.remarks-table {
+  width: auto;
+  min-width: 0;
+  table-layout: auto;
+  background: #fff;
+}
+
+.remarks-table thead th,
+.remarks-table tbody td {
+  padding: 0.25rem;
+  border-color: #d1d5db;
+  background: #fff;
+  white-space: normal;
+  vertical-align: top;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  letter-spacing: 0;
+}
+
+.remarks-table .col-center {
+  min-width: 5rem;
+  vertical-align: middle;
+}
+
+.remarks-column-header {
+  display: flex;
+  gap: 0.35rem;
+  align-items: flex-start;
+}
+
+.remarks-column-header > button {
+  flex: 0 0 auto;
+}
+
+.remarks-cell-editor {
+  position: relative;
+  width: max-content;
+  min-width: 4rem;
+  max-width: 24rem;
+  flex-shrink: 0;
+}
+
+.remarks-cell-text {
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 4rem;
+  max-width: 24rem;
+  min-height: 2rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid transparent;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.remarks-cell-measure {
+  display: block;
+  visibility: hidden;
+}
+
+.remarks-preview-table-wrap .remarks-cell-text {
+  width: auto;
+  max-width: none;
+}
+
+/* Edit keeps a stable writing area; Preview retains its content-fit text widths. */
+.remarks-table-wrap .remarks-cell-editor,
+.remarks-table-wrap .remarks-column-header {
+  width: 20rem;
+  min-width: 20rem;
+  max-width: 20rem;
+}
+
+.remarks-table-wrap .remarks-column-header .remarks-cell-editor {
+  flex: 1;
+  min-width: 0;
+}
+
+.remarks-table-wrap .remarks-cell-measure {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+.remarks-cell-control {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  height: 100%;
+  resize: none;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.remarks-column-header .remarks-cell-editor,
+.remarks-column-input {
+  font-weight: 700;
+}
+
+.remarks-preview-kicker {
+  margin-bottom: 0.25rem;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.remarks-preview-note h3 {
+  margin: 0 0 0.6rem;
+  color: var(--color-text-primary);
+  font-size: 1rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.remarks-preview-body {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.remarks-preview-body p {
+  margin: 0;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .remarks-note-header {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .remarks-note-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
 }
