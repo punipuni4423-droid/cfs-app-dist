@@ -56,6 +56,8 @@ artifacts\startup\server-*.log
 artifacts\startup\server-*.err.log
 ```
 
+`node.exe が認識されません` という例外が出る旧版は、新しいZIPを別のローカルフォルダへすべて展開して起動してください。新版のランチャーは `.cfs-runtime` のNode.jsを直接使います。PCへのNode.js追加インストールやJITデバッグの有効化は不要です。ローカル保存データがある場合は、下記の旧版移行手順で原本を保全してから入れ替えてください。
+
 ## 環境差異を受けにくくするための同梱内容
 
 この配布ZIPには、起動に必要なビルド済みCFS runtimeとWindows用Node.js runtimeを同梱しています。Git管理ZIPでは、App Update用にPortableGitも同梱します。
@@ -105,6 +107,12 @@ Git管理ZIPでは、利用者PCにGit for Windowsがインストールされて
 通常の共通ZIPはGit管理アプリそのものではなく、配布用パッケージです。アプリ更新はGit側の最新版から新しいZIPを作成し、展開後に実起動確認してから配布してください。
 
 Git管理ZIPでは、Project Selection画面のApp Updateから更新確認できます。`Git was not found` が出る場合は、古いZIPまたはPortableGitなしのZIPを起動している可能性があります。最新版のGit管理ZIPを使い、ショートカットを作り直してください。
+
+新版は、空白や日本語を含む展開先でも更新ワーカーへフォルダ名を正しく渡します。旧版で更新開始直後の進捗が動かない場合は、`artifacts/self-update/status.json` と `update-*.log` を配布担当者へ渡してください。画面を閉じても更新が続いている場合があるため、実行中か不明なまま上書き展開や再更新をしないでください。旧版の更新機能自体が開始できない場合は、新しいZIPからの起動を使います。
+
+更新がある場合の `Update Available` / `Rebuild Required` は琥珀色で表示します。更新画面では、開始待ちや進捗率が変わらない間も経過時間を表示します。進捗率は最後にサーバーで確認できた値です。残り時間は「完了までの目安」として幅を持たせ、開始未確認や通信断では「算出待ち」「通信回復待ち」と表示します。PCや回線によって所要時間が変わるため、目安を過ぎても自動で更新を中断・再実行しません。
+
+開始確認が60秒以上ない場合は診断案内が表示されます。認証が必要との案内が出たら `LAUNCH_CFS_APP.cmd` から画面を開き直してください。更新開始への応答が不明な場合も、同じ処理を重複して開始せず状態確認を続けます。
 
 旧版でローカル保存を使用している場合は、更新前に [ローカル保存の更新・旧版移行手順](Manual/LOCAL_DATA_UPDATE_GUIDE_JA.md) を確認してください。`.next/standalone/data` または `runtime/data` が保存先の旧版は、Updateボタンだけではデータを保護できません。新ZIPの `scripts/migrate-cfs-legacy-local-data.ps1` と `scripts/cfs-local-data-preservation.ps1` を同じ管理用フォルダへ取り出し、全writerを停止して原本を保全・移送してから公式updaterを実行します。共有Supabase案件はこのローカル移送の対象外です。
 

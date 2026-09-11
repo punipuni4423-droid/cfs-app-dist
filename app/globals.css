@@ -2376,8 +2376,8 @@ body.cfs-top-ui-collapsed .project-screen-shell > .collaboration-bar {
 
 .app-update-control-available,
 .app-update-control-build_required {
-  border-color: rgba(0, 128, 128, 0.34);
-  background: #f0fdfa;
+  border-color: #d97706;
+  background: #fffbeb;
 }
 
 .app-update-control-current {
@@ -2391,11 +2391,30 @@ body.cfs-top-ui-collapsed .project-screen-shell > .collaboration-bar {
   background: #fff7f7;
 }
 
-.app-update-button-available,
-.app-update-button-build_required {
-  border-color: rgba(0, 128, 128, 0.38);
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
+.app-update-control .app-update-button.app-update-button-available:not(.is-running),
+.app-update-control .app-update-button.app-update-button-build_required:not(.is-running) {
+  border-color: #b45309;
+  background: #fef3c7;
+  color: #78350f;
+}
+
+.app-update-control .app-update-button-available:not(:disabled):hover,
+.app-update-control .app-update-button-build_required:not(:disabled):hover {
+  border-color: #92400e;
+  background: #fde68a;
+}
+
+.app-update-control .app-update-button-available:focus-visible,
+.app-update-control .app-update-button-build_required:focus-visible {
+  outline: 3px solid #92400e;
+  outline-offset: 3px;
+}
+
+.app-update-control .app-update-button-available:disabled:not(.is-running),
+.app-update-control .app-update-button-build_required:disabled:not(.is-running) {
+  background: #fffbeb;
+  color: #78350f;
+  opacity: 0.75;
 }
 
 .app-update-button-current {
@@ -2417,7 +2436,7 @@ body.cfs-top-ui-collapsed .project-screen-shell > .collaboration-bar {
   color: var(--color-text-muted);
 }
 
-.app-update-button.is-running {
+.app-update-control .history-button.app-update-button.is-running {
   border-color: rgba(37, 99, 235, 0.36);
   background: #eff6ff;
   color: #1d4ed8;

@@ -8,6 +8,12 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+# Git for Windows emits UTF-8 paths. Windows PowerShell 5 otherwise decodes
+# native stdout with the inherited console code page (often CP932), corrupting
+# rev-parse --show-toplevel before that path is passed to the next Git command.
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = [Console]::OutputEncoding
+
 $appPath = (Resolve-Path -LiteralPath $AppDir).Path
 . (Join-Path $PSScriptRoot 'cfs-local-data-preservation.ps1')
 $null = Assert-CfsPlainPath -Path $appPath
@@ -44,7 +50,38 @@ function Write-UpdateStatus {
   if ($State -eq "completed" -or $State -eq "failed") {
     $payload["finishedAt"] = (Get-Date).ToUniversalTime().ToString("o")
   }
-  $payload | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statusPath -Encoding UTF8
+  # Publish a complete document without truncating a file the status API reads.
+  # Retry only this publication for transient sharing/lock violations: at most
+  # 20 attempts and 950 ms of waiting, never a retry of the update itself.
+  $temporaryStatusPath = $statusPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+  try {
+    [IO.File]::WriteAllText($temporaryStatusPath, ($payload | ConvertTo-Json -Depth 6), (New-Object Text.UTF8Encoding($false)))
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+      $replacing = [IO.File]::Exists($statusPath)
+      try {
+        if ($replacing) {
+          [IO.File]::Replace($temporaryStatusPath, $statusPath, [NullString]::Value)
+        } else {
+          [IO.File]::Move($temporaryStatusPath, $statusPath)
+        }
+        return
+      } catch {
+        $failure = $_.Exception
+        while ($failure.InnerException) { $failure = $failure.InnerException }
+        $nativeError = $failure.HResult -band 0xFFFF
+        # ReplaceFile can also report 1175 when it cannot remove the destination;
+        # Windows leaves both original names intact, so the same publish can retry.
+        $transient = ($nativeError -in @(32, 33, 1175)) -or (-not $replacing -and $nativeError -in @(80, 183))
+        if (-not $transient -or $attempt -eq 19) { throw }
+        Start-Sleep -Milliseconds 50
+      }
+    }
+  } finally {
+    # This invocation owns only its unique temporary file, never status.json.
+    if ([IO.File]::Exists($temporaryStatusPath)) {
+      try { [IO.File]::Delete($temporaryStatusPath) } catch { Write-Warning 'Could not remove a temporary update status file.' }
+    }
+  }
 }
 
 function Write-Log {
@@ -512,8 +549,13 @@ try {
   Write-UpdateStatus -State "completed" -Step "done" -Message "Update completed. Reload the browser." -Progress 100 -BackupPath $backupPath
   Write-Log "CFS self update completed."
 } catch {
-  Write-Log ("FAILED: " + $_.Exception.Message)
-  Write-UpdateStatus -State "failed" -Step "failed" -Message $_.Exception.Message -Progress 100 -BackupPath $backupPath
+  $updateFailureMessage = $_.Exception.Message
+  Write-Log ("FAILED: " + $updateFailureMessage)
+  try {
+    Write-UpdateStatus -State "failed" -Step "failed" -Message $updateFailureMessage -Progress 100 -BackupPath $backupPath
+  } catch {
+    Write-Log "Could not publish failed update status; continuing app recovery."
+  }
   # The listeners may already be stopped (install/build steps stop them). Bring
   # the previous app back up so the waiting browser page can reconnect and show
   # this failure instead of sitting on "reconnecting" forever.

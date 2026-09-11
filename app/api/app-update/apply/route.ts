@@ -5,15 +5,12 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { appDir, getAppUpdateStatus, selfUpdateStatusFile } from "../../../lib/appUpdateServer";
 import { isAllowedWriteRequest } from "../../../lib/requestGuard";
+import { buildUpdateLaunchCommand, windowsPowerShellExecutable } from "../../../lib/appUpdateLaunch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function psSingleQuoted(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
-}
-
-async function writeQueuedStatus(message: string): Promise<void> {
+async function writeQueuedStatus(message: string): Promise<string> {
   const now = new Date().toISOString();
   await mkdir(path.dirname(selfUpdateStatusFile), { recursive: true });
   await writeFile(
@@ -32,9 +29,10 @@ async function writeQueuedStatus(message: string): Promise<void> {
     )}\n`,
     "utf8",
   );
+  return now;
 }
 
-async function writeLaunchFailure(message: string): Promise<void> {
+async function writeLaunchFailure(message: string, startedAt: string): Promise<void> {
   const now = new Date().toISOString();
   await mkdir(path.dirname(selfUpdateStatusFile), { recursive: true });
   await writeFile(
@@ -45,6 +43,7 @@ async function writeLaunchFailure(message: string): Promise<void> {
         currentStep: "launch",
         progress: 100,
         message,
+        startedAt,
         updatedAt: now,
         finishedAt: now,
       },
@@ -85,32 +84,22 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const requestUrl = new URL(request.url);
   const port = requestUrl.port || process.env.PORT || "3014";
-  await writeQueuedStatus("Starting update process.");
+  const startedAt = await writeQueuedStatus("Starting update process.");
 
-  const updateArgs = [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    scriptPath,
-    "-AppDir",
+  const startCommand = buildUpdateLaunchCommand({
     appDir,
-    "-Port",
+    scriptPath,
+    statusFile: selfUpdateStatusFile,
     port,
-    "-HostName",
-    process.env.CFS_LOCALHOST_ONLY === "1" ? "127.0.0.1" : "0.0.0.0",
-  ];
-  const startCommand = [
-    "$ErrorActionPreference = 'Stop';",
-    `Start-Process -FilePath 'powershell.exe' -ArgumentList @(${updateArgs
-      .map(psSingleQuoted)
-      .join(", ")}) -WorkingDirectory ${psSingleQuoted(appDir)} -WindowStyle Hidden;`,
-  ].join(" ");
+    hostName: process.env.CFS_LOCALHOST_ONLY === "1" ? "127.0.0.1" : "0.0.0.0",
+    startedAt,
+  });
 
   const child = spawn(
-    "powershell.exe",
+    windowsPowerShellExecutable(),
     [
       "-NoProfile",
+      "-NonInteractive",
       "-ExecutionPolicy",
       "Bypass",
       "-Command",
@@ -123,11 +112,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     },
   );
   child.once("error", (error) => {
-    void writeLaunchFailure(error instanceof Error ? error.message : "Failed to launch update process.");
+    void writeLaunchFailure(error instanceof Error ? error.message : "Failed to launch update process.", startedAt);
   });
   child.once("exit", (code) => {
     if (code && code !== 0) {
-      void writeLaunchFailure(`Update launcher exited with code ${code}.`);
+      void writeLaunchFailure(`Update launcher exited with code ${code}.`, startedAt);
     }
   });
   child.unref();

@@ -36,9 +36,14 @@ try {
   # healthy server as "did not become ready".
   $api = Invoke-WebRequest -UseBasicParsing -Headers $accessHeaders -TimeoutSec 5 "$baseUrl/api/sharing/config"
   $page = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 "$baseUrl/"
-  $status = Invoke-RestMethod -UseBasicParsing -Headers $accessHeaders -TimeoutSec 30 "$baseUrl/api/app-update/status?fetchRemote=0"
+  $statusResponse = Invoke-WebRequest -UseBasicParsing -Headers $accessHeaders -TimeoutSec 30 "$baseUrl/api/app-update/status?fetchRemote=0"
+  # Windows PowerShell 5 decodes JSON without a charset as Latin-1. Read the
+  # original bytes as UTF-8 so Japanese installation paths compare correctly.
+  $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
+  $statusText = $utf8.GetString($statusResponse.RawContentStream.ToArray()).TrimStart([char]0xFEFF)
+  $status = $statusText | ConvertFrom-Json
 
-  if ($api.StatusCode -ne 200 -or $page.StatusCode -ne 200 -or $page.Content -notmatch "<html") {
+  if ($api.StatusCode -ne 200 -or $page.StatusCode -ne 200 -or $statusResponse.StatusCode -ne 200 -or $page.Content -notmatch "<html") {
     exit 1
   }
 

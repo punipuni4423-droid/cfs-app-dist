@@ -1,44 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-type AppUpdateState =
-  | "current"
-  | "available"
-  | "build_required"
-  | "blocked"
-  | "not_configured"
-  | "checking_failed";
-
-interface AppUpdateStatus {
-  enabled: boolean;
-  state: AppUpdateState;
-  message: string;
-  branch?: string;
-  upstream?: string;
-  localSha?: string;
-  remoteSha?: string;
-  buildSha?: string;
-  buildBuiltAt?: string;
-  buildDistDir?: string;
-  buildInfoPath?: string;
-  buildStale?: boolean;
-  ahead: number;
-  behind: number;
-  dirty: boolean;
-  checkedAt: string;
-  appDir?: string;
-  gitPath?: string;
-  lastRun?: {
-    state?: string;
-    currentStep?: string;
-    progress?: number;
-    message?: string;
-    updatedAt?: string;
-  };
-}
+import { isAppUpdateStatus, remainingUpdateEstimate, UPDATE_STEP_SECONDS, type AppUpdateStatus } from "../lib/appUpdateProgress";
 
 const UPDATE_SESSION_KEY = "cfs-self-update-active";
+const UPDATE_STARTED_KEY = "cfs-self-update-started-at";
+const START_DIAGNOSTIC_MS = 60_000;
+const STATUS_TIMEOUT_MS = 20_000;
 // How long the page may fail to reach the server mid-update before we surface
 // recovery guidance. Dependency install + rebuild on a fresh package can
 // legitimately take 10+ minutes.
@@ -50,13 +18,13 @@ const STEP_LABELS: Record<string, string> = {
   "git-check": "Checking Git repository",
   "git-fetch": "Fetching update",
   "git-pull": "Applying files",
+  "backup-data": "Stopping app / backing up data",
   "npm-install": "Installing dependencies",
   build: "Building app",
   restart: "Restarting app",
   done: "Completed",
   failed: "Failed",
   launch: "Launching updater",
-  "offline-install-build": "Installing / building",
 };
 
 const STEP_PROGRESS: Record<string, number> = {
@@ -65,6 +33,7 @@ const STEP_PROGRESS: Record<string, number> = {
   "git-check": 10,
   "git-fetch": 25,
   "git-pull": 40,
+  "backup-data": 50,
   "npm-install": 58,
   build: 78,
   restart: 94,
@@ -73,42 +42,7 @@ const STEP_PROGRESS: Record<string, number> = {
   launch: 2,
 };
 
-// Upper bound of each step's progress range (the next step's base value).
-const STEP_CEILING: Record<string, number> = {
-  queued: 5,
-  start: 10,
-  "git-check": 25,
-  "git-fetch": 40,
-  "git-pull": 58,
-  "npm-install": 78,
-  build: 94,
-  restart: 99,
-  launch: 5,
-  "offline-install-build": 94,
-};
-
-// Typical step durations in seconds, used to animate progress inside a step so
-// the bar keeps moving during the long offline install/build phases. Actual
-// durations from the previous update on this machine override these defaults.
-const STEP_EXPECTED_SECONDS: Record<string, number> = {
-  queued: 3,
-  start: 3,
-  "git-check": 5,
-  "git-fetch": 10,
-  "git-pull": 8,
-  "npm-install": 180,
-  build: 200,
-  restart: 20,
-  launch: 3,
-};
-
 const STEP_DURATIONS_KEY = "cfs-update-step-seconds-v1";
-
-// Synthetic step shown while the server is unreachable mid-update. The server
-// only goes offline from the install step onward, so when the connection drops
-// with an earlier (or unknown) last step, the truthful display is "somewhere
-// in install/build", not the stale pre-offline step.
-const OFFLINE_STEP = "offline-install-build";
 
 function loadLearnedDurations(): Record<string, number> {
   try {
@@ -116,7 +50,7 @@ function loadLearnedDurations(): Record<string, number> {
     const result: Record<string, number> = {};
     for (const [step, value] of Object.entries(parsed)) {
       const seconds = Number(value);
-      if (Number.isFinite(seconds) && seconds > 0 && seconds < 3600) result[step] = seconds;
+      if (UPDATE_STEP_SECONDS[step] !== undefined && Number.isFinite(seconds) && seconds >= 1 && seconds <= 1800) result[step] = seconds;
     }
     return result;
   } catch {
@@ -125,7 +59,7 @@ function loadLearnedDurations(): Record<string, number> {
 }
 
 function saveLearnedDuration(step: string, seconds: number): void {
-  if (!Number.isFinite(seconds) || seconds <= 0 || seconds >= 3600) return;
+  if (!Number.isFinite(seconds) || seconds < 1 || seconds > 1800) return;
   try {
     const current = loadLearnedDurations();
     current[step] = Math.round(seconds);
@@ -133,14 +67,6 @@ function saveLearnedDuration(step: string, seconds: number): void {
   } catch {
     // Progress estimation is best-effort; storage failures are ignorable.
   }
-}
-
-function expectedStepSeconds(step: string): number {
-  if (step === OFFLINE_STEP) {
-    return expectedStepSeconds("npm-install") + expectedStepSeconds("build");
-  }
-  const learned = loadLearnedDurations()[step];
-  return learned ?? STEP_EXPECTED_SECONDS[step] ?? 30;
 }
 
 function formatElapsed(totalSeconds: number): string {
@@ -212,7 +138,7 @@ function runStepLabel(status: AppUpdateStatus | null, updateSessionActive: boole
   if (status?.state === "checking_failed" && updateSessionActive) {
     // The server is intentionally offline during install/build/restart. Show
     // the last known real step instead of pretending we are at the end.
-    const base = step ? STEP_LABELS[step] ?? step : "Restarting";
+    const base = step ? STEP_LABELS[step] ?? step : "更新状態の確認待ち";
     return `${base} (reconnecting)`;
   }
   if (!step) return updateSessionActive ? "Starting update" : "Checking update";
@@ -224,7 +150,6 @@ function runProgress(status: AppUpdateStatus | null, updateSessionActive: boolea
   if (typeof progress === "number" && Number.isFinite(progress)) return boundedProgress(progress);
   const step = status?.lastRun?.currentStep;
   if (step && STEP_PROGRESS[step] !== undefined) return STEP_PROGRESS[step];
-  if (status?.state === "checking_failed" && updateSessionActive) return 96;
   return updateSessionActive ? 2 : 0;
 }
 
@@ -236,7 +161,7 @@ function overlayTitle(status: AppUpdateStatus | null): string {
 
 function overlayMessage(status: AppUpdateStatus | null, updateSessionActive: boolean): string {
   if (status?.state === "checking_failed" && updateSessionActive) {
-    return "The server is offline while the update installs dependencies and rebuilds. This can take 5-15 minutes; the page reconnects and reloads automatically.";
+    return status.message || "更新状態を確認できません。最後に確認できた進捗を表示しています。";
   }
   if (status?.lastRun?.message) return status.lastRun.message;
   return "Please do not edit, import, export, or save while the update is running.";
@@ -254,6 +179,9 @@ export default function AppUpdateControl() {
   const updateSessionActiveRef = useRef(false);
   const disconnectedSinceRef = useRef<number | null>(null);
   const stepTimingRef = useRef<{ step: string | null; startedAt: number }>({ step: null, startedAt: Date.now() });
+  const sessionStartedAtRef = useRef(Date.now());
+  const observedDurationsRef = useRef<Record<string, number>>({});
+  const timingReliableRef = useRef(true);
 
   const title = useMemo(() => {
     if (updateSessionActive || applyStarted) return "Update is running. The app will reload automatically.";
@@ -279,27 +207,23 @@ export default function AppUpdateControl() {
   const overlayVisible = updateSessionActive || status?.lastRun?.state === "running";
   const stepLabel = runStepLabel(status, updateSessionActive);
 
-  // Animate progress inside long steps (install/build run with the server
-  // offline, so the server-side number cannot move). The bar approaches the
-  // step ceiling based on elapsed vs. the typical duration, and the typical
-  // duration is learned from this machine's previous update.
+  // Percentages are the last server checkpoint, never elapsed-time animation.
+  // Time estimates are labelled separately and may be unavailable.
   void progressTick;
-  const baseProgress = runProgress(status, updateSessionActive);
+  const progress = runProgress(status, updateSessionActive);
   const runState = status?.lastRun?.state;
-  const animatedStep = stepTimingRef.current.step;
-  let progress = baseProgress;
-  let elapsedText: string | null = null;
-  if (overlayVisible && animatedStep && runState !== "completed" && runState !== "failed") {
-    const elapsedSeconds = (Date.now() - stepTimingRef.current.startedAt) / 1000;
-    const expectedSeconds = expectedStepSeconds(animatedStep);
-    const ceiling = STEP_CEILING[animatedStep] ?? Math.min(baseProgress + 5, 99);
-    const animated = baseProgress + (ceiling - baseProgress) * (1 - Math.exp(-(elapsedSeconds / expectedSeconds) * 1.6));
-    progress = boundedProgress(Math.max(baseProgress, Math.min(animated, ceiling - 1)));
-    elapsedText = `Elapsed ${formatElapsed(elapsedSeconds)} / typical ~${formatElapsed(expectedSeconds)}`;
-  }
+  const terminal = runState === "completed" || runState === "failed";
+  const elapsedSeconds = Math.max(0, (Date.now() - sessionStartedAtRef.current) / 1000);
+  const elapsedText = `経過時間: ${formatElapsed(elapsedSeconds)}`;
+  const currentStep = status?.lastRun?.currentStep;
+  const awaitingStart = !currentStep || ["queued", "launch", "start"].includes(currentStep);
+  const estimateText = remainingUpdateEstimate(currentStep, Math.max(0, (Date.now() - stepTimingRef.current.startedAt) / 1000), loadLearnedDurations(), status?.state !== "checking_failed", terminal);
+  const startDiagnostic = !terminal && awaitingStart && elapsedSeconds * 1000 >= START_DIAGNOSTIC_MS;
 
   useEffect(() => {
     const active = window.sessionStorage.getItem(UPDATE_SESSION_KEY) === "1";
+    const savedStart = Number(window.sessionStorage.getItem(UPDATE_STARTED_KEY));
+    if (active && savedStart > 0 && savedStart <= Date.now()) sessionStartedAtRef.current = savedStart;
     setUpdateSessionActive(active);
     updateSessionActiveRef.current = active;
   }, []);
@@ -312,49 +236,51 @@ export default function AppUpdateControl() {
     if (checkingRef.current) return statusRef.current;
     checkingRef.current = true;
     if (!options.quiet) setBusy(true);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), STATUS_TIMEOUT_MS);
     try {
       const query = options.fetchRemote === true ? "?fetchRemote=1" : "?fetchRemote=0";
-      const response = await fetch(`/api/app-update/status${query}`, { cache: "no-store" });
-      const payload = (await response.json()) as AppUpdateStatus;
+      const response = await fetch(`/api/app-update/status${query}`, { cache: "no-store", signal: controller.signal });
+      if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? "access-required" : "status-unavailable");
+      const payload: unknown = await response.json();
+      if (!isAppUpdateStatus(payload)) throw new Error("invalid-status");
+      const reportedStart = Date.parse(payload.lastRun?.startedAt ?? "");
+      if (updateSessionActiveRef.current && payload.lastRun
+        && ["running", "completed", "failed"].includes(payload.lastRun.state ?? "")
+        && (!Number.isFinite(reportedStart) || reportedStart < sessionStartedAtRef.current)) {
+        throw new Error("previous-run");
+      }
       disconnectedSinceRef.current = null;
       setStalled(false);
+      if (!updateSessionActiveRef.current && payload.lastRun?.state === "running" && Number.isFinite(reportedStart) && reportedStart <= Date.now()) {
+        sessionStartedAtRef.current = reportedStart;
+        window.sessionStorage.setItem(UPDATE_STARTED_KEY, String(reportedStart));
+      }
       statusRef.current = payload;
       setStatus(payload);
       return payload;
-    } catch {
+    } catch (error) {
+      timingReliableRef.current = false;
       if (updateSessionActiveRef.current && disconnectedSinceRef.current === null) {
         disconnectedSinceRef.current = Date.now();
       }
       const failed: AppUpdateStatus = {
         enabled: true,
         state: "checking_failed",
-        message: updateSessionActiveRef.current
-          ? "Waiting for the app to restart."
-          : "Could not contact the update API.",
+        message: error instanceof Error && error.message === "access-required"
+          ? "更新状態の確認に認証が必要です。LAUNCH_CFS_APP.cmd から画面を開き直してください。更新の再実行はしないでください。"
+          : error instanceof Error && error.message === "previous-run"
+            ? "今回の更新処理の開始をまだ確認できません。前回の更新結果で完了とは判断せず、状態確認を続けます。"
+          : updateSessionActiveRef.current
+            ? "通信回復待ちです。最後に確認できた進捗を表示しています。更新処理が始まったか・どの段階かはまだ確認できません。"
+            : "Could not contact the update API.",
         ahead: 0,
         behind: 0,
         dirty: false,
         checkedAt: new Date().toISOString(),
         appDir: statusRef.current?.appDir,
         gitPath: statusRef.current?.gitPath,
-        // Keep the last progress the server reported before it went offline so
-        // the overlay shows the real step instead of a fake near-complete bar.
-        // The server only goes offline from the install step onward, so when
-        // the last known step is earlier (the 2s poll can miss the quick
-        // pull->install transition), upgrade the display to the offline
-        // install/build phase instead of showing a stale early step.
-        lastRun: (() => {
-          const carried = statusRef.current?.lastRun;
-          if (!updateSessionActiveRef.current) return carried;
-          if (carried && (carried.progress ?? 0) >= STEP_PROGRESS["npm-install"]) return carried;
-          return {
-            state: "running",
-            currentStep: OFFLINE_STEP,
-            progress: STEP_PROGRESS["npm-install"],
-            message: carried?.message,
-            updatedAt: carried?.updatedAt,
-          };
-        })(),
+        lastRun: statusRef.current?.lastRun,
       };
       if (updateSessionActiveRef.current && disconnectedSinceRef.current !== null) {
         setStalled(Date.now() - disconnectedSinceRef.current > STALL_THRESHOLD_MS);
@@ -363,6 +289,7 @@ export default function AppUpdateControl() {
       setStatus(failed);
       return failed;
     } finally {
+      window.clearTimeout(timeoutId);
       checkingRef.current = false;
       if (!options.quiet) setBusy(false);
     }
@@ -404,24 +331,30 @@ export default function AppUpdateControl() {
     const step = status?.lastRun?.currentStep ?? null;
     const previous = stepTimingRef.current;
     if (step === previous.step) return;
-    if (previous.step && STEP_EXPECTED_SECONDS[previous.step] !== undefined) {
-      saveLearnedDuration(previous.step, (Date.now() - previous.startedAt) / 1000);
+    if (previous.step && UPDATE_STEP_SECONDS[previous.step] !== undefined && timingReliableRef.current && status?.lastRun?.state !== "failed") {
+      observedDurationsRef.current[previous.step] = (Date.now() - previous.startedAt) / 1000;
     }
     stepTimingRef.current = { step, startedAt: Date.now() };
-  }, [status?.lastRun?.currentStep]);
+    timingReliableRef.current = status?.state !== "checking_failed";
+    if (status?.lastRun?.state === "completed") {
+      for (const [finishedStep, seconds] of Object.entries(observedDurationsRef.current)) saveLearnedDuration(finishedStep, seconds);
+      observedDurationsRef.current = {};
+    }
+    if (status?.lastRun?.state === "failed") observedDurationsRef.current = {};
+  }, [status?.lastRun?.currentStep, status?.lastRun?.state, status?.state]);
 
-  // 1s ticker so the animated progress and elapsed time keep moving while the
-  // overlay is up (including the offline install/build window).
+  // Update elapsed time even when no step/percentage has been received.
   useEffect(() => {
-    if (!overlayVisible) return;
+    if (!overlayVisible || terminal) return;
     const tickId = window.setInterval(() => setProgressTick((value) => value + 1), 1000);
     return () => window.clearInterval(tickId);
-  }, [overlayVisible]);
+  }, [overlayVisible, terminal]);
 
   useEffect(() => {
     if (!updateSessionActive || status?.lastRun?.state !== "completed") return;
     const timeoutId = window.setTimeout(() => {
       window.sessionStorage.removeItem(UPDATE_SESSION_KEY);
+      window.sessionStorage.removeItem(UPDATE_STARTED_KEY);
       window.location.reload();
     }, 1600);
     return () => window.clearTimeout(timeoutId);
@@ -430,7 +363,7 @@ export default function AppUpdateControl() {
   async function handleClick(): Promise<void> {
     if (busy || updateSessionActive || applyStarted || status?.lastRun?.state === "running") return;
     const latest = await refreshStatus({ fetchRemote: true });
-    if (!latest || (latest.state !== "available" && latest.state !== "build_required")) {
+    if (!latest || latest.lastRun?.state === "running" || (latest.state !== "available" && latest.state !== "build_required")) {
       return;
     }
     const confirmLines =
@@ -449,10 +382,16 @@ export default function AppUpdateControl() {
     const ok = window.confirm(confirmLines.join("\n"));
     if (!ok) return;
     const startedAt = new Date().toISOString();
+    sessionStartedAtRef.current = Date.now();
+    observedDurationsRef.current = {};
+    timingReliableRef.current = true;
+    window.sessionStorage.setItem(UPDATE_STARTED_KEY, String(sessionStartedAtRef.current));
     window.sessionStorage.setItem(UPDATE_SESSION_KEY, "1");
+    updateSessionActiveRef.current = true;
     setUpdateSessionActive(true);
     setApplyStarted(true);
-    setStatus((current) => ({
+    const current = statusRef.current;
+    const queued: AppUpdateStatus = {
       enabled: current?.enabled ?? true,
       state: current?.state ?? "available",
       message: "Update is running.",
@@ -472,8 +411,11 @@ export default function AppUpdateControl() {
         progress: 1,
         message: "Starting update process.",
         updatedAt: startedAt,
+        startedAt,
       },
-    }));
+    };
+    statusRef.current = queued;
+    setStatus(queued);
     setBusy(true);
     try {
       const response = await fetch("/api/app-update/apply", {
@@ -482,8 +424,11 @@ export default function AppUpdateControl() {
         body: JSON.stringify({ confirm: true }),
       });
       if (!response.ok) {
+        if (response.status >= 500) throw new Error("dispatch-unconfirmed");
         const payload = (await response.json().catch(() => null)) as { error?: string } | null;
         window.sessionStorage.removeItem(UPDATE_SESSION_KEY);
+        window.sessionStorage.removeItem(UPDATE_STARTED_KEY);
+        updateSessionActiveRef.current = false;
         setUpdateSessionActive(false);
         setApplyStarted(false);
         window.alert(payload?.error ?? "Update could not be started.");
@@ -492,10 +437,9 @@ export default function AppUpdateControl() {
       }
       await refreshStatus({ quiet: true });
     } catch {
-      window.sessionStorage.removeItem(UPDATE_SESSION_KEY);
-      setUpdateSessionActive(false);
-      setApplyStarted(false);
-      window.alert("Update could not be started.");
+      // The POST may have reached the server. Keep the session guarded and
+      // only poll GET status; clearing it would permit a duplicate worker.
+      window.alert("更新開始の応答を確認できません。状態確認を続けます。更新ボタンを再実行しないでください。");
       await refreshStatus();
     } finally {
       setBusy(false);
@@ -533,7 +477,11 @@ export default function AppUpdateControl() {
               <span>{stepLabel}</span>
               <strong>{progress}%</strong>
             </div>
-            {elapsedText ? <p className="app-update-progress-elapsed">{elapsedText}</p> : null}
+            <p className="app-update-progress-elapsed">{elapsedText}</p>
+            {estimateText ? <p className="app-update-progress-elapsed">{estimateText}</p> : null}
+            {!terminal && awaitingStart && status?.state !== "checking_failed" ? (
+              <p className="app-update-overlay-note">開始確認待ち: 更新ワーカーが処理を開始したという応答を待っています。</p>
+            ) : null}
             <div
               className="app-update-progress-track"
               role="progressbar"
@@ -547,11 +495,10 @@ export default function AppUpdateControl() {
             {status?.lastRun?.state === "completed" ? (
               <p className="app-update-overlay-note">Reloading automatically.</p>
             ) : null}
-            {stalled && status?.state === "checking_failed" ? (
+            {startDiagnostic || (stalled && status?.state === "checking_failed") ? (
               <p className="app-update-overlay-note">
-                The update is taking longer than expected. Check the newest log in
-                artifacts\self-update, or close this page and start CFS again with
-                LAUNCH_CFS_APP.cmd.
+                状態確認が長引いています。artifacts\self-update\status.json と最新の update-*.log を配布担当者へ渡してください。
+                更新中か確認できるまで再更新や上書き展開はしないでください。この画面は状態確認だけを続けます。
               </p>
             ) : null}
             {status?.lastRun?.state === "failed" ? (
@@ -561,6 +508,8 @@ export default function AppUpdateControl() {
                   className="btn btn-secondary"
                   onClick={() => {
                     window.sessionStorage.removeItem(UPDATE_SESSION_KEY);
+                    window.sessionStorage.removeItem(UPDATE_STARTED_KEY);
+                    updateSessionActiveRef.current = false;
                     setUpdateSessionActive(false);
                     setApplyStarted(false);
                   }}

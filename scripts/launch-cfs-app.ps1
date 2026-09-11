@@ -127,12 +127,36 @@ function Get-ReadyUrlFromStatus {
   return "http://localhost:$Port/"
 }
 
+function Resolve-CfsLauncherNode {
+  # The batch worker changes its own PATH. Those changes never reach this
+  # WinForms parent, so resolve the bundled executable here as well.
+  $candidates = @()
+  $runtimeRoot = Join-Path $appRoot '.cfs-runtime'
+  if (Test-Path -LiteralPath $runtimeRoot) {
+    $candidates += @(Get-ChildItem -LiteralPath $runtimeRoot -Filter 'node.exe' -File -Recurse -ErrorAction SilentlyContinue |
+      ForEach-Object { $_.FullName })
+  }
+  $pathNode = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue
+  if ($pathNode) { $candidates += $pathNode.Source }
+  foreach ($candidate in $candidates) {
+    try {
+      $version = & $candidate --version 2>$null
+      if ($LASTEXITCODE -eq 0 -and $version -match '^v(\d+)\.' -and [int]$Matches[1] -ge 20) {
+        return $candidate
+      }
+    } catch { }
+  }
+  throw 'CFS の Node.js が見つからないか起動できません。ZIP をすべて展開し、.cfs-runtime フォルダを含めて起動してください。'
+}
+
 function Open-CfsBrowser {
   param([string]$Url)
+  $nodeExecutable = Resolve-CfsLauncherNode
   $previousAuthAppDir = $env:CFS_APP_DIR
   try {
     $env:CFS_APP_DIR = $appRoot
-    $Url = & node.exe (Join-Path $appRoot 'scripts\cfs-access.mjs') $Url
+    # Never put the grant URL or CLI output in the launcher status/log.
+    $Url = & $nodeExecutable (Join-Path $appRoot 'scripts\cfs-access.mjs') $Url 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $Url) { throw 'CFS authentication link could not be created.' }
   } finally {
     if ($null -eq $previousAuthAppDir) { Remove-Item Env:CFS_APP_DIR -ErrorAction SilentlyContinue } else { $env:CFS_APP_DIR = $previousAuthAppDir }
@@ -258,6 +282,7 @@ $form.Controls.AddRange(@($titleLabel, $detailLabel, $progressBar, $percentLabel
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 500
 $timer.Add_Tick({
+  try {
   $status = Read-LauncherStatus
   $progress = [Math]::Min([Math]::Max((Get-ProgressFromStatus $status), 0), 100)
   $detailLabel.Text = $status
@@ -285,6 +310,21 @@ $timer.Add_Tick({
     [System.Windows.Forms.MessageBox]::Show(
       "CFS could not be started.`r`n`r`n$detail`r`n`r`nCheck latest-status.txt and the newest start/server logs in:`r`n$($script:startupDir)",
       "CFS App",
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Error
+    ) | Out-Null
+    $form.Close()
+  }
+  } catch {
+    # Event-handler exceptions otherwise escape to the WinForms JIT dialog.
+    # Use a fixed message: exception text can contain the local access grant.
+    $timer.Stop()
+    $script:exitCode = 1
+    $failureMessage = 'CFS の画面を開けませんでした。ZIP をすべて展開し、.cfs-runtime フォルダがあることを確認してから再起動してください。解決しない場合は起動ログを配布担当者へ渡してください。'
+    Write-LauncherStatus $failureMessage
+    [System.Windows.Forms.MessageBox]::Show(
+      "$failureMessage`r`n`r`n$($script:startupDir)",
+      'CFS App',
       [System.Windows.Forms.MessageBoxButtons]::OK,
       [System.Windows.Forms.MessageBoxIcon]::Error
     ) | Out-Null

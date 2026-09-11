@@ -4,8 +4,8 @@ param(
   [string]$RemoteUrl,
   [string]$RuntimeSourceDirectory,
   # Repository the package .git is cloned from. Default is the app repo itself.
-  # For public distribution, pass the dist working copy (clean single-commit
-  # history) so the private cfs-app history never ships inside the ZIP.
+  # For public distribution, pass the dist working copy. Transfer only the
+  # selected branch history; never copy its physical object store.
   [string]$CloneSourceDirectory,
   [switch]$IncludeSharedDatabaseConfig,
   [switch]$SkipRuntimeBuild,
@@ -100,6 +100,52 @@ function New-ZipArchiveIncludingHidden {
   }
 }
 
+function Assert-PackageGitObjectsReachable {
+  param([Parameter(Mandatory = $true)][string]$Repository)
+  if (Test-Path -LiteralPath (Join-Path $Repository '.git\objects\info\alternates')) {
+    throw 'Package Git must not depend on an external object store.'
+  }
+  $reachableLines = @(& git -C $Repository rev-list --objects HEAD)
+  if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate reachable package Git objects.' }
+  $reachable = New-Object 'System.Collections.Generic.HashSet[string]'
+  foreach ($line in $reachableLines) { $null = $reachable.Add(([string]$line -split ' ', 2)[0]) }
+  $allObjects = @(& git -C $Repository cat-file --batch-all-objects '--batch-check=%(objectname)')
+  if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate all package Git objects.' }
+  foreach ($object in $allObjects) {
+    if (-not $reachable.Contains(([string]$object).Trim())) {
+      # Do not print object contents or private historical paths.
+      throw 'Package contains Git objects outside the selected branch history. Refusing to distribute.'
+    }
+  }
+  if ($reachable.Count -ne $allObjects.Count) { throw 'Package Git object count does not match reachable history.' }
+  & git -C $Repository fsck --full --no-reflogs --no-dangling | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'Package Git object integrity check failed.' }
+  return $reachable.Count
+}
+
+function Assert-ArchiveGitMetadata {
+  param([Parameter(Mandatory = $true)]$Archive, [Parameter(Mandatory = $true)][string]$Repository)
+  $gitRoot = Join-Path $Repository '.git'
+  $files = @(Get-ChildItem -LiteralPath $gitRoot -Force -File -Recurse)
+  $expected = @{}
+  foreach ($file in $files) {
+    $relative = '.git/' + $file.FullName.Substring($gitRoot.Length).TrimStart([char[]]@('\', '/')).Replace('\', '/')
+    $expected[$relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+  }
+  $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+  foreach ($entry in @($Archive.Entries | Where-Object { $_.FullName.StartsWith('.git/', [StringComparison]::OrdinalIgnoreCase) })) {
+    if (-not $expected.ContainsKey($entry.FullName) -or -not $seen.Add($entry.FullName)) {
+      throw 'Archive Git metadata contains unexpected or duplicate files.'
+    }
+    $stream = $entry.Open()
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try { $hash = [BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-', '') }
+    finally { $stream.Dispose(); $hasher.Dispose() }
+    if ($hash -ne $expected[$entry.FullName]) { throw 'Archive Git metadata does not match the audited package.' }
+  }
+  if ($seen.Count -ne $expected.Count) { throw 'Archive is missing audited Git metadata.' }
+}
+
 if (-not $CloneSourceDirectory) {
   $CloneSourceDirectory = $appRoot
 }
@@ -173,7 +219,11 @@ if ($IncludeSharedDatabaseConfig -and -not (Test-Path -LiteralPath (Join-Path $r
   throw "Runtime source is missing public shared database config."
 }
 
-& git clone --local --no-hardlinks $cloneSource $packageRoot | Out-Host
+$sourceBranch = ([string](& git -C $cloneSource branch --show-current)).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $sourceBranch) { throw 'Clone source must have a selected distribution branch.' }
+# --local also copies unreachable objects from old/replaced histories. A
+# transport clone negotiates only objects reachable from the selected ref.
+& git clone --no-local --single-branch --no-tags --branch $sourceBranch -- $cloneSource $packageRoot | Out-Host
 if ($LASTEXITCODE -ne 0) {
   throw "Git clone failed."
 }
@@ -233,6 +283,7 @@ if (-not [string]::IsNullOrWhiteSpace($trackedStatus)) {
   throw "Tracked package tree is dirty:`n$trackedStatus"
 }
 $packageGitCommit = (& git -C $packageRoot rev-parse HEAD).Trim()
+$gitReachableObjectCount = Assert-PackageGitObjectsReachable -Repository $packageRoot
 
 # The runtime was built in the app repo, so its build info carries the app
 # repo SHA. The package tracks the distribution repo, whose SHAs differ;
@@ -260,6 +311,7 @@ $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $packa
 New-ZipArchiveIncludingHidden -SourceDirectory $packageRoot -ArchivePath $archivePath
 $zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
 try {
+  Assert-ArchiveGitMetadata -Archive $zip -Repository $packageRoot
   $hasGitHead = [bool]($zip.Entries | Where-Object { $_.FullName -eq ".git/HEAD" } | Select-Object -First 1)
   # Recipients extract with Explorer under MAX_PATH (260 chars) rules. Keep
   # ample headroom for the destination folder prefix; fail the build instead
@@ -290,5 +342,7 @@ if (-not $hasGitHead) {
   IncludesBundledGit = -not [bool]$ExcludeBundledGit
   TrackedStatusClean = [string]::IsNullOrWhiteSpace($trackedStatus)
   ZipContainsGitHead = $hasGitHead
+  GitReachableObjectCount = $gitReachableObjectCount
+  ZipGitMetadataVerified = $true
   ArchiveSizeMB = [Math]::Round((Get-Item -LiteralPath $archivePath).Length / 1MB, 1)
 } | ConvertTo-Json
