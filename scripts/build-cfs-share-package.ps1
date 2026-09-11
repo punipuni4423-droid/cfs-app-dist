@@ -103,6 +103,7 @@ if (-not (Test-Path -LiteralPath $standaloneServer)) {
 
 $directories = @("app", "public")
 $shareScripts = @(
+  "cfs-access.mjs",
   "auth-redirect-helper.mjs",
   "clean-reinstall-cfs-app.ps1",
   "ensure-git-runtime.ps1",
@@ -111,6 +112,8 @@ $shareScripts = @(
   "start-cfs-background-server.ps1",
   "test-cfs-instance.ps1",
   "update-cfs-app.ps1",
+  "cfs-local-data-preservation.ps1",
+  "migrate-cfs-legacy-local-data.ps1",
   "write-cfs-build-info.mjs"
 )
 $files = @(
@@ -276,6 +279,7 @@ if ($IncludeSharedDatabaseConfig) {
 
 $manualDirectory = Join-Path $packageRoot "Manual"
 New-Item -ItemType Directory -Force -Path $manualDirectory | Out-Null
+Copy-Item -LiteralPath (Join-Path $appRoot "docs\LOCAL_DATA_UPDATE_GUIDE_JA.md") -Destination (Join-Path $manualDirectory "LOCAL_DATA_UPDATE_GUIDE_JA.md") -Force
 $manualSource = Join-Path $appRoot "docs\CFS_USAGE_GUIDE_COMMON_20260807.html"
 Copy-Item -LiteralPath $manualSource -Destination (Join-Path $manualDirectory "CFS_USAGE_GUIDE_COMMON_20260807.html") -Force
 Copy-Item -LiteralPath $manualSource -Destination (Join-Path $manualDirectory "index.html") -Force

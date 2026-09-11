@@ -25,15 +25,17 @@
  *
  * データ保護: installLocalEditingMocks で /api/projects を全モック。
  */
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./support/safe-test";
 import { createDefaultLocations, createNewRoomType } from "../../app/lib/constants";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
+import { readNativeDraftProject } from './support/native-project-drafts';
 
 type LocalEditingMockState = Awaited<ReturnType<typeof installLocalEditingMocks>>;
 
 let mockState: LocalEditingMockState;
 
 test.beforeEach(async ({ page }) => {
+  await page.context().route("**/api/**", (route) => route.fulfill({ json: {} }));
   mockState = await installLocalEditingMocks(page);
 });
 
@@ -41,6 +43,7 @@ test.setTimeout(180_000);
 
 interface MakeProjectOptions {
   zn1Extra?: Record<string, unknown>;
+  zn2Extra?: Record<string, unknown>;
   scenes?: Array<Record<string, unknown>>;
 }
 
@@ -106,7 +109,7 @@ function makeProject(projectId: string, projectName: string, options: MakeProjec
     scenes: options.scenes ?? [],
     deviceAssignments: [
       makeAssignment("zn1", "Zn1", "1", options.zn1Extra ?? {}),
-      makeAssignment("zn2", "Zn2", "2"),
+      makeAssignment("zn2", "Zn2", "2", options.zn2Extra ?? {}),
       makeAssignment("zn3", "Zn3", "Reserved"),
     ],
   };
@@ -129,6 +132,13 @@ async function openRoomTypeTab(page: Page, projectName: string, tabPattern: RegE
   const back = page.getByRole("button", { name: /Back to Project List/i }).first();
   if (await back.isVisible().catch(() => false)) {
     await back.click();
+    // T114 protects normalized drafts on project exit. Preserve this guard
+    // and explicitly save the synthetic draft before the next project check.
+    const finish = page.getByRole("dialog", { name: "Finish editing with draft changes?" });
+    if (await finish.isVisible()) {
+      await finish.getByRole("button", { name: "Save Current & Finish", exact: true }).click();
+      await expect(finish).toBeHidden();
+    }
   }
   const card = page.locator("button.screen-card").filter({ hasText: projectName }).first();
   await expect(card).toBeVisible({ timeout: 10000 });
@@ -157,15 +167,8 @@ function zoneRow(page: Page, zone: string) {
     .first();
 }
 
-function readDraftAssignments(page: Page): Promise<Array<Record<string, unknown>>> {
-  return page.evaluate(() => {
-    const raw = localStorage.getItem("cfs-project-drafts-v2");
-    if (!raw) return [];
-    const projects = JSON.parse(raw) as Array<{
-      roomTypes?: Array<{ deviceAssignments?: Array<Record<string, unknown>> }>;
-    }>;
-    return projects[0]?.roomTypes?.[0]?.deviceAssignments ?? [];
-  });
+async function readDraftAssignments(page: Page): Promise<Array<Record<string, unknown>>> {
+  return (await readNativeDraftProject(page))?.roomTypes?.[0]?.deviceAssignments as unknown as Array<Record<string, unknown>> ?? [];
 }
 
 async function draftZn1(page: Page): Promise<Record<string, unknown> | undefined> {
@@ -179,6 +182,95 @@ async function addZoneCircuit(page: Page, zone: string, value: string): Promise<
   await pendingInput.fill(value);
   await pendingInput.press("Enter");
 }
+
+test("T112 候補外入力を拒否し有効候補の編集と削除を維持", async ({ page }) => {
+  const project = makeProject("t112-input", "T112-INPUT", { zn1Extra: { additionalCircuitNumbers: ["3"] } });
+  project.circuits[3].dimmingType = "DALI";
+  mockState.projects = [project];
+  await page.goto("/");
+  await openDeviceAssign(page, "T112-INPUT");
+  const row = zoneRow(page, "Zn1");
+  const input = row.locator(".zone-extra-circuit .combobox-input").first();
+  for (const invalid of ["999", "4"]) {
+    await input.fill(invalid);
+    await expect(input).toHaveValue("3");
+  }
+  await row.locator(".btn-add-zone-circuit").click();
+  const pending = row.locator(".zone-extra-circuit .combobox-input").last();
+  for (const invalid of ["999", "4"]) {
+    await pending.fill(invalid);
+    await expect(pending).toHaveValue("");
+  }
+  await pending.fill("5");
+  await input.fill("6");
+  await expect.poll(async () => (await draftZn1(page))?.additionalCircuitNumbers).toEqual(["6", "5"]);
+  await row.locator('button[aria-label="Remove additional circuit"]').first().click();
+  await expect.poll(async () => (await draftZn1(page))?.additionalCircuitNumbers).toEqual(["5"]);
+  await page.screenshot({ path: test.info().outputPath("valid-candidates.png"), fullPage: true });
+});
+
+for (const source of ["direct", "csv"] as const) test(`T112 DALI変更は全zone確認・Cancel無変更・OK解除・対象なし無確認 ${source}`, async ({ page }) => {
+  const project = makeProject("t112-dali", "T112-DALI", {
+    zn1Extra: { additionalCircuitNumbers: ["3"], zoneDetail: "Combined" },
+    zn2Extra: { additionalCircuitNumbers: ["103", "5"] },
+  });
+  const other = makeProject("t112-other", "Other", { zn1Extra: { additionalCircuitNumbers: ["3"] } });
+  project.circuits.push(...other.circuits);
+  project.roomTypes.push({ ...other.roomTypes[0], name: "RT-B" });
+  mockState.projects = [project];
+  await page.goto("/");
+  await openRoomTypeTab(page, "T112-DALI", /^Circuit$/);
+  const dimming = page.getByRole("textbox", { name: "Detail", exact: true }).nth(2).locator("xpath=ancestor::tr").locator("select").first();
+  const messages: string[] = [];
+  let accept = false;
+  page.on("dialog", async (dialog) => {
+    if (dialog.message().includes("circuit rows were found")) { await dialog.dismiss(); return; }
+    messages.push(dialog.message()); if (accept) await dialog.accept(); else await dialog.dismiss();
+  });
+  const change = async () => {
+    if (source === "direct") await dimming.selectOption("DALI");
+    else {
+      if (accept) await page.evaluate(() => {
+        const original = File.prototype.arrayBuffer;
+        File.prototype.arrayBuffer = async function () {
+          File.prototype.arrayBuffer = original;
+          await new Promise<void>((resolve) => { (window as unknown as { releaseCsv: () => void }).releaseCsv = resolve; });
+          return original.call(this);
+        };
+      });
+      const csv = "Designer #,Internal #,Dimming Type,Fixture,Qty,Detail\n" + project.circuits.slice(0, 6).map((c) => `${c.designerNumber},${c.internalNumber},${c.designerNumber === "3" ? "DALI" : c.dimmingType},FX-A,1,${c.detail}`).join("\n");
+      await page.locator('input[type="file"][accept=".csv,text/csv"]').first().setInputFiles({ name: "circuits.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+      if (accept) {
+        await page.getByRole("tab", { name: /Device Assign/i }).first().click();
+        await zoneRow(page, "Zn2").locator(".zone-detail-edit textarea").fill("Edited during CSV read");
+        await page.getByRole("tab", { name: "Circuit", exact: true }).click();
+        await page.evaluate(() => (window as unknown as { releaseCsv: () => void }).releaseCsv());
+      }
+      await expect.poll(() => messages.length).toBe(accept ? 2 : 1);
+    }
+  };
+  await change();
+  expect(messages).toHaveLength(1);
+  expect(messages[0]).toMatch(/RT-A/);
+  expect(messages[0]).toMatch(/Zn1/);
+  expect(messages[0]).toMatch(/Zn2/);
+  expect(messages[0]).not.toMatch(/RT-B/);
+  await expect(dimming).toHaveValue("PWM");
+  accept = true;
+  await change();
+  await expect(dimming).toHaveValue("DALI");
+  await expect.poll(async () => (await readDraftAssignments(page)).find((a) => a.zoneAddress === "Zn2")?.additionalCircuitNumbers).toEqual(["5"]);
+  await expect.poll(async () => (await draftZn1(page))?.additionalCircuitNumbers).toBeUndefined();
+  expect((await draftZn1(page))?.zoneDetail).toBeUndefined();
+  expect((await readDraftAssignments(page)).find((a) => a.zoneAddress === "Zn2")?.additionalCircuitNumbers).toEqual(["5"]);
+  const otherExtras = (await readNativeDraftProject(page))?.roomTypes[1]?.deviceAssignments[0]?.additionalCircuitNumbers;
+  expect(otherExtras).toEqual(["3"]);
+  if (source === "csv") expect((await readDraftAssignments(page)).find((a) => a.zoneAddress === "Zn2")?.zoneDetail).toBe("Edited during CSV read");
+  const count = messages.length;
+  await page.getByRole("textbox", { name: "Detail", exact: true }).nth(3).locator("xpath=ancestor::tr").locator("select").first().selectOption("DALI");
+  expect(messages).toHaveLength(count);
+  await page.screenshot({ path: test.info().outputPath("dali-applied.png"), fullPage: true });
+});
 
 test.describe("T-59 同一 Zn への複数回路アサイン", () => {
   test("A. +ボタン追加・上限5回路・zoneDetail 初期化/編集・解除/Clear・トグル変換", async ({ page }) => {
@@ -353,18 +445,13 @@ test.describe("T-59 同一 Zn への複数回路アサイン", () => {
     await mergedRow.locator(".scene-level-input").fill("50");
     await expect
       .poll(async () => {
-        return page.evaluate(() => {
-          const raw = localStorage.getItem("cfs-project-drafts-v2");
-          if (!raw) return "no-draft";
-          const projects = JSON.parse(raw) as Array<{
-            roomTypes?: Array<{ scenes?: Array<{ id: string; settings: Array<{ circuitId: string; percentage: string }> }> }>;
-          }>;
-          const scene = projects[0]?.roomTypes?.[0]?.scenes?.find((s) => s.id === "zn-scene-s1");
-          if (!scene) return "no-scene";
-          const value = (circuitId: string) =>
-            scene.settings.find((setting) => setting.circuitId === circuitId)?.percentage ?? "";
-          return `${value("zn-scene-circuit-1")}/${value("zn-scene-circuit-3")}`;
-        });
+        const project = await readNativeDraftProject(page, 'zn-scene');
+        if (!project) return "no-draft";
+        const scene = project.roomTypes?.[0]?.scenes?.find((s) => s.id === "zn-scene-s1");
+        if (!scene) return "no-scene";
+        const value = (circuitId: string) =>
+          scene.settings.find((setting) => setting.circuitId === circuitId)?.percentage ?? "";
+        return `${value("zn-scene-circuit-1")}/${value("zn-scene-circuit-3")}`;
       }, { timeout: 8000 })
       .toBe("50/50");
   });

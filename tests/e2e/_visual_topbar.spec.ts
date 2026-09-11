@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./support/safe-test";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
 // Visual capture for the unified top bar + single-scroll layout. Run on

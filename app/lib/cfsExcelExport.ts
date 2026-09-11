@@ -134,20 +134,21 @@ export function appendCfsSheet(
       : `${labels.length} PIRs`;
   }
 
-  function rowFill(row: CfsZoneRow, isNoColumn = false): ExcelFill | undefined {
+  function rowFill(row: CfsZoneRow, key?: BaseColumnKey): ExcelFill | undefined {
+    if (key === "number" || key === "device" || key === "deviceNum" || key === "dimmingType") return undefined;
     const ffe = highlights.ffe && row.circuits.some((item) => item.circuit.ffe);
     const energy = highlights.energySaving && row.circuits.some((item) => item.circuit.energySaving);
     if (ffe && energy) {
       return { type: "pattern", pattern: "solid", fgColor: { argb: "FFDBEAFE" } };
+    }
+    if (isReservedCfsRow(row)) {
+      return { type: "pattern", pattern: "solid", fgColor: { argb: "FFC4C9CF" } };
     }
     if (ffe) {
       return { type: "pattern", pattern: "solid", fgColor: { argb: "FFE0F2FE" } };
     }
     if (energy) {
       return { type: "pattern", pattern: "solid", fgColor: { argb: "FFDCFCE7" } };
-    }
-    if (isReservedCfsRow(row) && !isNoColumn) {
-      return { type: "pattern", pattern: "solid", fgColor: { argb: "FFC4C9CF" } };
     }
     return undefined;
   }
@@ -189,7 +190,7 @@ export function appendCfsSheet(
         row: excelRow,
         col: excelCol,
         value: rowIndex + 1,
-        fill: rowFill(row, true),
+        fill: rowFill(row, col.key),
         horizontal: "center",
       };
     }
@@ -207,7 +208,7 @@ export function appendCfsSheet(
         value: "Backlight Logic",
         colSpan: visibleBacklightKeys.length,
         rowSpan: mergeSpan.rowSpan,
-        fill: changedFill ?? rowFill(row),
+        fill: changedFill ?? rowFill(row, col.key),
         bold: true,
         horizontal: "center",
       };
@@ -221,7 +222,7 @@ export function appendCfsSheet(
         col: excelCol,
         value: stackedText(resolvers.baseValues(row, col.key)),
         rowSpan: info.rowSpan,
-        fill: changedFill ?? rowFill(row),
+        fill: changedFill ?? rowFill(row, col.key),
         bold: true,
         horizontal: "center",
       };
@@ -234,7 +235,7 @@ export function appendCfsSheet(
         col: excelCol,
         value: stackedText(resolvers.baseValues(row, col.key)),
         rowSpan: info.rowSpan,
-        fill: changedFill ?? rowFill(row),
+        fill: changedFill ?? rowFill(row, col.key),
         bold: true,
         horizontal: "center",
       };
@@ -247,7 +248,7 @@ export function appendCfsSheet(
         col: excelCol,
         value: stackedText(resolvers.baseValues(row, col.key)),
         rowSpan: info.rowSpan,
-        fill: changedFill ?? rowFill(row),
+        fill: changedFill ?? rowFill(row, col.key),
         bold: true,
         horizontal: "center",
       };
@@ -265,7 +266,7 @@ export function appendCfsSheet(
         value: stackedText(resolvers.baseValues(row, "zone")),
         colSpan: 2,
         rowSpan: info.rowSpan,
-        fill: groupZoneChangedFill ?? rowFill(row),
+        fill: groupZoneChangedFill ?? rowFill(row, col.key),
         horizontal: "center",
       };
     }
@@ -280,7 +281,7 @@ export function appendCfsSheet(
         col: excelCol,
         value: stackedText(resolvers.baseValues(row, col.key)),
         rowSpan: info.rowSpan,
-        fill: changedFill ?? rowFill(row),
+        fill: changedFill ?? rowFill(row, col.key),
         horizontal: "center",
       };
     }
@@ -292,7 +293,7 @@ export function appendCfsSheet(
         col: excelCol,
         value: stackedText(resolvers.baseValues(row, col.key)),
         rowSpan: info.rowSpan,
-        fill: changedFill ?? rowFill(row),
+        fill: changedFill ?? rowFill(row, col.key),
         horizontal: "center",
       };
     }
@@ -300,7 +301,7 @@ export function appendCfsSheet(
       row: excelRow,
       col: excelCol,
       value: stackedText(resolvers.baseValues(row, col.key)),
-      fill: changedFill ?? rowFill(row),
+      fill: changedFill ?? rowFill(row, col.key),
       horizontal: "center",
     };
   }
@@ -312,15 +313,15 @@ export function appendCfsSheet(
     const isIndividualOverride = highlights.individualOverride && resolvers.hasSceneDifferentOverride(row, col);
     const isInspectionMarked = highlights.inspectionMark && resolvers.hasInspectionMarkForCell(row, col);
     const fill =
-      isInspectionMarked
-        ? { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFEEF6FF" } }
-        : isIndividualOverride
-        ? { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFFEF08A" } }
+      isIndividualOverride
+        ? { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFFDE047" } }
         : isChanged
           ? { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFFFF3B0" } }
           : isAreaSceneValue
             ? { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFF3E8FF" } }
-            : rowFill(row);
+            : rowFill(row) ?? (isInspectionMarked
+              ? { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFEEF6FF" } }
+              : undefined);
     return {
       row: 5 + rowIndex,
       col: visibleBaseColumns.length + colIndex + 1,

@@ -6763,6 +6763,30 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   min-height: 22px;
 }
 
+.cfs-header-column-controls.is-link-source {
+  outline: 2px solid #0f7a83;
+  outline-offset: -1px;
+  border-radius: 4px;
+}
+
+.cfs-setting-link-source-label {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #0f7a83;
+  font-weight: 600;
+}
+
+.cfs-setting-link-notice {
+  color: #0f7a83;
+  font-size: 12px;
+}
+
+.cfs-setting-link-notice:empty {
+  display: none;
+}
+
 .cfs-header-column-controls {
   display: flex;
   align-items: center;

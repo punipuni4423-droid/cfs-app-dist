@@ -6,24 +6,26 @@
  * Assign tab. /api/projects is fully mocked; shared data/projects.json is not
  * mutated by this spec.
  */
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./support/safe-test";
 import { writeFile } from "node:fs/promises";
+import { readNativeDraftProject, readNativeDraftRecords } from './support/native-project-drafts';
 import { createDefaultLocations, createEmptyRoomScene, createNewRoomType } from "../../app/lib/constants";
 import type { DeviceAssignment, RoomType } from "../../app/types";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
-
-const PROJECT_DRAFT_STORAGE_KEY = "cfs-project-drafts-v2";
 
 type LocalEditingMockState = Awaited<ReturnType<typeof installLocalEditingMocks>>;
 
 let mockState: LocalEditingMockState;
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, testInfo) => {
+  await page.context().route("**/api/**", (route) => route.fulfill({ json: {} }));
   await page.setViewportSize({ width: 1800, height: 900 });
-  await page.addInitScript(() => {
-    localStorage.clear();
-    sessionStorage.clear();
-  });
+  await page.addInitScript((retainOnReload) => {
+    if (!retainOnReload || !sessionStorage.getItem('t110-test-initialized')) {
+      localStorage.clear(); sessionStorage.clear();
+      sessionStorage.setItem('t110-test-initialized', '1');
+    }
+  }, testInfo.title.startsWith('T110'));
   mockState = await installLocalEditingMocks(page);
 });
 
@@ -35,7 +37,8 @@ test.afterEach(async ({ page }, testInfo) => {
     drafts: localStorage.getItem("cfs-project-drafts-v2"),
     projects: localStorage.getItem("cfs-projects-v14"),
   }));
-  await writeFile(testInfo.outputPath("mock-project-state.json"), JSON.stringify({ storage, projects: mockState.projects }, null, 2));
+  const nativeDrafts = await readNativeDraftRecords(page);
+  await writeFile(testInfo.outputPath("mock-project-state.json"), JSON.stringify({ storage, nativeDrafts, projects: mockState.projects }, null, 2));
 });
 
 function makeProject(projectId: string, projectName: string) {
@@ -115,6 +118,73 @@ function seedProject(project: ReturnType<typeof makeProject>): void {
   mockState.projects = [project as unknown as Record<string, unknown>];
 }
 
+for (const action of ['Discard', 'Edit', 'Device Assign', 'Area', '+ Manage', 'Back to Project List', 'RT-B', 'Finish editing'] as const) {
+  test(`T110 pending Low/High: ${action} offers Cancel without losing the draft`, async ({ page }, testInfo) => {
+    const projectId = `t110-${action.replaceAll(' ', '-')}`;
+    const project = makeProject(projectId, projectId);
+    project.roomTypes.push({ ...structuredClone(project.roomTypes[0]), id: `${projectId}-room-b`, name: 'RT-B' });
+    seedProject(project);
+    if (action === 'Finish editing') {
+      await page.context().route('**/api/collaboration/status**', (route) => route.fulfill({ json: {
+        enabled: true, mode: 'edit', projectId, lock: null, locks: [], lastUpdatedBy: null,
+        leaseSeconds: 90, heartbeatMs: 20000, idleMs: 900000,
+      } }));
+    }
+    await page.goto('/'); await openProjectCfs(page, projectId);
+    await editEnd(page, 'Low', '17');
+    if (action === 'Discard') await page.locator('[aria-label="Low/High End draft controls"]').getByRole('button', { name: action, exact: true }).click();
+    else if (action === 'Edit' || action === 'Back to Project List' || action === 'Finish editing') await page.getByRole('button', { name: action, exact: true }).click();
+    else await page.getByRole('tab', { name: action, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Pending Low/High End changes', exact: true });
+    await expect(dialog).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('pending-confirmation.png') });
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(cfsRow(page, 'Zn1').locator('td.cfs-base-zoneLowEnd')).toHaveText('17');
+    await expect(page.getByRole('button', { name: 'Edit', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await page.screenshot({ path: testInfo.outputPath('cancel-keeps-draft.png') });
+  });
+}
+
+test('T110 reload prompts and recovers pending values without applying them', async ({ page }) => {
+  const projectId = 't110-reload';
+  seedProject(makeProject(projectId, projectId));
+  await page.goto('/'); await openProjectCfs(page, projectId); await editEnd(page, 'Low', '17');
+  const leavePrompt = page.waitForEvent('dialog', { timeout: 8000 });
+  const reloading = page.reload();
+  const prompt = await leavePrompt;
+  expect(prompt.type()).toBe('beforeunload'); await prompt.accept(); await reloading;
+  await expect(page.locator('table.cfs-matrix-table')).toBeVisible();
+  await expect(cfsRow(page, 'Zn1').locator('td.cfs-base-zoneLowEnd')).toHaveText('17');
+  await expect(page.locator('[aria-label="Low/High End draft controls"]')).toContainText('1 draft');
+  expect((mockState.projects[0].roomTypes as RoomType[])[0].deviceAssignments[0].lowEnd).toBeUndefined();
+  await forceViewOnlyCollaboration(page);
+  page.once('dialog', (dialog) => { void dialog.accept(); });
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Edit', exact: true })).toBeDisabled();
+  await expect(cfsRow(page, 'Zn1').locator('td.cfs-base-zoneLowEnd')).toHaveText('17');
+  await page.getByRole('tab', { name: 'Area', exact: true }).click();
+  const pending = page.getByRole('dialog', { name: 'Pending Low/High End changes', exact: true });
+  await expect(pending.getByRole('button', { name: 'Confirm', exact: true })).toBeDisabled();
+  await pending.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(cfsRow(page, 'Zn1').locator('td.cfs-base-zoneLowEnd')).toHaveText('17');
+});
+
+for (const choice of ['Confirm', 'Discard'] as const) {
+  test(`T110 ${choice} resolves draft before switching tabs`, async ({ page }) => {
+    const projectId = `t110-resolve-${choice}`;
+    seedProject(makeProject(projectId, projectId));
+    await page.goto('/'); await openProjectCfs(page, projectId); await editEnd(page, 'Low', '17');
+    await page.getByRole('tab', { name: 'Device Assign', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Pending Low/High End changes', exact: true });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: choice, exact: true }).click();
+    await expect(page.getByRole('tab', { name: 'Device Assign', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await page.getByRole('tab', { name: 'CFS', exact: true }).click();
+    await expect(cfsRow(page, 'Zn1').locator('td.cfs-base-zoneLowEnd')).toHaveText(choice === 'Confirm' ? '17' : '5');
+    await expect(page.locator('[aria-label="Low/High End draft controls"]')).toHaveCount(0);
+  });
+}
+
 function makeInspectionProject(projectId: string, projectName: string) {
   const project = makeProject(projectId, projectName);
   project.roomTypes[0].roomScenes = [{
@@ -129,8 +199,8 @@ function makeInspectionProject(projectId: string, projectName: string) {
 }
 
 async function forceViewOnlyCollaboration(page: Page): Promise<void> {
-  await page.unroute("**/api/collaboration/status**").catch(() => undefined);
-  await page.route("**/api/collaboration/status**", async (route) => {
+  await page.context().unroute("**/api/collaboration/status**").catch(() => undefined);
+  await page.context().route("**/api/collaboration/status**", async (route) => {
     const requestUrl = new URL(route.request().url());
     await route.fulfill({
       status: 200,
@@ -191,21 +261,7 @@ async function storedAssignment(page: Page, projectId: string, assignmentId: str
 }
 
 async function storedRoomType(page: Page, projectId: string): Promise<RoomType | undefined> {
-  return page.evaluate(
-    ({ projectId, storageKey }) => {
-      try {
-        const projects = JSON.parse(localStorage.getItem(storageKey) || "[]") as Array<{
-          id?: string;
-          roomTypes?: RoomType[];
-        }>;
-        const project = projects.find((candidate) => candidate.id === projectId);
-        return project?.roomTypes?.[0];
-      } catch {
-        return undefined;
-      }
-    },
-    { projectId, storageKey: PROJECT_DRAFT_STORAGE_KEY },
-  );
+  return (await readNativeDraftProject(page, projectId))?.roomTypes?.[0];
 }
 
 async function editEnd(page: Page, field: "Low" | "High", value: string): Promise<void> {
@@ -333,11 +389,12 @@ test("CFS Low/High End editing stays disabled in view-only but is available in I
   await editEnd(page, "Low", "15");
   const draftBar = page.locator('[aria-label="Low/High End draft controls"]');
   await draftBar.getByRole("button", { name: "Discard", exact: true }).click();
+  await page.getByRole('dialog', { name: 'Pending Low/High End changes', exact: true }).getByRole('button', { name: 'Discard', exact: true }).click();
   await expect(inspectionLowCell).toHaveText("5");
   await expect(page.locator('[aria-label="Inspection draft controls"]')).toContainText("0 draft");
 });
 
-test("CFS Edit OFF retains Low/High drafts and redo history without retaining editing entrances", async ({ page }) => {
+test("CFS Edit OFF protects pending values and retains redo-only history", async ({ page }) => {
   const projectId = "t93-low-high-toggle";
   seedProject(makeProject(projectId, "T93 Low High Toggle"));
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -347,24 +404,27 @@ test("CFS Edit OFF retains Low/High drafts and redo history without retaining ed
   for (let cycle = 0; cycle < 2; cycle += 1) {
     await editEnd(page, "Low", "17");
     await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-pressed", "false");
-    await expect(page.locator(".cfs-low-high-cell-trigger, .cfs-setting-name-button, .cfs-setting-link-select-grid")).toHaveCount(0);
+    await page.getByRole('dialog', { name: 'Pending Low/High End changes', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
     await expect(cfsRow(page, "Zn1").locator("td.cfs-base-zoneLowEnd")).toHaveText("17");
     await bar.getByRole("button", { name: "Undo", exact: true }).click();
     await expect(bar).toContainText("0 draft");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator(".cfs-low-high-cell-trigger, .cfs-setting-name-button, .cfs-setting-link-select-grid")).toHaveCount(0);
     await toggle.click();
     await expect(bar.getByRole("button", { name: "Redo", exact: true })).toBeEnabled();
     await bar.getByRole("button", { name: "Redo", exact: true }).click();
     await expect(bar).toContainText("1 draft");
     await toggle.click();
-    await bar.getByRole("button", { name: "Discard", exact: true }).click();
+    await page.getByRole('dialog', { name: 'Pending Low/High End changes', exact: true }).getByRole('button', { name: 'Discard', exact: true }).click();
     await expect(bar).toHaveCount(0);
     await expect(cfsRow(page, "Zn1").locator("td.cfs-base-zoneLowEnd")).toHaveText("5");
     await toggle.click();
   }
   await editEnd(page, "High", "81");
   await toggle.click();
-  await bar.getByRole("button", { name: "Confirm", exact: true }).click();
+  await page.getByRole('dialog', { name: 'Pending Low/High End changes', exact: true }).getByRole('button', { name: 'Confirm', exact: true }).click();
   await expect.poll(async () => (await storedAssignment(page, projectId, `${projectId}-assignment-zn1`))?.highEnd).toBe("81");
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
 });
@@ -481,6 +541,9 @@ for (const endAction of ["finish", "revert"] as const) {
       await expect(lowCell).toHaveText("18");
       expect((await storedAssignment(page, projectId, `${projectId}-assignment-zn1`))?.lowEnd).toBeUndefined();
       await draftBar.getByRole("button", { name: "Discard", exact: true }).click();
+      if (await page.getByRole('dialog', { name: 'Pending Low/High End changes', exact: true }).isVisible()) {
+        await page.getByRole('dialog', { name: 'Pending Low/High End changes', exact: true }).getByRole('button', { name: 'Discard', exact: true }).click();
+      }
       await expect(lowCell).toHaveText("5");
       const expectedValue = endAction === "finish" ? (redoOnly ? "49" : "39") : "20";
       await expect.poll(async () => (await storedRoomType(page, projectId))?.roomScenes

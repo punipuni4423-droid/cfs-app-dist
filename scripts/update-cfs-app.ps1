@@ -9,11 +9,16 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $appPath = (Resolve-Path -LiteralPath $AppDir).Path
+. (Join-Path $PSScriptRoot 'cfs-local-data-preservation.ps1')
+$null = Assert-CfsPlainPath -Path $appPath
 $artifactDir = Join-Path $appPath "artifacts\self-update"
 $dataBackupDir = Join-Path $appPath "artifacts\data-recovery"
+$null = Assert-CfsChildPath -Root $appPath -Path $artifactDir
+$null = Assert-CfsChildPath -Root $appPath -Path $dataBackupDir
 $statusPath = Join-Path $artifactDir "status.json"
 $logPath = Join-Path $artifactDir ("update-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".log")
 New-Item -ItemType Directory -Force -Path $artifactDir, $dataBackupDir | Out-Null
+$backupPath = ""
 if (-not $env:NODE_OPTIONS) {
   $env:NODE_OPTIONS = "--max-old-space-size=4096"
 }
@@ -186,6 +191,7 @@ function Start-CfsAppServer {
     return
   }
   Write-Log "Using NODE_ENV=production for Next start."
+  $env:CFS_APP_DIR = $appPath
   Invoke-WithProductionNodeEnv {
     Start-Process -FilePath "npm.cmd" `
       -ArgumentList @("run", "start", "--", "-p", [string]$Port, "-H", $HostName) `
@@ -267,21 +273,6 @@ function Resolve-GitExecutable {
   throw "Git was not found. Use the latest CFS Git-managed ZIP with bundled PortableGit, or install Git for Windows and restart CFS."
 }
 
-function Stop-AppListeners {
-  param(
-    [int]$TargetPort
-  )
-  $listeners = Get-NetTCPConnection -LocalPort $TargetPort -State Listen -ErrorAction SilentlyContinue
-  foreach ($conn in $listeners) {
-    try {
-      Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
-      Write-Log "Stopped process $($conn.OwningProcess) on port $TargetPort."
-    } catch {
-      Write-Log "Failed to stop process $($conn.OwningProcess): $($_.Exception.Message)"
-    }
-  }
-}
-
 function Get-NextDistPath {
   param(
     [string]$RootPath
@@ -297,6 +288,13 @@ function Get-NextDistPath {
   if (-not $distPath.StartsWith($expectedPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Refusing to clear Next build output outside the app folder: $distPath"
   }
+  foreach ($protected in @('data', 'artifacts', 'runtime', '.cfs-runtime')) {
+    $protectedPath = Join-Path $rootFullPath $protected
+    if ($distPath.Equals($protectedPath, [StringComparison]::OrdinalIgnoreCase) -or
+        $distPath.StartsWith($protectedPath + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+      throw "Refusing to clear protected data/runtime output: $distPath"
+    }
+  }
   return $distPath
 }
 
@@ -306,6 +304,7 @@ function Clear-NextBuildOutput {
   )
   $distPath = Get-NextDistPath -RootPath $RootPath
   if (Test-Path -LiteralPath $distPath) {
+    Assert-CfsPlainTree -Directory $distPath
     Remove-Item -LiteralPath $distPath -Recurse -Force
     Write-Log "Cleared Next build output: $distPath"
   } else {
@@ -389,14 +388,6 @@ try {
   }
   $beforeSha = ([string](& $gitExe -C $repoRoot rev-parse HEAD)).Trim()
 
-  $projectDataPath = Join-Path $appPath "data\projects.json"
-  $backupPath = ""
-  if (Test-Path -LiteralPath $projectDataPath) {
-    $backupPath = Join-Path $dataBackupDir ("projects-before-self-update-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".json")
-    Copy-Item -LiteralPath $projectDataPath -Destination $backupPath -Force
-    Write-Log "Project data backup: $backupPath"
-  }
-
   Write-UpdateStatus -State "running" -Step "git-fetch" -Message "Fetching updates." -Progress 25 -BackupPath $backupPath
   Invoke-LoggedCommand -FilePath $gitExe -Arguments @("-C", $repoRoot, "fetch", "--prune") -WorkingDirectory $repoRoot
 
@@ -409,6 +400,14 @@ try {
   $behind = if ($countParts.Count -ge 2) { [int]$countParts[1] } else { 0 }
   if ($ahead -gt 0 -and $behind -gt 0) {
     throw "Local and upstream Git history have diverged. Manual Git review is required before automatic update."
+  }
+  # Fast-forward may precede the stopped-writer snapshot only while both trees
+  # exclude local business data. Refuse a remote that starts tracking that tree.
+  foreach ($revision in @('HEAD', '@{u}')) {
+    $trackedData = @(& $gitExe -C $repoRoot ls-tree -r --name-only $revision -- data)
+    if ($LASTEXITCODE -ne 0 -or $trackedData.Count -gt 0) {
+      throw 'Local data must remain untracked in both installed and incoming versions.'
+    }
   }
 
   Write-UpdateStatus -State "running" -Step "git-pull" -Message "Applying Git update." -Progress 40 -BackupPath $backupPath
@@ -474,11 +473,20 @@ try {
   $dependenciesReady = Test-NpmDependenciesReady -WorkingDirectory $appPath
   $needsNpmInstall = $dependenciesChanged -or -not $dependenciesReady
 
+  # The docs-only path above must remain restart-free. Code updates stop every
+  # identifiable app writer before snapshotting the complete transaction store.
+  Write-UpdateStatus -State "running" -Step "backup-data" -Message "Stopping app and verifying local data backup." -Progress 50
+  Stop-CfsDataWriters -AppRoot $appPath -Port $Port
+  $backupPath = Backup-CfsDataTrees -AppRoot $appPath -Trees @{ canonical = (Join-Path $appPath 'data') }
+  Assert-CfsWritersStopped -AppRoot $appPath -Port $Port
+  Write-Log "Verified complete local data backup: $backupPath"
+
   if ($needsNpmInstall) {
     $installMessage = if ($dependenciesChanged) { "Installing changed dependencies." } else { "Installing missing dependencies." }
     Write-UpdateStatus -State "running" -Step "npm-install" -Message $installMessage -Progress 58 -BackupPath $backupPath
-    Stop-AppListeners -TargetPort $Port
+    Assert-CfsWritersStopped -AppRoot $appPath -Port $Port
     Start-Sleep -Seconds 1
+    Assert-CfsWritersStopped -AppRoot $appPath -Port $Port
     Invoke-NpmDependencyInstall -WorkingDirectory $appPath
   } else {
     Write-UpdateStatus -State "running" -Step "npm-install" -Message "Dependencies unchanged. Skipping install." -Progress 58 -BackupPath $backupPath
@@ -486,8 +494,9 @@ try {
   }
 
   Write-UpdateStatus -State "running" -Step "build" -Message "Building updated app." -Progress 78 -BackupPath $backupPath
-  Stop-AppListeners -TargetPort $Port
+  Assert-CfsWritersStopped -AppRoot $appPath -Port $Port
   Start-Sleep -Seconds 1
+  Assert-CfsWritersStopped -AppRoot $appPath -Port $Port
   Clear-NextBuildOutput -RootPath $appPath
   Write-Log "Using NODE_ENV=production for Next build."
   Invoke-WithProductionNodeEnv {
@@ -496,7 +505,7 @@ try {
   Sync-StandaloneStaticAssets -RootPath $appPath
 
   Write-UpdateStatus -State "running" -Step "restart" -Message "Restarting app." -Progress 94 -BackupPath $backupPath
-  Stop-AppListeners -TargetPort $Port
+  Assert-CfsWritersStopped -AppRoot $appPath -Port $Port
   Start-Sleep -Seconds 1
   Start-CfsAppServer
 
@@ -504,12 +513,12 @@ try {
   Write-Log "CFS self update completed."
 } catch {
   Write-Log ("FAILED: " + $_.Exception.Message)
-  Write-UpdateStatus -State "failed" -Step "failed" -Message $_.Exception.Message -Progress 100
+  Write-UpdateStatus -State "failed" -Step "failed" -Message $_.Exception.Message -Progress 100 -BackupPath $backupPath
   # The listeners may already be stopped (install/build steps stop them). Bring
   # the previous app back up so the waiting browser page can reconnect and show
   # this failure instead of sitting on "reconnecting" forever.
   try {
-    $stillListening = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    $stillListening = @(Get-CfsPortListeners -Port $Port)
     if (-not $stillListening) {
       Write-Log "Restarting app after failed update so the UI can reconnect."
       Start-CfsAppServer

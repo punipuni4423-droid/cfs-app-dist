@@ -11,7 +11,7 @@
  * アプリ本体は変更しない。読み取り専用の動作確認 (audit)。
  * スクショ: test-results/audit-05/<step>.png
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./support/safe-test";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
 const SHOT_DIR = "test-results/audit-05";

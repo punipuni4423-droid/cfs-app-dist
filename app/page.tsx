@@ -7,7 +7,14 @@ import {
   createNewProject,
   downloadProjectBackup,
   emptyTrashData,
-  clearProjectDrafts,
+  confirmProjectSave,
+  cleanupRestoredProjectTrash,
+  readProjectRestoreTrashItem,
+  prepareProjectRestore,
+  saveProjectRestore,
+  confirmProjectRestore,
+  migrateTrashPayload,
+  prepareProjectSave,
   loadProjectDrafts,
   loadProjects,
   loadProjectsFromDatabase,
@@ -16,9 +23,10 @@ import {
   migrateProjectsPayload,
   isProjectSaveConflictError,
   saveProjectToDatabase,
-  saveProjectsDraftLocally,
   saveProjectsToDatabase,
+  renameProjectInDatabase,
   saveTrashToDatabase,
+  deleteProjectToTrash,
   type CollaborationSaveIdentity,
 } from "./lib/storage";
 import ProjectListScreen from "./components/ProjectListScreen";
@@ -27,6 +35,11 @@ import CollaborationBar from "./components/CollaborationBar";
 import { createAppId } from './lib/id';
 import { useCollaboration } from "./lib/useCollaboration";
 import { DEFAULT_CFS_ROW_ORDER } from "./lib/cfsRowDisplay";
+import { hasProjectChanges, nextProjectEditTime, rebaseProjectSave, type ProjectSaveReceipt } from "./lib/projectSaveState";
+import { archiveLegacyProjectDrafts, cachedDraftRecords, checkpointProject, checkpointProjectRestore, draftScope, resetProjectDrafts, validDraftRecord, exportRecoveryBytes, preserveRecoveryProject, DRAFT_STATUS_EVENT, getDraftStatus, initializeProjectDrafts, removeConfirmedDraft, type ProjectDraftRecord } from './lib/projectDraftStore';
+import { finiteFetch, SaveProtocolError } from './lib/projectSaveProtocol';
+import { appendCommonRevision, commonSnapshot } from './lib/projectCommonHistory';
+import { valuesDiffer } from './lib/canonicalJson';
 
 const LOAD_TIMEOUT_MS = 10_000;
 const ACTIVE_PROJECT_STORAGE_KEY = "cfs-active-project-v1";
@@ -63,46 +76,6 @@ function writeStoredActiveProjectId(projectId: string): void {
     }
   } catch {
     // Navigation restore is a convenience feature; storage failures should not block editing.
-  }
-}
-
-// Browser drafts for projects that exist on the server but carry a newer
-// updatedAt. In shared (supabase) mode these are never adopted silently:
-// a tab with a stale base keeps a "newer" draft forever and resurrecting it
-// overwrote other users' saves (incident 2026-08-24).
-function newerLocalDraftsThan(serverProjects: ProjectData[]): ProjectData[] {
-  try {
-    const drafts = loadProjectDrafts();
-    if (drafts.length === 0) return [];
-    const serverById = new Map(serverProjects.map((project) => [project.id, project]));
-    return drafts.filter((draft) => {
-      const server = serverById.get(draft.id);
-      if (!server) return false;
-      const serverTime = Date.parse(server.updatedAt ?? "");
-      const draftTime = Date.parse(draft.updatedAt ?? "");
-      return Number.isFinite(draftTime) && (!Number.isFinite(serverTime) || draftTime > serverTime);
-    });
-  } catch {
-    return [];
-  }
-}
-
-function mergeNewerLocalDrafts(serverProjects: ProjectData[]): ProjectData[] {
-  try {
-    const drafts = loadProjectDrafts();
-    if (drafts.length === 0) return serverProjects;
-    const draftById = new Map(drafts.map((draft) => [draft.id, draft]));
-    return serverProjects.map((project) => {
-      const draft = draftById.get(project.id);
-      if (!draft) return project;
-      const serverTime = Date.parse(project.updatedAt ?? "");
-      const draftTime = Date.parse(draft.updatedAt ?? "");
-      const draftIsNewer =
-        Number.isFinite(draftTime) && (!Number.isFinite(serverTime) || draftTime > serverTime);
-      return draftIsNewer ? draft : project;
-    });
-  } catch {
-    return serverProjects;
   }
 }
 
@@ -329,7 +302,13 @@ function smallerImportWarning(existing: ProjectData, imported: ProjectData): str
 }
 
 export default function Home() {
-  const [projects, setProjects] = useState<ProjectData[]>([]);
+  const [projects, setProjectsState] = useState<ProjectData[]>([]);
+  const projectsRef = useRef(projects);
+  const setProjects = useCallback((update: ProjectData[] | ((current: ProjectData[]) => ProjectData[])): void => {
+    const next = typeof update === "function" ? update(projectsRef.current) : update;
+    projectsRef.current = next;
+    setProjectsState(next);
+  }, []);
   const [trash, setTrash] = useState<TrashData>(emptyTrashData);
   const [activeProjectId, setActiveProjectId] = useState<string>(() => readStoredActiveProjectId());
   const collaboration = useCollaboration(activeProjectId);
@@ -341,18 +320,87 @@ export default function Home() {
   const initialized = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const trashSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const trashSavesInFlight = useRef(new Set<Promise<void>>());
   const skipNextSave = useRef(false);
   const skipNextTrashSave = useRef(false);
   const collaborationAccessTokenRef = useRef(collaboration.accessToken);
   const trashSaveIdentity = useRef(collaboration.editIdentity);
   const persistedProjectUpdatedAt = useRef<Map<string, string>>(new Map());
+  const persistedProjects = useRef(new Map<string, ProjectData>());
+  const explicitSavePending = useRef(false);
+  const deletePending = useRef(false);
+  const [deletingProject, setDeletingProject] = useState(false);
+  const [saveReceipt, setSaveReceipt] = useState<ProjectSaveReceipt | null>(null);
+  const [draftStatus, setDraftStatus] = useState(() => getDraftStatus(activeProjectId));
+  const [recoveryRecords, setRecoveryRecords] = useState<ProjectDraftRecord[]>([]);
+  const [saveMessage, setSaveMessage] = useState('');
+  const [pendingSave, setPendingSave] = useState<{ before: ProjectData; sent: ProjectData; expected: string; draft: ProjectDraftRecord | null; archived?: boolean; forceOverwriteUpdatedAt?: string } | null>(null);
+  const [pendingRestore, setPendingRestore] = useState<{ record: ProjectDraftRecord; projectConfirmed: boolean } | null>(null);
+  const restoreInFlight = useRef(false);
+  const [restoringProject, setRestoringProject] = useState(false);
+  const tabId = useRef(createAppId());
+  const previousMode = useRef(collaboration.mode);
+  const ownerEpoch = useRef(0);
+  const activeProjectRef = useRef(activeProjectId);
+  activeProjectRef.current = activeProjectId;
+
+  useEffect(() => {
+    const update = () => setDraftStatus(getDraftStatus(activeProjectId));
+    update();
+    window.addEventListener(DRAFT_STATUS_EVENT, update);
+    return () => window.removeEventListener(DRAFT_STATUS_EVENT, update);
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    if (!collaboration.authReady) return;
+    // Flush with the previous owner before changing scope or clearing the signed-out screen.
+    projectsRef.current.forEach(project => {
+      if (hasProjectChanges(project, persistedProjects.current.get(project.id))) void checkpointProject(project, persistedProjectUpdatedAt.current.get(project.id) ?? null);
+    });
+    ownerEpoch.current++;
+    explicitSavePending.current = false; setSaveStatus('idle');
+    deletePending.current = false; setDeletingProject(false);
+    restoreInFlight.current = false; setRestoringProject(false); setPendingRestore(null); trashSavesInFlight.current.clear();
+    resetProjectDrafts();
+    setPendingSave(null); setSaveReceipt(null); setRecoveryRecords([]); setSaveMessage('');
+    if (collaboration.requiresSignIn) return;
+    let cancelled = false;
+    void (async () => {
+      const config = await finiteFetch('/api/sharing/config', { cache: 'no-store' }, 10_000).then(response => response.json()).catch(() => null) as { url?: string } | null;
+      if (cancelled) return;
+      if (collaboration.sharingMode === 'supabase' && !config?.url) { setSaveMessage('退避先の共有環境を確認できません。接続を確認し、バックアップしてください。'); return; }
+      const records = await initializeProjectDrafts({ workspace: `${collaboration.sharingMode}:${config?.url ?? window.location.origin}`,
+        owner: collaboration.user?.id ?? 'local', tab: tabId.current });
+      if (!cancelled) setRecoveryRecords(records);
+      await archiveLegacyProjectDrafts().catch(() => undefined);
+    })();
+    return () => { cancelled = true; };
+  }, [collaboration.authReady, collaboration.requiresSignIn, collaboration.sharingMode, collaboration.user?.id]);
+
+  useEffect(() => {
+    if (previousMode.current === 'edit' && collaboration.mode !== 'edit') {
+      const project = projectsRef.current.find(item => item.id === activeProjectId);
+      if (project && hasProjectChanges(project, persistedProjects.current.get(project.id))) {
+        void checkpointProject(project, persistedProjectUpdatedAt.current.get(project.id) ?? null);
+        setSaveMessage('編集権限を失いました。この画面の変更は共有未保存です。退避状況を確認してください。');
+      }
+    }
+    previousMode.current = collaboration.mode;
+  }, [collaboration.mode, activeProjectId]);
+
+  const hasUnsavedDatabaseChangesNow = useCallback((): boolean => {
+    const current = projectsRef.current.find((project) => project.id === activeProjectId);
+    return Boolean(current && hasProjectChanges(current, persistedProjects.current.get(current.id)));
+  }, [activeProjectId]);
 
   const rememberPersistedProjects = useCallback((nextProjects: ReadonlyArray<ProjectData>): void => {
     persistedProjectUpdatedAt.current = new Map(nextProjects.map((project) => [project.id, project.updatedAt]));
+    persistedProjects.current = new Map(nextProjects.map((project) => [project.id, project]));
   }, []);
 
   const rememberPersistedProject = useCallback((project: ProjectData): void => {
     persistedProjectUpdatedAt.current.set(project.id, project.updatedAt);
+    persistedProjects.current.set(project.id, project);
   }, []);
 
   const applyLoadedServerState = useCallback((loaded: ProjectData[], loadedTrash: TrashData, sharingMode: SharingMode): void => {
@@ -364,22 +412,16 @@ export default function Home() {
       // browser drafts resurrected stale data and overwrote other users'
       // saves (2026-08-24), so leftover drafts become a downloadable
       // backup instead of the working copy.
-      const staleDrafts = newerLocalDraftsThan(loaded);
-      if (staleDrafts.length > 0) {
-        downloadProjectBackup(staleDrafts, "unsaved_browser_draft");
-        clearProjectDrafts();
-        window.alert(
-          "Unsaved browser drafts from a previous session were found. They were downloaded as a backup file and the screen now shows the latest shared data. Use Import Data if you need to restore the backup.",
-        );
-      }
+      setRecoveryRecords(cachedDraftRecords());
       setProjects(loaded);
     } else {
       // Local mode: keep browser-draft copies that are newer than the
       // server snapshot so a reload does not discard unsaved edits.
-      setProjects(mergeNewerLocalDrafts(loaded));
+      setRecoveryRecords(cachedDraftRecords());
+      setProjects(loaded);
     }
     setTrash(loadedTrash);
-  }, [rememberPersistedProjects]);
+  }, [rememberPersistedProjects, setProjects]);
 
   useEffect(() => {
     collaborationAccessTokenRef.current = collaboration.accessToken;
@@ -394,6 +436,7 @@ export default function Home() {
     if (collaboration.requiresSignIn) {
       initialized.current = false;
       persistedProjectUpdatedAt.current = new Map();
+      persistedProjects.current.clear();
       setProjects([]);
       setTrash(emptyTrashData());
       setActiveProjectId("");
@@ -440,12 +483,14 @@ export default function Home() {
       })
       .catch(() => {
         if (cancelled) return;
-        const localDrafts = loadProjectDrafts();
-        const localProjects = localDrafts.length > 0 ? localDrafts : loadProjects();
-        const localTrash = loadTrash();
+        const localDrafts = collaboration.sharingMode === 'supabase' ? [] : loadProjectDrafts();
+        const localProjects = collaboration.sharingMode === 'supabase' ? [] : localDrafts.length > 0 ? localDrafts : loadProjects();
+        const localTrash = collaboration.sharingMode === 'supabase' ? { projects: [], roomTypes: [] } : loadTrash();
         skipNextTrashSave.current = true;
         persistedProjectUpdatedAt.current = new Map();
+        persistedProjects.current.clear();
         setTrash(localTrash);
+        if (collaboration.sharingMode === 'supabase') { skipNextSave.current = true; setProjects([]); }
         if (localProjects.length > 0) {
           skipNextSave.current = true;
           setProjects(localProjects);
@@ -478,9 +523,11 @@ export default function Home() {
   }, [
     collaboration.authReady,
     collaboration.requiresSignIn,
+    collaboration.user?.id,
     collaboration.sharingMode,
     applyLoadedServerState,
     loadAttempt,
+    setProjects,
   ]);
 
   useEffect(() => {
@@ -489,41 +536,23 @@ export default function Home() {
       skipNextSave.current = false;
       return;
     }
-    if (collaboration.sharingMode === "supabase") {
-      // Shared mode never auto-uploads drafts to the shared DB (see
-      // docs/SUPABASE_REVISION_SYNC.md), but the draft must still survive a
-      // project reload triggered by transient auth churn. Persist it to the
-      // browser silently; the save-status UI stays driven by explicit saves.
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(() => {
-        try {
-          saveProjectsDraftLocally(projects);
-        } catch {
-          // Browser draft persistence is best-effort.
-        }
-        saveTimer.current = null;
-      }, 1200);
-      return () => {
-        if (saveTimer.current) {
-          clearTimeout(saveTimer.current);
-          saveTimer.current = null;
-        }
-      };
-    }
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    setSaveStatus("savingDraft");
+    const owner = draftScope();
+    const snapshot = projectsRef.current;
+    const bases = new Map(persistedProjectUpdatedAt.current);
+    const persisted = new Map(persistedProjects.current);
+    const checkpointedProjectIds = new Set(cachedDraftRecords().filter(record => owner
+      && record.scope.workspace === owner.workspace && record.scope.owner === owner.owner && record.scope.tab === owner.tab)
+      .map(record => record.project.id));
     saveTimer.current = setTimeout(async () => {
-      try {
-        const draftSaved = saveProjectsDraftLocally(projects);
-        setSaveStatus(draftSaved ? "draftSaved" : "idle");
-        if (draftSaved) {
-          setLastSavedAt(formatStatusTime());
+      for (const project of snapshot) {
+        // Returning to the saved baseline is an edit too. Keep its latest body and any unresolved save intent.
+        if (hasProjectChanges(project, persisted.get(project.id)) || checkpointedProjectIds.has(project.id)) {
+          await checkpointProject(project, bases.get(project.id) ?? null, undefined, owner);
         }
-      } catch {
-        setSaveStatus("error");
       }
       saveTimer.current = null;
-    }, 1200);
+    }, 300);
 
     return () => {
       if (saveTimer.current) {
@@ -541,13 +570,17 @@ export default function Home() {
     }
     if (trashSaveTimer.current) clearTimeout(trashSaveTimer.current);
     const scheduledCollaboration = trashSaveIdentity.current;
+    const epoch = ownerEpoch.current;
     trashSaveTimer.current = setTimeout(() => {
-      void saveTrashToDatabase(trash, {
+      if (epoch !== ownerEpoch.current) return;
+      const save = saveTrashToDatabase(trash, {
         notifyOnError: true,
         collaboration: scheduledCollaboration,
       }).catch(() => {
-        setSaveStatus("error");
+        if (epoch === ownerEpoch.current) setSaveStatus("error");
       });
+      trashSavesInFlight.current.add(save);
+      void save.finally(() => trashSavesInFlight.current.delete(save));
       trashSaveTimer.current = null;
     }, 300);
 
@@ -586,6 +619,8 @@ export default function Home() {
   );
 
   const refreshLatestServerStateForEditStart = useCallback(async (): Promise<void> => {
+    const epoch = ownerEpoch.current;
+    const projectId = activeProjectId;
     const [loaded, loadedTrash] = await Promise.all([
       loadProjectsFromDatabase({
         throwOnError: true,
@@ -598,6 +633,7 @@ export default function Home() {
         secureSharing: collaboration.sharingMode === "supabase",
       }),
     ]);
+    if (epoch !== ownerEpoch.current || projectId !== activeProjectRef.current) throw new Error('編集対象または利用者が変更されました。');
     applyLoadedServerState(loaded, loadedTrash, collaboration.sharingMode);
     if (activeProjectId && !loaded.some((project) => project.id === activeProjectId)) {
       setActiveProjectId("");
@@ -614,6 +650,7 @@ export default function Home() {
   }, [setEditStartRefresh, refreshLatestServerStateForEditStart]);
 
   const requireEditMode = useCallback((): boolean => {
+    if (deletePending.current) return false;
     if (collaboration.canEdit) return true;
     collaboration.readOnlyMessage();
     return false;
@@ -631,7 +668,10 @@ export default function Home() {
     ): Promise<ProjectData | null> => {
       if (!isProjectSaveConflictError(error)) throw error;
 
-      saveProjectsDraftLocally(nextProjects);
+      const owner = draftScope();
+      const local = projectsRef.current.find(project => project.id === projectToSave.id);
+      if (local) await checkpointProject(local, expectedUpdatedAt, undefined, owner);
+      if (owner !== draftScope()) return null;
 
       let latestProjects: ProjectData[];
       try {
@@ -641,6 +681,7 @@ export default function Home() {
           throwOnError: true,
         });
       } catch (loadError) {
+        if (owner !== draftScope()) return null;
         console.error("Failed to load latest project after save conflict.", loadError);
         window.alert(
           "The project has a newer server version, but CFS could not load it. The current draft is still open and was kept as a browser draft. Export a backup before closing this page.",
@@ -648,17 +689,19 @@ export default function Home() {
         return null;
       }
 
+      if (owner !== draftScope()) return null;
       const serverProject = latestProjects.find((candidate) => candidate.id === projectToSave.id) ?? error.serverProject;
       const action = chooseProjectSaveConflictAction(projectToSave, serverProject);
       const backupPrefix = `${projectToSave.name}_unsaved_conflict_draft`;
+      const latestDraft = projectsRef.current.find((candidate) => candidate.id === projectToSave.id) ?? projectToSave;
 
       if (action === "backup") {
-        downloadProjectBackup([projectToSave], backupPrefix);
+        downloadProjectBackup([latestDraft], backupPrefix);
         return null;
       }
 
       if (action === "reload") {
-        downloadProjectBackup([projectToSave], backupPrefix);
+        downloadProjectBackup([latestDraft], backupPrefix);
         rememberPersistedProjects(latestProjects);
         skipNextSave.current = true;
         setProjects(latestProjects);
@@ -679,43 +722,55 @@ export default function Home() {
         return null;
       }
 
-      downloadProjectBackup([projectToSave], backupPrefix);
-      return saveProjectToDatabase(projectToSave, nextProjects, {
+      downloadProjectBackup([latestDraft], backupPrefix);
+      const queued = cachedDraftRecords().find(record => record.scope.tab === owner?.tab && record.intent?.operationId === projectToSave.lastSaveOperation?.id)?.intent;
+      if (queued) await checkpointProject(latestDraft, expectedUpdatedAt, { ...queued, forceOverwriteUpdatedAt }, owner);
+      if (owner !== draftScope()) return null;
+      try { return await saveProjectToDatabase(projectToSave, nextProjects, {
         expectedUpdatedAt,
         forceOverwrite: true,
         forceOverwriteUpdatedAt,
         notifyOnError: false,
         collaboration: saveIdentity,
-      });
+      }); } catch (error) { throw Object.assign(error instanceof Error ? error : new Error('保存結果を確認できません。'), { forceOverwriteUpdatedAt }); }
     },
-    [rememberPersistedProjects],
+    [rememberPersistedProjects, setProjects],
   );
 
   const persistProjectListSnapshot = useCallback(
-    (nextProjects: ProjectData[], nextTrash?: TrashData): void => {
+    (nextProjects: ProjectData[], nextTrash?: TrashData, targetIds?: string[], restoreProjectIds?: string[]): void => {
+      const epoch = ownerEpoch.current;
+      const owner = draftScope();
+      const bases = new Map(persistedProjectUpdatedAt.current);
       setSaveStatus("savingDraft");
       void (async () => {
-        const savedProjects = await saveProjectsToDatabase(nextProjects, {
+        const updates = targetIds ? nextProjects.filter(project => targetIds.includes(project.id)) : nextProjects;
+        const savedProjects = await saveProjectsToDatabase(updates, {
           notifyOnError: true,
           collaboration: collaboration.editIdentity,
+          restoreProjectIds,
+          expectedUpdatedAts: Object.fromEntries(updates.map(project => [project.id, bases.get(project.id) ?? null])),
         });
-        rememberPersistedProjects(savedProjects);
+        if (epoch !== ownerEpoch.current) return;
+        savedProjects.forEach(rememberPersistedProject);
         if (nextTrash) {
           await saveTrashToDatabase(nextTrash, {
             notifyOnError: true,
             collaboration: collaboration.editIdentity,
           });
         }
+        if (epoch !== ownerEpoch.current) return;
         setSaveStatus("draftSaved");
         setLastSavedAt(formatStatusTime());
       })().catch(() => {
         if (collaboration.sharingMode !== "supabase") {
-          saveProjectsDraftLocally(nextProjects);
+          nextProjects.filter(project => !targetIds || targetIds.includes(project.id)).forEach(project => { void checkpointProject(project, bases.get(project.id) ?? null, undefined, owner); });
         }
+        if (epoch !== ownerEpoch.current) return;
         setSaveStatus("error");
       });
     },
-    [collaboration.editIdentity, collaboration.sharingMode, rememberPersistedProjects],
+    [collaboration.editIdentity, collaboration.sharingMode, rememberPersistedProject],
   );
 
   const handleCreateProject = useCallback((name: string): void => {
@@ -724,6 +779,8 @@ export default function Home() {
       return;
     }
     const project = createNewProject(name);
+    const epoch = ownerEpoch.current;
+    const owner = draftScope();
     setSaveStatus("savingDraft");
     void (async () => {
       const baseIdentity = collaboration.projectCreateIdentity;
@@ -739,6 +796,7 @@ export default function Home() {
       return savedProject;
     })()
       .then((savedProject) => {
+        if (epoch !== ownerEpoch.current) return;
         rememberPersistedProject(savedProject);
         skipNextSave.current = true;
         setProjects((latest) =>
@@ -752,30 +810,39 @@ export default function Home() {
         setLastSavedAt(formatStatusTime());
       })
       .catch((error) => {
+        void checkpointProject(project, null, undefined, owner);
+        if (epoch !== ownerEpoch.current) return;
         console.error("Failed to create project.", error);
         window.alert(error instanceof Error ? error.message : "Failed to create project.");
         setSaveStatus("error");
       });
-  }, [collaboration, projects, rememberPersistedProject]);
+  }, [collaboration, projects, rememberPersistedProject, setProjects]);
 
   const handleRenameProject = useCallback((id: string, newName: string): void => {
     if (!requireEditMode()) return;
-    // Shared mode has no list autosave (the effect early-returns for
-    // supabase), so persist explicitly like delete/restore do; otherwise the
-    // rename only changes local state and reverts on reload.
-    const nextProjects = projects.map((p) =>
-      p.id === id
-        ? { ...p, name: newName, updatedAt: new Date().toISOString() }
-        : p,
-    );
-    skipNextSave.current = true;
-    setProjects(nextProjects);
-    persistProjectListSnapshot(nextProjects);
-  }, [persistProjectListSnapshot, projects, requireEditMode]);
+    const epoch = ownerEpoch.current;
+    const project = projectsRef.current.find(candidate => candidate.id === id);
+    if (!project) return;
+    setSaveStatus('savingDraft');
+    void renameProjectInDatabase(id, newName, persistedProjectUpdatedAt.current.get(id) ?? project.updatedAt, collaboration.editIdentity)
+      .then(saved => {
+        if (epoch !== ownerEpoch.current) return;
+        rememberPersistedProject(saved);
+        skipNextSave.current = true;
+        // Only name/version are owned by this response. Preserve any newer local edits.
+        setProjects(latest => latest.map(candidate => candidate.id === id
+          ? { ...candidate, name: saved.name, updatedAt: candidate.updatedAt === project.updatedAt ? saved.updatedAt : candidate.updatedAt }
+          : candidate));
+        setSaveStatus('draftSaved');
+        setLastSavedAt(formatStatusTime());
+      })
+      .catch(error => { if (epoch !== ownerEpoch.current) return; setSaveStatus('error'); window.alert(`${error instanceof Error ? error.message : 'Rename failed.'}\nReload to check the project before retrying.`); });
+  }, [collaboration.editIdentity, rememberPersistedProject, requireEditMode, setProjects]);
 
   const handleDeleteProject = useCallback(
     (id: string): void => {
       if (!requireEditMode()) return;
+      const epoch = ownerEpoch.current;
       const project = projects.find((p) => p.id === id);
       if (!project) return;
       if (
@@ -785,38 +852,138 @@ export default function Home() {
       ) {
         return;
       }
-      const deletedAt = new Date().toISOString();
-      const nextTrash = {
-        ...trash,
-        projects: [
-          {
-            id: createAppId(),
-            deletedAt,
-            project: cloneData(project),
-          },
-          ...trash.projects,
-        ],
-      };
-      const nextProjects = projects.filter((p) => p.id !== id);
-      skipNextSave.current = true;
-      skipNextTrashSave.current = true;
-      setTrash(nextTrash);
-      setProjects(nextProjects);
-      persistProjectListSnapshot(nextProjects, nextTrash);
-      setActiveProjectId((current) => {
-        if (current !== id) return current;
-        writeStoredActiveProjectId("");
-        return "";
-      });
+      deletePending.current = true;
+      setDeletingProject(true);
+      setSaveStatus('savingDraft');
+      const pendingTrashSave = trashSaveTimer.current !== null;
+      if (trashSaveTimer.current) clearTimeout(trashSaveTimer.current);
+      trashSaveTimer.current = null;
+      void (async () => {
+        // Flush an earlier, independent RoomType/trash edit before replacing
+        // the displayed snapshot with the transaction's authoritative result.
+        if (pendingTrashSave) await saveTrashToDatabase(trash, { collaboration: collaboration.editIdentity });
+        if (epoch !== ownerEpoch.current) throw new Error('利用者が変更されました。');
+        return deleteProjectToTrash(id, persistedProjectUpdatedAt.current.get(id) ?? project.updatedAt, collaboration.editIdentity);
+      })()
+        .then(saved => {
+          if (epoch !== ownerEpoch.current) return;
+          rememberPersistedProjects(saved.projects);
+          skipNextSave.current = true;
+          skipNextTrashSave.current = true;
+          setTrash(saved.trash);
+          setProjects(latest => latest.filter(candidate => candidate.id !== id));
+          setActiveProjectId(current => {
+            if (current !== id) return current;
+            writeStoredActiveProjectId('');
+            return '';
+          });
+          setSaveStatus('draftSaved');
+          setLastSavedAt(formatStatusTime());
+        })
+        .catch(error => {
+          if (epoch !== ownerEpoch.current) return;
+          // A timeout can happen after commit. Keep the original visible until
+          // an authoritative reload confirms its location; never draft a deletion.
+          setSaveStatus('error');
+          window.alert(`${error instanceof Error ? error.message : 'Deletion failed.'}\nReload to check the project and Trash before retrying.`);
+        })
+        .finally(() => { if (epoch === ownerEpoch.current) { deletePending.current = false; setDeletingProject(false); } });
     },
-    [persistProjectListSnapshot, projects, requireEditMode, trash],
+    [collaboration.editIdentity, projects, rememberPersistedProjects, requireEditMode, setProjects, trash],
   );
+
+  const runProjectRestore = useCallback(async (record: ProjectDraftRecord, retry: boolean, epoch: number): Promise<void> => {
+    const intent = record.intent;
+    const restore = intent?.restore;
+    const currentOwner = draftScope();
+    const current = () => epoch === ownerEpoch.current && draftScope() === currentOwner;
+    let saved: ProjectData | undefined;
+    try {
+      if (!validDraftRecord(record) || !intent || !restore || !currentOwner
+        || record.scope.owner !== currentOwner.owner || record.scope.workspace !== currentOwner.workspace) throw new Error('復元要求の利用者と原本を確認できません。');
+      const identity = { userId: collaboration.user?.id ?? '', sessionId: collaboration.sessionId,
+        projectId: '', accessToken: collaboration.accessToken || undefined, requireLock: retry };
+      if (retry && (!collaboration.canEdit || activeProjectRef.current)) throw new Error('一覧の編集権限を取得してから同じ復元を再送してください。');
+      saved = retry && !restore.confirmedProject
+        ? await saveProjectRestore(intent.project, identity)
+        : await confirmProjectRestore(intent.project, identity, restore.confirmedProject);
+      if (!current()) return;
+      if (!saved) throw new Error('復元先の本文を確認できません。');
+      if (!restore.confirmedProject) {
+        const confirmedRecord = await checkpointProjectRestore(record.project, record.baseUpdatedAt ?? intent.before.updatedAt,
+          { ...intent, restore: { ...restore, confirmedProject: saved } }, currentOwner);
+        if (!current()) return;
+        if (!confirmedRecord) throw new Error('復旧確認の端末退避が未確認です。Trash原本を保持します。');
+        record = confirmedRecord;
+      }
+      setPendingRestore({ record, projectConfirmed: true });
+      if (!collaboration.canEdit || activeProjectRef.current) throw new Error('Trash更新には一覧の編集権限が必要です。');
+      if (trashSaveTimer.current || trashSavesInFlight.current.size) throw new Error('別のTrash更新が進行中です。完了後に再確認してください。');
+      const confirmedTrash = await cleanupRestoredProjectTrash(restore.original,
+        { ...identity, requireLock: true }, current);
+      if (!current()) return;
+      // Only exact generations with this restore operation and no extra edits are removable.
+      const records = new Map([record, ...cachedDraftRecords()].map(item => [item.key, item]));
+      for (const candidate of records.values()) {
+        if (candidate.intent?.operationId === intent.operationId && candidate.intent.restore && candidate.scope.tab === `recovery:restore:${intent.operationId}`
+          && !hasProjectChanges(candidate.project, record.project)) {
+          await removeConfirmedDraft(candidate).catch(() => undefined);
+          if (!current()) return;
+        }
+      }
+      skipNextTrashSave.current = true;
+      setTrash(migrateTrashPayload(confirmedTrash));
+      setPendingRestore(null);
+      setRecoveryRecords(cachedDraftRecords());
+      setSaveMessage('ProjectとTrashの復元結果を確認しました。');
+      setSaveStatus('projectSaved');
+      setLastSavedAt(formatStatusTime());
+    } catch (error) {
+      if (!current()) return;
+      const detail = error instanceof SaveProtocolError ? `${error.message} (${error.code}${error.status ? ` / HTTP ${error.status}` : ''})` : error instanceof Error ? error.message : '保存先を確認してください。';
+      setPendingRestore({ record, projectConfirmed: Boolean(saved) });
+      setSaveStatus('error');
+      setSaveMessage(saved ? `本体は復旧済み、Trash更新は未確認です。${detail}` : `復元を確認できません。元のTrashと復元要求は保持しています。${detail}`);
+    } finally {
+      if (current()) {
+        if (saved) {
+          const displayedSaved = saved.lastSaveOperation?.id === intent!.operationId && !hasProjectChanges({ ...saved, name: intent!.project.name }, intent!.project)
+            ? { ...record.project, name: saved.name, updatedAt: saved.updatedAt, lastUpdatedBy: saved.lastUpdatedBy, lastSaveOperation: saved.lastSaveOperation }
+            : migrateProjectsPayload([saved])[0];
+          rememberPersistedProject(displayedSaved);
+          skipNextSave.current = true;
+          setProjects(latest => latest.some(item => item.id === saved!.id)
+            ? latest.map(item => item.id === saved!.id ? rebaseProjectSave({ before: record.project, saved: displayedSaved }, item) : item) : [displayedSaved, ...latest]);
+          const latest = projectsRef.current.find(item => item.id === saved!.id);
+          if (latest && hasProjectChanges(latest, displayedSaved)) {
+            await checkpointProject(latest, saved.updatedAt, undefined, currentOwner);
+            if (!current()) return;
+          }
+        }
+        restoreInFlight.current = false;
+        setRestoringProject(false);
+      }
+    }
+  }, [collaboration.accessToken, collaboration.canEdit, collaboration.sessionId, collaboration.user?.id, rememberPersistedProject, setProjects]);
+
+  const resolveProjectRestore = (record: ProjectDraftRecord, retry = false): void => {
+    if (restoreInFlight.current || (retry && (!requireEditMode() || activeProjectRef.current))) return;
+    restoreInFlight.current = true;
+    setRestoringProject(true);
+    setSaveMessage('復元先を確認しています。');
+    void runProjectRestore(record, retry, ownerEpoch.current);
+  };
 
   const handleRestoreProject = useCallback(
     (trashItemId: string): void => {
       if (!requireEditMode()) return;
+      if (restoreInFlight.current || pendingRestore) return;
+      if (trashSaveTimer.current || trashSavesInFlight.current.size) { setSaveMessage('Trash更新中です。完了後に復元してください。'); return; }
       const item = trash.projects.find((candidate) => candidate.id === trashItemId);
       if (!item) return;
+      const previous = cachedDraftRecords().filter(record => validDraftRecord(record) && record.intent?.restore?.trashItemId === trashItemId)
+        .sort((a, b) => b.generation - a.generation)[0];
+      if (previous) { setPendingRestore({ record: previous, projectConfirmed: false }); setSaveMessage('以前の復元要求を保持しています。復元状態を確認してください。'); return; }
       if (projects.some((project) => project.id === item.project.id)) {
         window.alert("A project with the same ID already exists.");
         return;
@@ -827,18 +994,33 @@ export default function Home() {
         name: uniqueName(item.project.name, usedNames),
         updatedAt: new Date().toISOString(),
       };
-      const nextProjects = [restored, ...projects];
-      const nextTrash = {
-        ...trash,
-        projects: trash.projects.filter((candidate) => candidate.id !== trashItemId),
-      };
-      skipNextSave.current = true;
-      skipNextTrashSave.current = true;
-      setProjects(nextProjects);
-      setTrash(nextTrash);
-      persistProjectListSnapshot(nextProjects, nextTrash);
+      const epoch = ownerEpoch.current;
+      const owner = draftScope();
+      restoreInFlight.current = true;
+      setRestoringProject(true);
+      setSaveMessage('復元要求をこの端末に退避しています。確認が終わるまでTrashを保持します。');
+      void (async () => {
+        const original = await readProjectRestoreTrashItem(item, collaboration.editIdentity ?? undefined,
+          () => epoch === ownerEpoch.current && draftScope() === owner);
+        if (epoch !== ownerEpoch.current) return;
+        const prepared = await prepareProjectRestore({ ...original.project, name: restored.name, updatedAt: restored.updatedAt });
+        if (epoch !== ownerEpoch.current) return;
+        const record = await checkpointProjectRestore(restored, item.project.updatedAt, {
+          before: cloneData(item.project), project: prepared, expectedUpdatedAt: item.project.updatedAt, operationId: prepared.lastSaveOperation!.id,
+          restore: { trashItemId, deletedAt: item.deletedAt, expectedUpdatedAt: null, original },
+        }, owner);
+        if (epoch !== ownerEpoch.current) return;
+        if (!record) throw new Error('復元要求の端末退避を確認できません。Trash原本は保持しています。');
+        setPendingRestore({ record, projectConfirmed: false });
+        setRecoveryRecords(cachedDraftRecords());
+        await runProjectRestore(record, true, epoch);
+      })().catch(error => {
+        if (epoch !== ownerEpoch.current) return;
+        setSaveMessage(`復元を確認できません。${error instanceof Error ? error.message : '原文を保持しています。'}`);
+        setSaveStatus('error');
+      }).finally(() => { if (epoch === ownerEpoch.current) { restoreInFlight.current = false; setRestoringProject(false); } });
     },
-    [persistProjectListSnapshot, projects, requireEditMode, trash],
+    [collaboration.editIdentity, pendingRestore, projects, requireEditMode, trash, runProjectRestore],
   );
 
   const handleMoveRoomTypeToTrash = useCallback((project: ProjectData, roomType: RoomType): void => {
@@ -893,9 +1075,9 @@ export default function Home() {
       skipNextTrashSave.current = true;
       setProjects(nextProjects);
       setTrash(nextTrash);
-      persistProjectListSnapshot(nextProjects, nextTrash);
+      persistProjectListSnapshot(nextProjects, nextTrash, [item.projectId]);
     },
-    [persistProjectListSnapshot, projects, requireEditMode, trash],
+    [persistProjectListSnapshot, projects, requireEditMode, trash, setProjects],
   );
 
   const handleEmptyTrash = useCallback((): void => {
@@ -932,6 +1114,7 @@ export default function Home() {
 
   const handleImportProjects = useCallback((file: File): void => {
     if (!requireEditMode()) return;
+    const epoch = ownerEpoch.current;
     const maxBytes = 50 * 1024 * 1024;
     if (file.size > maxBytes) {
       window.alert("Import file must be 50 MB or smaller.");
@@ -940,6 +1123,7 @@ export default function Home() {
 
     const reader = new FileReader();
     reader.onload = () => {
+      if (epoch !== ownerEpoch.current) return;
       try {
         const text = typeof reader.result === "string" ? reader.result : "";
         const parsed: unknown = JSON.parse(text);
@@ -1002,8 +1186,10 @@ export default function Home() {
           const next = [...newProjects, ...merged];
           skipNextSave.current = true;
           setProjects(next);
-          void saveProjectsToDatabase(next, { collaboration: collaboration.editIdentity })
-            .then((savedProjects) => rememberPersistedProjects(savedProjects))
+          void saveProjectsToDatabase(importedForUpdate, { collaboration: collaboration.editIdentity,
+            expectedUpdatedAts: Object.fromEntries(importedForUpdate.map(project => [project.id, persistedProjectUpdatedAt.current.get(project.id) ?? null])),
+          })
+            .then((savedProjects) => { if (epoch === ownerEpoch.current) savedProjects.forEach(rememberPersistedProject); })
             .catch(() => undefined);
           return;
         }
@@ -1024,8 +1210,10 @@ export default function Home() {
         const next = [...copiedProjects, ...newProjects, ...projects];
         skipNextSave.current = true;
         setProjects(next);
-        void saveProjectsToDatabase(next, { collaboration: collaboration.editIdentity })
-          .then((savedProjects) => rememberPersistedProjects(savedProjects))
+        void saveProjectsToDatabase([...copiedProjects, ...newProjects], { collaboration: collaboration.editIdentity,
+          expectedUpdatedAts: Object.fromEntries([...copiedProjects, ...newProjects].map(project => [project.id, null])),
+        })
+          .then((savedProjects) => { if (epoch === ownerEpoch.current) savedProjects.forEach(rememberPersistedProject); })
           .catch(() => undefined);
       } catch (error) {
         console.error("Failed to import project data.", error);
@@ -1036,7 +1224,7 @@ export default function Home() {
       window.alert("Failed to read the selected file.");
     };
     reader.readAsText(file, "utf-8");
-  }, [projects, requireEditMode, collaboration.editIdentity, rememberPersistedProjects]);
+  }, [projects, requireEditMode, collaboration.editIdentity, rememberPersistedProject, setProjects]);
 
   const handleUpdateProject = useCallback(
     (mutate: (project: ProjectData) => ProjectData): void => {
@@ -1044,22 +1232,23 @@ export default function Home() {
       setProjects((current) =>
         current.map((p) =>
           p.id === activeProjectId
-            ? { ...mutate(p), updatedAt: new Date().toISOString() }
+            ? { ...mutate(p), updatedAt: nextProjectEditTime(p.updatedAt) }
             : p,
         ),
       );
     },
-    [activeProjectId, requireEditMode],
+    [activeProjectId, requireEditMode, setProjects],
   );
 
-  const handleSaveProjectRevision = useCallback(
-    async (mutate: (project: ProjectData) => ProjectData | null): Promise<boolean> => {
-      if (!requireEditMode()) return false;
-      const currentProject = projects.find((project) => project.id === activeProjectId);
+  const saveProject = useCallback(
+    async (mutate: (project: ProjectData) => ProjectData | null, revision: boolean): Promise<boolean> => {
+      if (!requireEditMode() || explicitSavePending.current) return false;
+      if (pendingSave) { setSaveMessage('先の保存結果を確認してから次の保存を行ってください。'); return false; }
+      const currentProject = projectsRef.current.find((project) => project.id === activeProjectId);
       if (!currentProject) return false;
       const expectedUpdatedAt = persistedProjectUpdatedAt.current.get(currentProject.id);
       if (!expectedUpdatedAt) {
-        window.alert("This project was loaded from a browser draft or an unknown database state. Reload the project list before saving a revision.");
+        window.alert(`This project was loaded from a browser draft or an unknown database state. Reload the project list before saving${revision ? " a revision" : ""}.`);
         setSaveStatus("error");
         return false;
       }
@@ -1067,17 +1256,31 @@ export default function Home() {
       const editor = collaboration.editorInfo
         ? { ...collaboration.editorInfo, updatedAt: savedAt }
         : null;
-      const mutated = mutate(currentProject);
+      let mutated: ProjectData | null;
+      try {
+        mutated = mutate(currentProject);
+        if (revision && mutated) mutated = appendCommonRevision(mutated, '', collaboration.user?.displayName ?? '');
+      }
+      catch (error) { setSaveMessage(error instanceof Error ? error.message : '保存内容を作成できません。元データを確認してください。'); setSaveStatus('error'); return false; }
       if (!mutated) return false;
-      const projectToSave: ProjectData = {
+      let projectToSave: ProjectData = {
         ...mutated,
         updatedAt: savedAt,
         lastUpdatedBy: editor ?? currentProject.lastUpdatedBy ?? null,
       };
-      const next = projects.map((p) =>
+      explicitSavePending.current = true;
+      const owner = draftScope();
+      const epoch = ownerEpoch.current;
+      try {
+      setSaveStatus(revision ? "savingRevision" : "savingProject");
+      setSaveMessage('保存先へ送信しています…');
+      projectToSave = await prepareProjectSave(projectToSave, revision ? 'revision' : 'current');
+      let intent: NonNullable<ProjectDraftRecord['intent']> = { before: currentProject, project: projectToSave, expectedUpdatedAt, operationId: projectToSave.lastSaveOperation!.id };
+      const draft = await checkpointProject(currentProject, expectedUpdatedAt, intent, owner);
+      if (epoch !== ownerEpoch.current) return false;
+      const next = projectsRef.current.map((p) =>
         p.id === activeProjectId ? projectToSave : p,
       );
-      setSaveStatus("savingRevision");
       const revisionSaveIdentity = collaboration.editIdentity
         ? { ...collaboration.editIdentity, projectId: projectToSave.id }
         : undefined;
@@ -1089,93 +1292,169 @@ export default function Home() {
           collaboration: revisionSaveIdentity,
         });
       } catch (error) {
+        if (epoch !== ownerEpoch.current) return false;
+        if (error instanceof SaveProtocolError) {
+          setSaveMessage(`${error.message} (${error.code}${error.status ? ` / HTTP ${error.status}` : ''})`);
+          if (error.unknown) setPendingSave({ before: currentProject, sent: projectToSave, expected: expectedUpdatedAt, draft });
+        } else if (!isProjectSaveConflictError(error)) {
+          setSaveMessage('保存に失敗しました。下書きを保持して接続と編集権限を確認してください。');
+        }
         try {
           savedProject = await recoverProjectSaveConflict(error, projectToSave, next, expectedUpdatedAt, revisionSaveIdentity);
         } catch (recoveryError) {
+          if (epoch !== ownerEpoch.current) return false;
+          if (recoveryError instanceof SaveProtocolError && recoveryError.unknown) {
+            const forceOverwriteUpdatedAt = (recoveryError as SaveProtocolError & { forceOverwriteUpdatedAt?: string }).forceOverwriteUpdatedAt;
+            intent = { ...intent, forceOverwriteUpdatedAt };
+            setPendingSave({ before: currentProject, sent: projectToSave, expected: expectedUpdatedAt, draft, forceOverwriteUpdatedAt });
+            setSaveMessage(`${recoveryError.message} (${recoveryError.code}${recoveryError.status ? ` / HTTP ${recoveryError.status}` : ''})`);
+          }
           console.error("Failed to recover from project revision save conflict.", recoveryError);
         }
       }
+      if (epoch !== ownerEpoch.current) return false;
       if (!savedProject) {
-        if (collaboration.sharingMode !== "supabase") {
-          saveProjectsDraftLocally(next);
-        }
+        const latest = projectsRef.current.find(candidate => candidate.id === currentProject.id);
+        // A conflict Reload deliberately replaced the visible project with the
+        // server snapshot. Do not overwrite the preserved pre-reload draft with it.
+        if (latest && hasProjectChanges(latest, persistedProjects.current.get(latest.id))) await checkpointProject(latest, expectedUpdatedAt, intent, owner);
+        if (epoch !== ownerEpoch.current) return false;
         setSaveStatus("error");
         return false;
       }
+      if (epoch !== ownerEpoch.current) return false;
       rememberPersistedProject(savedProject);
-      skipNextSave.current = true;
+      setSaveMessage('保存先の内容を確認しました。');
+      collaboration.resumeIdleAfterSave?.();
+      const receipt = { before: currentProject, saved: savedProject };
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      saveTimer.current = null;
       setProjects((latest) =>
-        latest.map((candidate) => (candidate.id === savedProject.id ? savedProject : candidate)),
+        latest.map((candidate) => (candidate.id === savedProject.id ? rebaseProjectSave(receipt, candidate) : candidate)),
       );
+      setSaveReceipt(receipt);
+      // storage clears this project's old draft on success. Replace it with
+      // the current edits immediately, before a reload can lose them.
+      const remaining = projectsRef.current.find((candidate) => candidate.id === savedProject.id);
+      const removeRetired = !remaining || !hasProjectChanges(remaining, savedProject);
+      skipNextSave.current = removeRetired;
+      const retired = await checkpointProject(remaining ?? savedProject, savedProject.updatedAt, null, owner);
+      if (removeRetired && retired) await removeConfirmedDraft(retired).catch(() => undefined);
       await collaboration.refreshStatus().catch(() => undefined);
-      setSaveStatus("revisionSaved");
+      if (epoch !== ownerEpoch.current) return false;
+      const latest = projectsRef.current.find((candidate) => candidate.id === savedProject.id);
+      if (latest && hasProjectChanges(latest, savedProject)) {
+        setSaveStatus('idle');
+      } else {
+        setSaveStatus(revision ? "revisionSaved" : "projectSaved");
+      }
       setLastSavedAt(formatStatusTime());
       return true;
+      } catch (error) {
+        if (epoch === ownerEpoch.current) { setSaveStatus('error'); setSaveMessage(error instanceof Error ? error.message : '保存を開始できません。バックアップしてください。'); }
+        return false;
+      } finally { if (epoch === ownerEpoch.current) explicitSavePending.current = false; }
     },
-    [activeProjectId, projects, requireEditMode, collaboration, rememberPersistedProject, recoverProjectSaveConflict],
+    [activeProjectId, requireEditMode, collaboration, rememberPersistedProject, recoverProjectSaveConflict, setProjects, pendingSave],
+  );
+
+  const handleSaveProjectRevision = useCallback(
+    (mutate: (project: ProjectData) => ProjectData | null) => saveProject(mutate, true),
+    [saveProject],
   );
 
   const handleSaveProjectDraft = useCallback(
-    async (mutate: (project: ProjectData) => ProjectData | null): Promise<boolean> => {
-      if (!requireEditMode()) return false;
-      const currentProject = projects.find((project) => project.id === activeProjectId);
-      if (!currentProject) return false;
-      const expectedUpdatedAt = persistedProjectUpdatedAt.current.get(currentProject.id);
-      if (!expectedUpdatedAt) {
-        window.alert("This project was loaded from a browser draft or an unknown database state. Reload the project list before saving.");
-        setSaveStatus("error");
-        return false;
-      }
-      const savedAt = new Date().toISOString();
-      const editor = collaboration.editorInfo
-        ? { ...collaboration.editorInfo, updatedAt: savedAt }
-        : null;
-      const mutated = mutate(currentProject);
-      if (!mutated) return false;
-      const projectToSave: ProjectData = {
-        ...mutated,
-        updatedAt: savedAt,
-        lastUpdatedBy: editor ?? currentProject.lastUpdatedBy ?? null,
-      };
-      const next = projects.map((p) =>
-        p.id === activeProjectId ? projectToSave : p,
-      );
-      setSaveStatus("savingProject");
-      const draftSaveIdentity = collaboration.editIdentity
-        ? { ...collaboration.editIdentity, projectId: projectToSave.id }
-        : undefined;
-      let savedProject: ProjectData | null = null;
-      try {
-        savedProject = await saveProjectToDatabase(projectToSave, next, {
-          expectedUpdatedAt,
-          notifyOnError: false,
-          collaboration: draftSaveIdentity,
-        });
-      } catch (error) {
-        try {
-          savedProject = await recoverProjectSaveConflict(error, projectToSave, next, expectedUpdatedAt, draftSaveIdentity);
-        } catch (recoveryError) {
-          console.error("Failed to recover from project draft save conflict.", recoveryError);
+    (mutate: (project: ProjectData) => ProjectData | null) => saveProject(mutate, false),
+    [saveProject],
+  );
+
+  const resolvePendingSave = async (retry = false): Promise<void> => {
+    if (!pendingSave || explicitSavePending.current) return;
+    if (retry && (!requireEditMode() || activeProjectId !== pendingSave.sent.id)) return;
+    explicitSavePending.current = true;
+    const owner = draftScope();
+    const epoch = ownerEpoch.current;
+    const identity = { userId: collaboration.user?.id ?? '', sessionId: collaboration.sessionId,
+      projectId: pendingSave.sent.id, accessToken: collaboration.accessToken || undefined, requireLock: retry };
+    try {
+      const saved = retry
+        ? await saveProjectToDatabase(pendingSave.sent, projectsRef.current, { expectedUpdatedAt: pendingSave.expected,
+          forceOverwrite: Boolean(pendingSave.forceOverwriteUpdatedAt), forceOverwriteUpdatedAt: pendingSave.forceOverwriteUpdatedAt,
+          collaboration: identity, notifyOnError: false })
+        : await confirmProjectSave(pendingSave.sent, identity);
+      if (epoch !== ownerEpoch.current) return;
+      if (pendingSave.archived && pendingSave.draft) {
+        const recovered = rebaseProjectSave({ before: pendingSave.before, saved }, pendingSave.draft.project);
+        const retained = await preserveRecoveryProject(recovered, saved.updatedAt, owner);
+        if (epoch !== ownerEpoch.current) return;
+        if (retained) {
+          await removeConfirmedDraft(pendingSave.draft).catch(() => undefined);
+          if (epoch !== ownerEpoch.current) return;
+          setRecoveryRecords(cachedDraftRecords());
         }
+        setPendingSave(null);
+        setSaveMessage('以前の保存を確認しました。追加入力は退避に保持しています。編集権限を取得し、退避を編集へ戻してください。');
+        return;
       }
-      if (!savedProject) {
-        if (collaboration.sharingMode !== "supabase") {
-          saveProjectsDraftLocally(next);
-        }
-        setSaveStatus("error");
-        return false;
-      }
-      rememberPersistedProject(savedProject);
-      skipNextSave.current = true;
-      setProjects((latest) =>
-        latest.map((candidate) => (candidate.id === savedProject.id ? savedProject : candidate)),
-      );
-      await collaboration.refreshStatus().catch(() => undefined);
-      setSaveStatus("projectSaved");
-      setLastSavedAt(formatStatusTime());
-      return true;
-    },
-    [activeProjectId, projects, requireEditMode, collaboration, rememberPersistedProject, recoverProjectSaveConflict],
+      rememberPersistedProject(saved);
+      const receipt = { before: pendingSave.before, saved };
+      setProjects(latest => latest.map(project => project.id === saved.id ? rebaseProjectSave(receipt, project) : project));
+      setSaveReceipt(receipt);
+      const latest = projectsRef.current.find(project => project.id === saved.id);
+      const retired = await checkpointProject(latest ?? saved, saved.updatedAt, null, owner);
+      if ((!latest || !hasProjectChanges(latest, saved)) && retired) await removeConfirmedDraft(retired).catch(() => undefined);
+      if (epoch !== ownerEpoch.current) return;
+      setPendingSave(null);
+      setSaveStatus(saved.lastSaveOperation?.kind === 'current' ? 'projectSaved' : 'revisionSaved');
+      setSaveMessage('保存先の内容を確認しました。');
+    } catch (error) {
+      if (epoch !== ownerEpoch.current) return;
+      setSaveMessage(error instanceof SaveProtocolError ? `${error.message} (${error.code}${error.status ? ` / HTTP ${error.status}` : ''})` : '保存結果をまだ確認できません。退避は保持しています。');
+    } finally { if (epoch === ownerEpoch.current) explicitSavePending.current = false; }
+  };
+
+  const reliabilityNotice = (
+    <section className="card" aria-label="保存と下書きの状態" style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, minHeight: 42 }}>
+      {saveMessage && <p role="status" style={{ margin: 0 }}>{saveMessage}</p>}
+      {(hasUnsavedDatabaseChangesNow() || draftStatus.state === 'failed') && <p style={{ margin: 0 }} role={draftStatus.state === 'failed' ? 'alert' : 'status'}>{draftStatus.message || '変更は共有未保存です。'}</p>}
+      <div className="toolbar" style={{ margin: 0 }}>
+        {pendingRestore && <>
+          <button className="btn btn-secondary" disabled={restoringProject} onClick={() => resolveProjectRestore(pendingRestore.record)}>復元状態を確認</button>
+          {!pendingRestore.projectConfirmed && <button className="btn btn-secondary" disabled={restoringProject || !collaboration.canEdit || Boolean(activeProjectId)} onClick={() => resolveProjectRestore(pendingRestore.record, true)}>同じ復元を再送</button>}
+          <button className="btn btn-secondary" disabled={restoringProject} onClick={() => { setPendingRestore(null); setSaveMessage('復元要求をこの端末に保持しました。後で復元状態を確認できます。'); }}>後で確認</button>
+        </>}
+        {pendingSave && <>
+          <button className="btn btn-secondary" onClick={() => void resolvePendingSave()}>保存状態を確認</button>
+          <button className="btn btn-secondary" disabled={!collaboration.canEdit} onClick={() => void resolvePendingSave(true)}>同じ保存を再送</button>
+        </>}
+        {activeProject && <button className="btn btn-secondary" onClick={() => downloadProjectBackup([activeProject], 'unsaved_recovery')}>現在の内容をバックアップ</button>}
+      </div>
+      {recoveryRecords.filter(record => !activeProjectId || record.project.id === activeProjectId).map(record => (
+        <div key={record.key} style={{ width: '100%', marginTop: 4 }}>
+          <span>この利用者の退避: {record.project.name} / {record.savedAt} </span>
+          <button className="btn btn-secondary" onClick={() => exportRecoveryBytes(record)}>退避を原文で出力</button>
+          {!validDraftRecord(record) && <span role="alert">退避の構造を確認できません。原文を出力して確認してください。</span>}
+          {validDraftRecord(record) && record.intent?.restore && <button className="btn btn-secondary" disabled={restoringProject} onClick={() => {
+            setPendingRestore({ record, projectConfirmed: false }); setSaveMessage('以前の復元要求を保持しています。復元状態を確認してください。');
+          }}>以前の復元を確認</button>}
+          {validDraftRecord(record) && record.intent && !record.intent.restore && <button className="btn btn-secondary" onClick={() => {
+            if (!record.intent!.before) { setSaveMessage('以前の保存基準が不足しています。退避を出力して差分を確認してください。'); return; }
+            setPendingSave({ before: record.intent!.before, sent: record.intent!.project, expected: record.intent!.expectedUpdatedAt, draft: record, archived: true, forceOverwriteUpdatedAt: record.intent!.forceOverwriteUpdatedAt });
+            setSaveMessage('以前の保存要求を保持しています。保存状態を確認してください。');
+          }}>以前の保存を確認</button>}
+          <button className="btn btn-secondary" disabled={!validDraftRecord(record) || Boolean(record.intent?.restore) || !collaboration.canEdit || activeProjectId !== record.project.id || !projects.some(project => project.id === record.project.id)} onClick={() => {
+            const server = persistedProjects.current.get(record.project.id);
+            if (!server || !record.baseUpdatedAt || server.updatedAt !== record.baseUpdatedAt) {
+              setSaveMessage('共有データが変更済みか基準が不明です。退避を出力して差分を確認してください。'); return;
+            }
+            if (!window.confirm('この退避を編集内容へ戻します。共有保存はまだ行いません。')) return;
+            setProjects(latest => latest.map(project => project.id === record.project.id ? record.project : project));
+            if (record.intent) setPendingSave({ before: record.intent.before, sent: record.intent.project, expected: record.intent.expectedUpdatedAt, draft: record, forceOverwriteUpdatedAt: record.intent.forceOverwriteUpdatedAt });
+            setSaveMessage('退避を編集内容へ戻しました。共有未保存です。');
+          }}>退避を編集へ戻す</button>
+        </div>
+      ))}
+    </section>
   );
 
   if (loading) {
@@ -1211,6 +1490,11 @@ export default function Home() {
     return (
       <ProjectScreen
         project={activeProject}
+        saveReceipt={saveReceipt}
+        reliabilityNotice={reliabilityNotice}
+      hasUnsavedDatabaseChanges={hasUnsavedDatabaseChangesNow()}
+      hasUnsavedCommonChanges={Boolean(persistedProjects.current.get(activeProject.id) && valuesDiffer(commonSnapshot(activeProject), commonSnapshot(persistedProjects.current.get(activeProject.id)!)))}
+        hasUnsavedDatabaseChangesNow={hasUnsavedDatabaseChangesNow}
         onBackToProjects={handleBackToProjects}
         onUpdateProject={handleUpdateProject}
         onSaveProjectDraft={handleSaveProjectDraft}
@@ -1229,7 +1513,7 @@ export default function Home() {
     <ProjectListScreen
       projects={projects}
       trash={trash}
-      onSelectProject={handleSelectProject}
+      onSelectProject={id => { if (!deletePending.current && !restoreInFlight.current && !pendingRestore) handleSelectProject(id); }}
       onCreateProject={handleCreateProject}
       onRenameProject={handleRenameProject}
       onDeleteProject={handleDeleteProject}
@@ -1238,9 +1522,9 @@ export default function Home() {
       onEmptyTrash={handleEmptyTrash}
       onExportProjects={handleExportProjects}
       onImportProjects={handleImportProjects}
-      collaborationBar={collaborationBar}
-      canEdit={collaboration.canEdit}
-      canCreateProject={collaboration.canCreateProject}
+      collaborationBar={<>{collaborationBar}{reliabilityNotice}</>}
+      canEdit={collaboration.canEdit && !deletingProject && !restoringProject && !pendingRestore}
+      canCreateProject={collaboration.canCreateProject && !deletingProject && !restoringProject && !pendingRestore}
       projectLocks={collaboration.locks ?? []}
     />
   );

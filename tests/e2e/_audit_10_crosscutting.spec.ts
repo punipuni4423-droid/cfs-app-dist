@@ -16,12 +16,13 @@
  *   - Ctrl+Z キーボードハンドラは実装されていない (handleUndo はボタンのみ)。
  *   - page.tsx の保存デバウンスは 1200ms。
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./support/safe-test";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { STORAGE_KEY } from "../../app/lib/constants";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
+import { readNativeDraftProjects } from './support/native-project-drafts';
 
 const SHOT_DIR = path.join(os.tmpdir(), "cfs-audit10-artifacts", "screenshots");
 
@@ -115,54 +116,16 @@ async function resetStorage(page: Page): Promise<void> {
 }
 
 /** Mirror browser storage into the mocked project API before reload checks. */
-async function syncProjectStorageToApiMock(page: Page, projectName: string): Promise<void> {
+async function syncProjectStorageToApiMock(page: Page, projectName: string, expectedCircuitValue?: string): Promise<void> {
   await expect
     .poll(
-      async () =>
-        page.evaluate(({ storageKey, name }) => {
-          const parseProjects = (raw: string | null): Array<{ name?: unknown }> => {
-            if (!raw) return [];
-            try {
-              const parsed = JSON.parse(raw);
-              return Array.isArray(parsed) ? parsed : [];
-            } catch {
-              return [];
-            }
-          };
-          const keys = new Set<string>([storageKey]);
-          for (let i = 0; i < localStorage.length; i += 1) {
-            const key = localStorage.key(i);
-            if (key?.startsWith("cfs-project-drafts")) keys.add(key);
-          }
-          return Array.from(keys).some((key) =>
-            parseProjects(localStorage.getItem(key)).some((project) => project.name === name),
-          );
-        }, { storageKey: STORAGE_KEY, name: projectName }),
+      async () => (await readNativeDraftProjects(page)).some(project => project.name === projectName
+        && (!expectedCircuitValue || project.circuits.some(circuit => circuit.designerNumber === expectedCircuitValue))),
       { timeout: 15000, message: `project "${projectName}" should be persisted in browser storage` },
     )
     .toBe(true);
 
-  const projects = await page.evaluate(({ storageKey, name }) => {
-    const parseProjects = (raw: string | null): Array<{ name?: unknown }> => {
-      if (!raw) return [];
-      try {
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
-    };
-    const keys = new Set<string>([storageKey]);
-    for (let i = 0; i < localStorage.length; i += 1) {
-      const key = localStorage.key(i);
-      if (key?.startsWith("cfs-project-drafts")) keys.add(key);
-    }
-    return (
-      Array.from(keys)
-        .map((key) => parseProjects(localStorage.getItem(key)))
-        .find((items) => items.some((project) => project.name === name)) ?? []
-    );
-  }, { storageKey: STORAGE_KEY, name: projectName });
+  const projects = await readNativeDraftProjects(page);
 
   await page.evaluate(async (snapshot) => {
     await fetch("/api/projects", {
@@ -661,7 +624,7 @@ test.describe("AUDIT-10-D 永続化 / リロード整合性", () => {
     await createRoomTypeAndSelect(page, `RT-cpersist`);
     await addCircuitRowWithValue(page, "PERSIST-VAL");
 
-    await syncProjectStorageToApiMock(page, projName);
+    await syncProjectStorageToApiMock(page, projName, "PERSIST-VAL");
     await shot(page, "D2-before-reload");
 
     // リロード

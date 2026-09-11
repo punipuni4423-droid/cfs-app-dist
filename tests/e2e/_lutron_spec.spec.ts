@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./support/safe-test";
 import type { ProjectData, RoomType } from "../../app/types";
 import { createDefaultDevices } from "../../app/lib/constants";
 import { buildCfsLutronBridgeExport, validateCfsLutronBridgeExport } from "../../app/lib/lutronBridgeExport";

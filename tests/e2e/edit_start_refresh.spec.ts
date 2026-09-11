@@ -1,6 +1,7 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Page, type Route } from "./support/safe-test";
 import { createNewProject } from "../../app/lib/storage";
 import type { ProjectData } from "../../app/types";
+import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
 function json(body: unknown): string {
   return JSON.stringify(body);
@@ -54,6 +55,9 @@ async function installEditRefreshRoutes(
     failRefresh?: boolean;
   },
 ) {
+  // Keep authentication, tablet URL and registration explicitly mocked too;
+  // the targeted routes below override the shared local fixture.
+  await installLocalEditingMocks(page);
   let mode: "view" | "edit" = "view";
   let projectGetCount = 0;
   let releaseCount = 0;
@@ -75,17 +79,17 @@ async function installEditRefreshRoutes(
     sessionStorage.setItem("cfs-collaboration-session-v1", "edit-refresh-session");
   });
 
-  await page.route("**/api/sharing/config**", async (route) => {
+  await page.context().route("**/api/sharing/config**", async (route) => {
     await fulfillJson(route, { mode: "local" });
   });
 
-  await page.route("**/api/collaboration/status**", async (route) => {
+  await page.context().route("**/api/collaboration/status**", async (route) => {
     const url = new URL(route.request().url());
     const projectId = url.searchParams.get("projectId") || "";
     await fulfillJson(route, statusPayload(projectId, mode, options.freshProject.updatedAt));
   });
 
-  await page.route("**/api/collaboration/lock/acquire**", async (route) => {
+  await page.context().route("**/api/collaboration/lock/acquire**", async (route) => {
     mode = "edit";
     await fulfillJson(route, {
       acquired: true,
@@ -94,7 +98,7 @@ async function installEditRefreshRoutes(
     });
   });
 
-  await page.route("**/api/collaboration/lock/release**", async (route) => {
+  await page.context().route("**/api/collaboration/lock/release**", async (route) => {
     mode = "view";
     releaseCount += 1;
     await fulfillJson(route, {
@@ -104,7 +108,7 @@ async function installEditRefreshRoutes(
     });
   });
 
-  await page.route("**/api/projects**", async (route) => {
+  await page.context().route("**/api/projects**", async (route) => {
     if (route.request().method() === "POST") {
       const payload = route.request().postDataJSON() as { expectedUpdatedAt?: string; project?: ProjectData };
       savedExpectedUpdatedAt = payload.expectedUpdatedAt || "";
@@ -121,11 +125,11 @@ async function installEditRefreshRoutes(
     await fulfillJson(route, { projects: [projectGetCount === 1 ? options.staleProject : options.freshProject] });
   });
 
-  await page.route("**/api/trash**", async (route) => {
+  await page.context().route("**/api/trash**", async (route) => {
     await fulfillJson(route, { projects: [], roomTypes: [] });
   });
 
-  await page.route("**/api/app-update/status**", async (route) => {
+  await page.context().route("**/api/app-update/status**", async (route) => {
     await fulfillJson(route, {
       enabled: true,
       state: "current",

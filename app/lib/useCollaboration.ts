@@ -11,6 +11,8 @@ import type {
   CollaborationUser,
 } from "../types";
 import type { CollaborationSaveIdentity } from "./storage";
+import { getApiIdentity } from "./apiAccessClient";
+import { finiteFetch, SaveProtocolError } from './projectSaveProtocol';
 
 const USER_KEY = "cfs-collaboration-user-v1";
 const SESSION_KEY = "cfs-collaboration-session-v1";
@@ -35,6 +37,7 @@ interface CollaborationClientState {
   mode: CollaborationStatus["mode"];
   sharingMode: SharingMode;
   authReady: boolean;
+  authVerificationBlocked?: boolean;
   projectId: string;
   accessToken: string;
   user: CollaborationUser | null;
@@ -85,6 +88,7 @@ export interface CollaborationController extends CollaborationClientState {
   setEditStartRefresh: (refresh: CollaborationEditStartRefresh | null) => void;
   refreshStatus: () => Promise<void>;
   markActivity: () => void;
+  resumeIdleAfterSave?: () => void;
   readOnlyMessage: () => void;
 }
 
@@ -102,7 +106,7 @@ function loadStoredUser(): CollaborationUser | null {
     const parsed = JSON.parse(window.localStorage.getItem(USER_KEY) || "null") as CollaborationUser | null;
     if (!parsed?.id || !parsed.displayName) return null;
     return {
-      id: parsed.id,
+      id: getApiIdentity()?.userId || parsed.id,
       displayName: parsed.displayName,
       email: parsed.email || "",
       role: parsed.role,
@@ -122,8 +126,9 @@ function saveStoredUser(user: CollaborationUser): void {
 function ensureSessionId(): string {
   if (typeof window === "undefined") return "";
   const existing = window.sessionStorage.getItem(SESSION_KEY);
-  if (existing) return existing;
-  const created = newId("session");
+  const prefix = getApiIdentity()?.sessionId;
+  if (existing && (!prefix || existing.startsWith(`${prefix}:`))) return existing;
+  const created = prefix ? `${prefix}:${newId('tab')}` : newId("session");
   window.sessionStorage.setItem(SESSION_KEY, created);
   return created;
 }
@@ -207,7 +212,7 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = typeof payload?.error === "string" ? payload.error : `Request failed: ${response.status}`;
-    throw new Error(message);
+    throw Object.assign(new Error(message), { status: response.status });
   }
   return payload as T;
 }
@@ -218,9 +223,7 @@ const COLLABORATION_FETCH_TIMEOUT_MS = 15_000;
 // Lock/status requests must not hang forever: a stalled request would leave
 // busy=true, which freezes the status poll and pins the transient message.
 function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), COLLABORATION_FETCH_TIMEOUT_MS);
-  return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+  return finiteFetch(String(input), init, COLLABORATION_FETCH_TIMEOUT_MS);
 }
 
 // A status refresh without an explicit message must not preserve the transient
@@ -247,6 +250,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
     mode: "local",
     sharingMode: "local",
     authReady: false,
+    authVerificationBlocked: false,
     projectId: scopedProjectId,
     accessToken: "",
     user: null,
@@ -270,6 +274,11 @@ export function useCollaboration(projectId = ""): CollaborationController {
   const lastActivityAtRef = useRef(Date.now());
   const lastHeartbeatAtRef = useRef(0);
   const heartbeatInFlightRef = useRef(false);
+  const finishingRef = useRef(false);
+  const releasingRef = useRef(false);
+  const idleBlockedRef = useRef(false);
+  const transitionRef = useRef(0);
+  const authGenerationRef = useRef(0);
   const finishGuardRef = useRef<CollaborationFinishGuard | null>(null);
   const editStartRefreshRef = useRef<CollaborationEditStartRefresh | null>(null);
   const startEditingAfterRegistrationRef = useRef(false);
@@ -296,7 +305,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       return {
         ...current,
         enabled: Boolean(status.enabled),
-        mode: status.mode,
+        mode: current.authVerificationBlocked ? 'view' : status.mode,
         projectId: status.projectId || projectIdRef.current,
         lock: status.lock,
         locks: status.locks || [],
@@ -314,6 +323,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
 
   const refreshStatus = useCallback(async (): Promise<void> => {
     const current = stateRef.current;
+    const transition = transitionRef.current;
     if (current.sharingMode === "supabase" && !current.accessToken) return;
     const { userId, sessionId, projectId } = identityBody();
     const query = new URLSearchParams({ userId, sessionId, projectId });
@@ -322,7 +332,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       headers: authHeaders(),
     });
     const status = await parseJsonResponse<CollaborationStatus>(response);
-    applyStatus(status);
+    if (transition === transitionRef.current && !releasingRef.current) applyStatus(status);
   }, [applyStatus, authHeaders, identityBody]);
 
   const releaseEditingLock = useCallback(async (): Promise<CollaborationStatus | null> => {
@@ -336,19 +346,23 @@ export function useCollaboration(projectId = ""): CollaborationController {
   }, [authHeaders, identityBody]);
 
   const runEditStartRefresh = useCallback(async (status: CollaborationStatus): Promise<boolean> => {
+    const transition = transitionRef.current;
     const refresh = editStartRefreshRef.current;
     if (!refresh) return true;
     setState((current) => ({ ...current, message: "Refreshing latest shared data." }));
     try {
       const result = await refresh(status);
+      if (transition !== transitionRef.current) return false;
       if (result === false) throw new Error("Latest shared data could not be loaded.");
       return true;
     } catch (error) {
+      if (transition !== transitionRef.current) return false;
       const message = error instanceof Error
         ? `Latest shared data could not be loaded: ${error.message}. Edit mode was not started.`
         : "Latest shared data could not be loaded. Edit mode was not started.";
       try {
         const releaseStatus = await releaseEditingLock();
+        if (transition !== transitionRef.current) return false;
         if (releaseStatus) {
           applyStatus(releaseStatus, message);
         } else {
@@ -363,6 +377,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
 
   useEffect(() => {
     const previousProjectId = projectIdRef.current;
+    if (previousProjectId !== scopedProjectId) { transitionRef.current++; idleBlockedRef.current = false; }
     const current = stateRef.current;
     if (
       previousProjectId !== scopedProjectId &&
@@ -406,7 +421,9 @@ export function useCollaboration(projectId = ""): CollaborationController {
   }, [refreshStatus, scopedProjectId, state.authReady]);
 
   const hydrateSecureSession = useCallback(async (token: string, sessionId: string): Promise<void> => {
+    const authGeneration = ++authGenerationRef.current;
     if (!token) {
+      transitionRef.current++; idleBlockedRef.current = true;
       setState((current) => ({
         ...current,
         enabled: true,
@@ -414,6 +431,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
         authReady: true,
         projectId: projectIdRef.current,
         accessToken: "",
+        authVerificationBlocked: true,
         user: null,
         role: null,
         mode: "view",
@@ -424,16 +442,19 @@ export function useCollaboration(projectId = ""): CollaborationController {
       return;
     }
     try {
-      const authResponse = await fetch("/api/collaboration/auth", {
+      const authResponse = await fetchWithTimeout("/api/collaboration/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders(token) },
         body: "{}",
       });
       const authPayload = await parseJsonResponse<{ membership: CollaborationMembership }>(authResponse);
+      if (authGeneration !== authGenerationRef.current) return;
+      if (stateRef.current.user?.id !== userFromMembership(authPayload.membership).id) transitionRef.current++;
+      const transition = transitionRef.current;
       let status: CollaborationStatus | null = null;
       let statusError = "";
       try {
-        const statusResponse = await fetch(`/api/collaboration/status?${new URLSearchParams({ sessionId, projectId: projectIdRef.current })}`, {
+        const statusResponse = await fetchWithTimeout(`/api/collaboration/status?${new URLSearchParams({ sessionId, projectId: projectIdRef.current })}`, {
           cache: "no-store",
           headers: authHeaders(token),
         });
@@ -442,6 +463,8 @@ export function useCollaboration(projectId = ""): CollaborationController {
         statusError = error instanceof Error ? error.message : "Could not read shared edit status.";
       }
       const user = userFromMembership(authPayload.membership);
+      if (authGeneration !== authGenerationRef.current) return;
+      if (transition !== transitionRef.current || releasingRef.current) status = null;
       setState((current) => ({
         ...current,
         enabled: true,
@@ -449,10 +472,11 @@ export function useCollaboration(projectId = ""): CollaborationController {
         authReady: true,
         projectId: status?.projectId || projectIdRef.current,
         accessToken: token,
+        authVerificationBlocked: false,
         user,
         role: authPayload.membership.role,
-        mode: status?.mode || "view",
-        lock: status?.lock || null,
+        mode: status?.mode || (current.user?.id === user.id ? current.mode : 'view'),
+        lock: status?.lock || (current.user?.id === user.id ? current.lock : null),
         locks: status?.locks || [],
         lastUpdatedBy: status?.lastUpdatedBy || current.lastUpdatedBy,
         lastUpdatedAt: status?.lastUpdatedAt !== undefined ? status.lastUpdatedAt : current.lastUpdatedAt,
@@ -469,9 +493,12 @@ export function useCollaboration(projectId = ""): CollaborationController {
       // signed-in user: that flips requiresSignIn, which reloads all projects
       // and silently discards unsaved local edits. Only a real server-side
       // rejection (4xx with a message) signs the user out.
+      if (authGeneration !== authGenerationRef.current) return;
       const transient =
-        error instanceof TypeError ||
+        error instanceof TypeError || error instanceof SaveProtocolError ||
+        (error instanceof Error && Number((error as Error & { status?: number }).status) >= 500) ||
         (error instanceof DOMException && error.name === "AbortError");
+      transitionRef.current++; idleBlockedRef.current = true;
       setState((current) => {
         const keepSignedIn = transient && Boolean(current.user);
         return {
@@ -480,14 +507,15 @@ export function useCollaboration(projectId = ""): CollaborationController {
           sharingMode: "supabase",
           authReady: true,
           projectId: projectIdRef.current,
-          accessToken: token,
+          accessToken: keepSignedIn ? current.accessToken : '',
+          authVerificationBlocked: true,
           user: keepSignedIn ? current.user : null,
           role: keepSignedIn ? current.role : null,
-          mode: keepSignedIn ? current.mode : "view",
+          mode: "view",
           lock: keepSignedIn ? current.lock : null,
           locks: keepSignedIn ? current.locks : [],
           message: keepSignedIn
-            ? "Connection hiccup while verifying the account. Retrying automatically."
+            ? "アカウントを確認できません。以前の認証と下書きを保持して閲覧モードに戻りました。再サインインしてください。"
             : error instanceof Error
               ? error.message
               : "Could not verify this CFS account.",
@@ -507,6 +535,11 @@ export function useCollaboration(projectId = ""): CollaborationController {
         if (!mounted) return;
         if (config.mode !== "supabase") {
           const user = loadStoredUser();
+          if (user && getApiIdentity()) {
+            const registration = await fetch('/api/collaboration/users/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user.id, displayName: user.displayName, email: user.email }) });
+            if (!registration.ok) throw new Error('利用者の接続確認に失敗しました。');
+            saveStoredUser(user);
+          }
           setState((current) => ({ ...current, sharingMode: "local", authReady: true, projectId: projectIdRef.current, sessionId, user }));
           const response = await fetch(`/api/collaboration/status?${new URLSearchParams({ userId: user?.id || "", sessionId, projectId: projectIdRef.current })}`, { cache: "no-store" });
           const status = await parseJsonResponse<CollaborationStatus>(response);
@@ -573,7 +606,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       const response = await fetch("/api/collaboration/users/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: existing?.id || newId("user"), displayName, email: profile.email.trim() }),
+        body: JSON.stringify({ userId: getApiIdentity()?.userId || existing?.id || newId("user"), displayName, email: profile.email.trim() }),
       });
       const payload = await parseJsonResponse<{ ok: boolean; user: CollaborationUser }>(response);
       const shouldStartEditing = startEditingAfterRegistrationRef.current;
@@ -670,6 +703,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
   }, []);
 
   const signOut = useCallback(async (): Promise<void> => {
+    authGenerationRef.current++; transitionRef.current++; idleBlockedRef.current = true;
     try {
       if (stateRef.current.mode === "edit") {
         await releaseEditingLock().catch(() => undefined);
@@ -717,6 +751,10 @@ export function useCollaboration(projectId = ""): CollaborationController {
 
   const startEditing = useCallback(async (): Promise<void> => {
     const current = stateRef.current;
+    if (current.authVerificationBlocked) { setState(next => ({ ...next, message: 'アカウントの確認が必要です。再サインインしてください。' })); return; }
+    if (current.busy || finishingRef.current) return;
+    const transition = ++transitionRef.current;
+    idleBlockedRef.current = false;
     if (!current.user) {
       startEditingAfterRegistrationRef.current = true;
       setState((next) => ({ ...next, userDialogOpen: true }));
@@ -734,20 +772,22 @@ export function useCollaboration(projectId = ""): CollaborationController {
         body: JSON.stringify(identityBody()),
       });
       const payload = await parseJsonResponse<{ acquired: boolean; lock: CollaborationLock | null; status: CollaborationStatus }>(response);
+      if (transition !== transitionRef.current) return;
       if (!payload.acquired) {
         const owner = payload.lock?.userName || payload.status?.lock?.userName || "Another user";
         applyStatus(payload.status, `${owner} is editing. Stay in view mode.`);
         return;
       }
       const refreshed = await runEditStartRefresh(payload.status);
-      if (!refreshed) return;
+      if (!refreshed || transition !== transitionRef.current) return;
       lastActivityAtRef.current = Date.now();
       lastHeartbeatAtRef.current = Date.now();
       applyStatus(payload.status, "Editing started.");
     } catch (error) {
+      if (transition !== transitionRef.current) return;
       setState((next) => ({ ...next, message: error instanceof Error ? error.message : "Could not start editing." }));
     } finally {
-      setState((next) => ({ ...next, busy: false }));
+      if (transition === transitionRef.current) setState((next) => ({ ...next, busy: false }));
     }
   }, [applyStatus, authHeaders, identityBody, runEditStartRefresh]);
 
@@ -794,14 +834,24 @@ export function useCollaboration(projectId = ""): CollaborationController {
 
   const finishEditing = useCallback(async (options: FinishEditingOptions = {}): Promise<void> => {
     if (!stateRef.current.enabled || stateRef.current.mode !== "edit") return;
+    if (finishingRef.current || (options.idle && idleBlockedRef.current)) return;
+    finishingRef.current = true;
+    if (!options.idle) idleBlockedRef.current = false;
+    const transition = transitionRef.current;
+    try {
     if (!options.bypassGuard && finishGuardRef.current) {
       try {
-        if (!(await finishGuardRef.current({ idle: Boolean(options.idle) }))) return;
+        if (!(await finishGuardRef.current({ idle: Boolean(options.idle) }))) { idleBlockedRef.current = true; return; }
       } catch {
+        idleBlockedRef.current = true;
         setState((current) => ({ ...current, message: "Could not confirm the revision state. Continue editing and try again." }));
         return;
       }
     }
+    if (transition !== transitionRef.current || stateRef.current.mode !== 'edit') return;
+    releasingRef.current = true;
+    transitionRef.current++;
+    const releaseTransition = transitionRef.current;
     setState((current) => ({ ...current, busy: true }));
     let releaseFailed = false;
     let releaseStatus: CollaborationStatus | null = null;
@@ -811,6 +861,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
     } catch {
       releaseFailed = true;
     } finally {
+      if (releaseTransition !== transitionRef.current) return;
       const finishMessage = releaseFailed ? "Editing release could not be confirmed. The lock will expire automatically." : releaseMessage;
       if (!releaseFailed && releaseStatus) {
         applyStatus(releaseStatus, finishMessage);
@@ -826,6 +877,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       }));
       if (!releaseFailed) await refreshStatus().catch(() => undefined);
     }
+    } finally { finishingRef.current = false; releasingRef.current = false; }
   }, [applyStatus, refreshStatus, releaseEditingLock]);
 
   const markActivity = useCallback((): void => {
@@ -842,15 +894,15 @@ export function useCollaboration(projectId = ""): CollaborationController {
   useEffect(() => {
     const timer = window.setInterval(() => {
       const current = stateRef.current;
-      if (!current.enabled || current.busy || (current.sharingMode === "supabase" && !current.user)) return;
+      if (!current.enabled || releasingRef.current || (current.sharingMode === "supabase" && !current.user)) return;
       const now = Date.now();
       if (current.mode === "edit") {
-        if (now - lastActivityAtRef.current >= current.idleMs) {
+        if (!current.busy && !finishingRef.current && !idleBlockedRef.current && now - lastActivityAtRef.current >= current.idleMs) {
           void finishEditing({ idle: true });
-          return;
         }
         if (now - lastHeartbeatAtRef.current < current.heartbeatMs || heartbeatInFlightRef.current) return;
         heartbeatInFlightRef.current = true;
+        const transition = transitionRef.current;
         void fetchWithTimeout("/api/collaboration/lock/heartbeat", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -858,7 +910,10 @@ export function useCollaboration(projectId = ""): CollaborationController {
         })
           .then((response) => parseJsonResponse<{ acquired: boolean; lock: CollaborationLock | null; status?: CollaborationStatus }>(response))
           .then((payload) => {
+            if (transition !== transitionRef.current || releasingRef.current) return;
             if (!payload.acquired) {
+              transitionRef.current++;
+              idleBlockedRef.current = true;
               if (payload.status) {
                 applyStatus(payload.status, "Edit lock expired. Returned to view mode.");
               } else {
@@ -873,7 +928,11 @@ export function useCollaboration(projectId = ""): CollaborationController {
               setState((next) => ({ ...next, lock: payload.lock || next.lock }));
             }
           })
-          .catch(() => setState((next) => ({ ...next, mode: "view", message: "Could not refresh edit lock. Returned to view mode." })))
+          .catch(() => {
+            if (transition !== transitionRef.current || releasingRef.current) return;
+            transitionRef.current++; idleBlockedRef.current = true;
+            setState((next) => ({ ...next, mode: "view", message: "Could not refresh edit lock. Returned to view mode. Unsaved changes remain on this device." }));
+          })
           .finally(() => { heartbeatInFlightRef.current = false; });
         return;
       }
@@ -896,17 +955,17 @@ export function useCollaboration(projectId = ""): CollaborationController {
     return () => window.removeEventListener("beforeunload", release);
   }, [identityBody]);
 
-  const canEdit = !state.enabled || (state.mode === "edit" && (state.sharingMode !== "supabase" || roleAllowsClient(state.role, "editor")));
+  const canEdit = !state.authVerificationBlocked && (!state.enabled || (!releasingRef.current && state.mode === "edit" && (state.sharingMode !== "supabase" || roleAllowsClient(state.role, "editor"))));
   const requiresSignIn = state.sharingMode === "supabase" && (!state.accessToken || !state.user);
   const canCreateProject =
-    !state.enabled ||
+    !state.authVerificationBlocked && (!state.enabled ||
     Boolean(
       state.user &&
         state.sessionId &&
         (state.sharingMode !== "supabase" || (state.accessToken && roleAllowsClient(state.role, "editor"))),
-    );
+    ));
   const editIdentity = useMemo<CollaborationSaveIdentity | undefined>(() => {
-    if (!state.enabled || state.mode !== "edit" || !state.user || !state.sessionId) return undefined;
+    if (state.authVerificationBlocked || !state.enabled || state.mode !== "edit" || !state.user || !state.sessionId) return undefined;
     return {
       userId: state.user.id,
       sessionId: state.sessionId,
@@ -914,9 +973,9 @@ export function useCollaboration(projectId = ""): CollaborationController {
       requireLock: true,
       accessToken: state.sharingMode === "supabase" ? state.accessToken : undefined,
     };
-  }, [state.accessToken, state.enabled, state.mode, state.projectId, state.sessionId, state.sharingMode, state.user]);
+  }, [state.authVerificationBlocked, state.accessToken, state.enabled, state.mode, state.projectId, state.sessionId, state.sharingMode, state.user]);
   const projectCreateIdentity = useMemo<CollaborationSaveIdentity | undefined>(() => {
-    if (!state.enabled || !state.user || !state.sessionId) return undefined;
+    if (state.authVerificationBlocked || !state.enabled || !state.user || !state.sessionId) return undefined;
     if (state.sharingMode === "supabase" && (!state.accessToken || !roleAllowsClient(state.role, "editor"))) return undefined;
     return {
       userId: state.user.id,
@@ -924,7 +983,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       requireLock: false,
       accessToken: state.sharingMode === "supabase" ? state.accessToken : undefined,
     };
-  }, [state.accessToken, state.enabled, state.role, state.sessionId, state.sharingMode, state.user]);
+  }, [state.authVerificationBlocked, state.accessToken, state.enabled, state.role, state.sessionId, state.sharingMode, state.user]);
   const editorInfo = useMemo<CollaborationEditorDraft | null>(() => {
     if (!state.user) return null;
     return { userId: state.user.id, displayName: state.user.displayName };
@@ -964,6 +1023,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
     setEditStartRefresh,
     refreshStatus,
     markActivity,
+    resumeIdleAfterSave: () => { idleBlockedRef.current = false; lastActivityAtRef.current = Date.now(); },
     readOnlyMessage,
   };
 }

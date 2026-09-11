@@ -106,6 +106,8 @@ Git管理ZIPでは、利用者PCにGit for Windowsがインストールされて
 
 Git管理ZIPでは、Project Selection画面のApp Updateから更新確認できます。`Git was not found` が出る場合は、古いZIPまたはPortableGitなしのZIPを起動している可能性があります。最新版のGit管理ZIPを使い、ショートカットを作り直してください。
 
+旧版でローカル保存を使用している場合は、更新前に [ローカル保存の更新・旧版移行手順](Manual/LOCAL_DATA_UPDATE_GUIDE_JA.md) を確認してください。`.next/standalone/data` または `runtime/data` が保存先の旧版は、Updateボタンだけではデータを保護できません。新ZIPの `scripts/migrate-cfs-legacy-local-data.ps1` と `scripts/cfs-local-data-preservation.ps1` を同じ管理用フォルダへ取り出し、全writerを停止して原本を保全・移送してから公式updaterを実行します。共有Supabase案件はこのローカル移送の対象外です。
+
 ### 更新元リポジトリについて
 
 更新元は公開配布リポジトリ（cfs-app-dist）です。読み取りに認証は不要のため、**GitHubアカウントやサインインなしで**更新確認・更新ができます。`Update repository sign-in failed` が表示される場合は、旧ZIP（非公開リポジトリを参照する版）を使用している可能性があるため、最新のZIPへ入れ替えてください。

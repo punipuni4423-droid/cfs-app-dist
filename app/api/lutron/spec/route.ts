@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
+import { requireApiAccess } from "../../../lib/apiAuth";
+import { localProjectStore } from "../../../lib/localProjectStore";
 import { NextResponse } from "next/server";
 import type { DeviceMaster, ProjectData } from "../../../types";
 import { buildCfsLutronBridgeExport } from "../../../lib/lutronBridgeExport";
@@ -11,7 +11,6 @@ import { callSecureSharingFunction, isSecureSharingEnabled } from "../../../lib/
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const DATA_FILE = path.join(process.cwd(), "data", "projects.json");
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
 
 async function readProjects(request: Request): Promise<ProjectData[]> {
@@ -23,14 +22,7 @@ async function readProjects(request: Request): Promise<ProjectData[]> {
     }
     return migrateProjectsPayload(payload);
   }
-  try {
-    const raw = await readFile(DATA_FILE, "utf8");
-    return migrateProjectsPayload(JSON.parse(raw) as unknown);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return [];
-    throw error;
-  }
+  return migrateProjectsPayload(await localProjectStore.locked(localProjectStore.readProjects));
 }
 
 function findProject(projects: readonly ProjectData[], projectId: string | null): ProjectData | undefined {
@@ -77,6 +69,8 @@ function parseDevices(value: unknown): DeviceMaster[] | undefined {
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
+  const denied = await requireApiAccess(request);
+  if (denied) return denied;
   if (!isAllowedReadRequest(request)) {
     return NextResponse.json({ error: "read request origin is not allowed" }, { status: 403 });
   }
@@ -112,6 +106,8 @@ export async function GET(request: Request): Promise<NextResponse> {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const denied = await requireApiAccess(request);
+  if (denied) return denied;
   if (!isAllowedReadRequest(request)) {
     return NextResponse.json({ error: "read request origin is not allowed" }, { status: 403 });
   }

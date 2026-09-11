@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./support/safe-test";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
 // Read-only CFS sub-window (2026-08-21): the CFS tab's "Sub Window" button

@@ -17,10 +17,11 @@
  * configured buttons only, exactly as in T-35. Unlinked rows keep the
  * original "Setting" / condition-label texts.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./support/safe-test";
 import { STORAGE_KEY } from "../../app/lib/constants";
 import { SETTING_LINK_COLORS } from "../../app/lib/settingLinkGroups";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
+import { readNativeDraftProject } from './support/native-project-drafts';
 
 function hexToRgb(hex: string): string {
   const num = parseInt(hex.replace("#", ""), 16);
@@ -69,39 +70,21 @@ async function isolate(page: Page): Promise<void> {
   );
 }
 
-/** Read the persisted Palladiom switch rows (draft store, then API fallback). */
+/** Read unsaved Palladiom switch rows from a completed native draft transaction. */
 async function readPalladiomRows(page: Page): Promise<SwitchRow[]> {
   await page.waitForTimeout(1800);
-  return page.evaluate(async ({ draftKey }) => {
-    const pick = (projects: unknown): SwitchRow[] => {
-      const list = projects as Array<{ roomTypes?: Array<{ switches?: Array<{ kind?: string }> }> }>;
-      return ((list?.[0]?.roomTypes?.[0]?.switches ?? []) as Array<{ kind?: string }>).filter(
-        (item) => item.kind === "lutronPd",
-      ) as SwitchRow[];
-    };
-    try {
-      const drafts = JSON.parse(localStorage.getItem(draftKey) || "[]");
-      const fromDraft = pick(drafts);
-      if (fromDraft.length > 0) return fromDraft;
-    } catch { /* fall through to API */ }
-    try {
-      const res = await fetch("/api/projects", { cache: "no-store" });
-      const body = await res.json();
-      return pick(body.projects ?? []);
-    } catch {
-      return [];
-    }
-  }, { draftKey: PROJECT_DRAFT_STORAGE_KEY });
+  return ((await readNativeDraftProject(page))?.roomTypes?.[0]?.switches ?? []).filter(item => item.kind === 'lutronPd') as SwitchRow[];
 }
 
 /** Seed Bedroom area + circuit + scenes so the Function Setting panel has content. */
 async function seedAreaAndScenes(page: Page): Promise<void> {
-  // Wait for the UI-created project/roomType to reach the (mocked) API via
-  // the 1200ms debounce autosave before injecting data.
+  // UI-created, unsaved RoomType is in the native draft; seed writes remain mocked API operations.
   await page.waitForTimeout(1800);
-  await page.evaluate(async ({ draftKey, storageKey }) => {
+  const nativeProject = await readNativeDraftProject(page);
+  await page.evaluate(async ({ draftKey, storageKey, nativeProject }) => {
     type AnyProject = { roomTypes?: Array<Record<string, unknown>>; [k: string]: unknown };
     const readLocal = (): AnyProject[] => {
+      if (nativeProject?.roomTypes?.[0]) return [nativeProject] as unknown as AnyProject[];
       for (const key of [draftKey, storageKey]) {
         try {
           const parsed = JSON.parse(localStorage.getItem(key) || "[]");
@@ -150,7 +133,7 @@ async function seedAreaAndScenes(page: Page): Promise<void> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ projects }),
     });
-  }, { draftKey: PROJECT_DRAFT_STORAGE_KEY, storageKey: STORAGE_KEY });
+  }, { draftKey: PROJECT_DRAFT_STORAGE_KEY, storageKey: STORAGE_KEY, nativeProject });
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(
     () => !document.body.textContent?.includes("Loading projects"),
@@ -160,6 +143,7 @@ async function seedAreaAndScenes(page: Page): Promise<void> {
   // the reload; only walk through the cards when it did not.
   await page.waitForTimeout(500);
   const switchSubTab = page.locator('[role="tab"]').filter({ hasText: /^Switch$/ }).first();
+  await expect(switchSubTab.or(page.locator('button.screen-card').first()).first()).toBeVisible({ timeout: 20000 });
   if (!(await switchSubTab.isVisible().catch(() => false))) {
     const projectCard = page.locator("button.screen-card").first();
     await expect(projectCard).toBeVisible({ timeout: 10000 });
@@ -241,6 +225,7 @@ async function closeOverlay(page: Page): Promise<void> {
 
 test.describe("T-35 switch setting link", () => {
   test.beforeEach(async ({ page }) => {
+    await page.context().route("**/api/**", (route) => route.fulfill({ json: {} }));
     await installLocalEditingMocks(page);
   });
   test.setTimeout(240000);

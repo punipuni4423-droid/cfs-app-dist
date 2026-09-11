@@ -14,7 +14,7 @@
  *     was already correct - regression guard)
  * Display-only: the persisted values ("" / "Raise" / percent) must not change.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./support/safe-test";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
 async function apiPutProjects(page: Page, projects: unknown[]): Promise<void> {

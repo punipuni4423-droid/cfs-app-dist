@@ -1,4 +1,4 @@
-import { expect, test, type Route } from "@playwright/test";
+import { expect, test, type Route } from "./support/safe-test";
 import { createNewProject } from "../../app/lib/storage";
 
 function json(body: unknown): string {
@@ -24,11 +24,11 @@ test("compact Edit registration accepts a display name and enters edit mode", as
     sessionStorage.clear();
   });
 
-  await page.route("**/api/sharing/config", async (route) => {
+  await page.context().route("**/api/sharing/config", async (route) => {
     await fulfillJson(route, { mode: "local" });
   });
 
-  await page.route("**/api/collaboration/status**", async (route) => {
+  await page.context().route("**/api/collaboration/status**", async (route) => {
     const url = new URL(route.request().url());
     const userId = url.searchParams.get("userId") || registeredUser?.id || "";
     const sessionId = url.searchParams.get("sessionId") || "session:test";
@@ -54,7 +54,7 @@ test("compact Edit registration accepts a display name and enters edit mode", as
     });
   });
 
-  await page.route("**/api/collaboration/users/register", async (route) => {
+  await page.context().route("**/api/collaboration/users/register", async (route) => {
     const payload = route.request().postDataJSON() as { userId?: string; displayName?: string; email?: string };
     registeredUser = {
       id: payload.userId || "user:test",
@@ -71,7 +71,7 @@ test("compact Edit registration accepts a display name and enters edit mode", as
     });
   });
 
-  await page.route("**/api/collaboration/lock/acquire", async (route) => {
+  await page.context().route("**/api/collaboration/lock/acquire", async (route) => {
     lockAcquireCount += 1;
     const payload = route.request().postDataJSON() as { userId?: string; sessionId?: string };
     editMode = true;
@@ -107,19 +107,19 @@ test("compact Edit registration accepts a display name and enters edit mode", as
     });
   });
 
-  await page.route("**/api/projects", async (route) => {
+  await page.context().route("**/api/projects", async (route) => {
     await fulfillJson(route, { projects: [project] });
   });
 
-  await page.route("**/api/trash", async (route) => {
+  await page.context().route("**/api/trash", async (route) => {
     await fulfillJson(route, { projects: [], roomTypes: [] });
   });
 
-  await page.route("**/api/tablet-url", async (route) => {
+  await page.context().route("**/api/tablet-url", async (route) => {
     await fulfillJson(route, { url: "" });
   });
 
-  await page.route("**/api/app-update/status**", async (route) => {
+  await page.context().route("**/api/app-update/status**", async (route) => {
     await fulfillJson(route, {
       enabled: true,
       state: "current",

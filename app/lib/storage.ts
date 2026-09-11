@@ -39,13 +39,17 @@ import { isProjectSettings, migrateProjectSettings } from './programmingNameSett
 import { createAppId } from './id';
 import { normalizeSwitchPriorityFunctions } from './switchSync';
 import { normalizeProjectRoomTypeCircuitIds } from './roomTypeSync';
+import { collectionLosses, migrationMessage, migrationReport, setMigrationReviewPending, type MigrationReport } from './migrationSafety';
+import { cachedProjectDrafts, checkpointProject } from './projectDraftStore';
+import { finiteFetch, matchesSaveIntent, prepareSaveProject, projectFingerprint, SAVE_PROTOCOL_VERSION, SaveProtocolError, saveError } from './projectSaveProtocol';
+import { validCommonHistory } from './projectCommonHistory';
+import { canonicalJson } from './canonicalJson';
 
 // v2 (2026-08-21): invalidates drafts written by builds that had the
 // stale-snapshot clobber bug. Those drafts contain silently reverted values
 // (e.g. Palladiom By-Scene dropped), and the newer-draft-wins reload merge
 // would resurrect them over good server data. New-format drafts are only
 // written by fixed builds, so the merge can trust them again.
-const PROJECT_DRAFT_STORAGE_KEY = 'cfs-project-drafts-v2';
 const VALID_SWITCH_KINDS = new Set(['contact', 'lutronPd', 'lutronPico', 'command', 'tstat', 'pir', 'qsm']);
 const VALID_BUTTON_TYPES = new Set(['single', 'toggle', 'scene']);
 const VALID_HVAC_PROTOCOLS = new Set(['Modbus', 'FCU', 'BACnet']);
@@ -54,48 +58,6 @@ const VALID_CURTAIN_ACTIONS = new Set(['Open', 'Close', 'Stop']);
 const VALID_INSPECTION_MARK_SOURCE_TYPES = new Set(['areaScene', 'roomScene', 'switch']);
 const VALID_INSPECTION_MARK_SCOPES = new Set(['areaScene', 'override']);
 const PROJECT_BACKUP_SCHEMA_VERSION = 2;
-const LEGACY_STORAGE_KEYS = [
-  'cfs-projects-v1',
-  'cfs-projects-v2',
-  'cfs-projects-v3',
-  'cfs-projects-v4',
-  'cfs-projects-v5',
-  'cfs-projects-v6',
-  'cfs-projects-v7',
-  'cfs-projects-v8',
-  'cfs-projects-v9',
-  'cfs-projects-v10',
-  'cfs-projects-v11',
-  'cfs-projects-v12',
-  'cfs-projects-v12-backup',
-  'cfs-projects-v13',
-  'cfs-projects-v13-backup',
-  'cfs-app-settings-v1-backup',
-];
-
-function cleanupLegacyStorageKeys(): void {
-  if (typeof window === 'undefined') return;
-  for (const key of LEGACY_STORAGE_KEYS) {
-    if (key !== STORAGE_KEY) {
-      window.localStorage.removeItem(key);
-    }
-  }
-}
-
-function cleanupProjectCacheStorageForRetry(targetKey: string): void {
-  if (typeof window === 'undefined') return;
-  const retryCleanupKeys = [
-    ...LEGACY_STORAGE_KEYS,
-    PROJECT_DRAFT_STORAGE_KEY,
-    STORAGE_KEY,
-    TRASH_STORAGE_KEY,
-  ];
-  for (const key of retryCleanupKeys) {
-    if (key && key !== targetKey) {
-      window.localStorage.removeItem(key);
-    }
-  }
-}
 
 function safeSetItem(
   key: string,
@@ -107,27 +69,17 @@ function safeSetItem(
     window.localStorage.setItem(key, value);
     return true;
   } catch (error) {
-    cleanupLegacyStorageKeys();
-    if (options.cleanupProjectCacheOnRetry) {
-      cleanupProjectCacheStorageForRetry(key);
-    }
+    // A failed write must never delete the last recoverable draft or backup.
     try {
       window.localStorage.setItem(key, value);
       return true;
     } catch (retryError) {
       console.error('Failed to save CFS data to localStorage.', retryError);
-      if (options.cleanupProjectCacheOnRetry) {
-        try {
-          window.localStorage.removeItem(key);
-        } catch {
-          // Ignore cleanup failures. The database save path remains authoritative.
-        }
-      }
     }
     console.error('Failed to save CFS data to localStorage.', error);
     if (notifyOnError && typeof window !== 'undefined') {
       window.alert(
-        'Failed to save locally. Old migration backups were cleared, but browser storage is still full. Delete unnecessary projects or old revisions and try again.',
+        '端末への保存に失敗しました。以前の退避は削除していません。画面を閉じずにJSONをバックアップしてください。',
       );
     }
     return false;
@@ -571,20 +523,14 @@ function migrateRoomType(value: unknown): RoomType | null {
   const rows = v.rows
     .map((row) => migrateCfsCircuit(row))
     .filter((row): row is CfsCircuit => row !== null);
-  if (
-    !Array.isArray(v.deviceAssignments) ||
-    !v.deviceAssignments.every(isDeviceAssignment)
-  ) {
-    return null;
-  }
   const scenes: Scene[] =
-    Array.isArray(v.scenes) && v.scenes.every(isScene)
-      ? (v.scenes as Scene[])
+    Array.isArray(v.scenes)
+      ? v.scenes.filter(isScene)
       : [];
   const roomScenes: RoomScene[] =
-    Array.isArray(v.roomScenes) && v.roomScenes.every(isRoomScene)
-      ? ((v.roomScenes as RoomScene[]).length > 0
-          ? (v.roomScenes as RoomScene[]).map((scene) => ({
+    Array.isArray(v.roomScenes)
+      ? (v.roomScenes.length > 0
+          ? v.roomScenes.filter(isRoomScene).map((scene) => ({
               ...scene,
               backlightCondition: migrateBacklightCondition(
                 (scene as unknown as Record<string, unknown>).backlightCondition,
@@ -602,8 +548,8 @@ function migrateRoomType(value: unknown): RoomType | null {
           .filter((assignment): assignment is HvacAssignment => assignment !== null)
       : [];
   const hvacSeasons: HvacSeason[] =
-    Array.isArray(v.hvacSeasons) && v.hvacSeasons.every(isHvacSeason)
-      ? (v.hvacSeasons as HvacSeason[])
+    Array.isArray(v.hvacSeasons)
+      ? v.hvacSeasons.filter(isHvacSeason)
       : createDefaultHvacSeasons();
   const curtainAssignments: CurtainAssignment[] =
     Array.isArray(v.curtainAssignments)
@@ -613,8 +559,8 @@ function migrateRoomType(value: unknown): RoomType | null {
       : [];
   const cfsRowDisplay = normalizeCfsRowDisplaySettings(v.cfsRowDisplay);
   const normalizedSwitches: Array<Omit<SwitchEntry, 'backlightAssignment'> & { backlightAssignment?: string }> =
-    Array.isArray(v.switches) && v.switches.every(isSwitchEntry)
-      ? (v.switches as SwitchEntry[]).map((sw) => ({
+    Array.isArray(v.switches)
+      ? v.switches.filter(isSwitchEntry).map((sw) => ({
           ...sw,
           switchGroupId:
             typeof (sw as unknown as Record<string, unknown>).switchGroupId === 'string' &&
@@ -673,15 +619,19 @@ function migrateRoomType(value: unknown): RoomType | null {
     ? normalizeBacklightLevels(v.backlightLevels)
     : backlightLevelsFromSwitches(switches);
   const pduDeviceCounts: PduDeviceCount[] =
-    Array.isArray(v.pduDeviceCounts) && v.pduDeviceCounts.every(isPduDeviceCount)
-      ? (v.pduDeviceCounts as PduDeviceCount[]).filter((item) => Number.isFinite(item.quantity))
+    Array.isArray(v.pduDeviceCounts)
+      ? v.pduDeviceCounts.filter(isPduDeviceCount).filter((item) => Number.isFinite(item.quantity))
       : [];
   const inspectionMarks: InspectionMark[] = Array.isArray(v.inspectionMarks)
     ? v.inspectionMarks
         .map((mark) => migrateInspectionMark(mark))
         .filter((mark): mark is InspectionMark => mark !== null)
     : [];
-  const deviceAssignments = (v.deviceAssignments as DeviceAssignment[]).map((da) => ({
+  const deviceAssignments = (Array.isArray(v.deviceAssignments) ? v.deviceAssignments : []).map((value) => {
+    if (!value || typeof value !== 'object') return value;
+    const da = value as Record<string, unknown>;
+    return { ...da, group: typeof da.group === 'string' ? da.group : '' };
+  }).filter(isDeviceAssignment).map((da) => ({
     ...da,
     area: typeof (da as unknown as Record<string, unknown>).area === 'string' ? da.area : '',
     group: typeof (da as unknown as Record<string, unknown>).group === 'string' ? da.group : '',
@@ -863,9 +813,8 @@ function isProjectRemark(value: unknown): value is ProjectRemark {
 
 function migrateProjectRemarks(value: unknown): ProjectRemark[] | undefined | null {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value)) return null;
-  if (!value.every(isProjectRemark)) return null;
-  return value.map((remark) => ({
+  if (!Array.isArray(value)) return [];
+  return value.filter(isProjectRemark).map((remark) => ({
     id: remark.id,
     title: remark.title,
     body: remark.body,
@@ -898,13 +847,14 @@ function migrateProject(value: unknown): ProjectData | null {
     .filter((c): c is CircuitEntry => c !== null);
   const migratedSettings = migrateProjectSettings(v.settings);
   const migratedRemarks = migrateProjectRemarks(v.remarks);
-  if (migratedRemarks === null) return null;
 
   return normalizeProjectRoomTypeCircuitIds({
     id: typeof v.id === 'string' && v.id !== '' ? v.id : createAppId(),
     name: v.name,
     updatedAt: v.updatedAt,
     lastUpdatedBy: migrateCollaborationEditorInfo(v.lastUpdatedBy),
+    ...(v.commonRevisions !== undefined ? { commonRevisions: v.commonRevisions as ProjectData['commonRevisions'] } : {}),
+    ...(v.lastSaveOperation !== undefined ? { lastSaveOperation: v.lastSaveOperation as ProjectData['lastSaveOperation'] } : {}),
     ...(migratedSettings ? { settings: migratedSettings } : {}),
     ...(migratedRemarks ? { remarks: migratedRemarks } : {}),
     locations: migratedLocations,
@@ -956,6 +906,7 @@ function isDeviceAssignment(value: unknown): value is DeviceAssignment {
     typeof v.deviceNum === 'string' &&
     typeof v.zoneAddress === 'string' &&
     typeof v.circuitNumber === 'string' &&
+    typeof v.group === 'string' &&
     (!('area' in v) || typeof v.area === 'string') &&
     typeof v.detail === 'string' &&
     (!('lowEnd' in v) || typeof v.lowEnd === 'string') &&
@@ -1001,22 +952,126 @@ export interface ProjectBackupPayload {
   projects: ProjectData[];
 }
 
-export function migrateProjectsPayload(payload: unknown): ProjectData[] {
+export function migrateProjectsWithReport(payload: unknown): { projects: ProjectData[]; report: MigrationReport } {
   const rawProjects = Array.isArray(payload)
     ? payload
     : payload !== null && typeof payload === 'object' && Array.isArray((payload as { projects?: unknown }).projects)
       ? (payload as { projects: unknown[] }).projects
       : [];
 
-  return rawProjects
+  const projects = rawProjects
     .map((project) => migrateProject(project))
     .filter((project): project is ProjectData => project !== null);
+  const issues = collectionLosses(rawProjects, projects);
+  rawProjects.forEach((project, projectIndex) => {
+    if (!project || typeof project !== 'object') return;
+    const history = (project as { commonRevisions?: unknown }).commonRevisions;
+    if (history !== undefined && !validCommonHistory(history)) {
+      issues.push({ path: `projects[${projectIndex}].commonRevisions`, action: 'repaired', count: 1 });
+    }
+    const rooms = (project as { roomTypes?: unknown }).roomTypes;
+    if (!Array.isArray(rooms)) return;
+    rooms.forEach((room, roomIndex) => {
+      const assignments = room && typeof room === 'object' ? room.deviceAssignments : undefined;
+      if (!Array.isArray(assignments)) return;
+      assignments.forEach((assignment, index) => {
+        if (assignment && typeof assignment === 'object' && typeof assignment.group !== 'string' &&
+          isDeviceAssignment({ ...assignment, group: '' })) {
+          issues.push({ path: `projects[${projectIndex}].roomTypes[${roomIndex}].deviceAssignments[${index}].group`, action: 'repaired', count: 1 });
+        }
+      });
+    });
+  });
+  return { projects, report: migrationReport(issues) };
+}
+
+let pendingMigrationReport: MigrationReport | undefined;
+export const MIGRATION_REPORT_EVENT = 'cfs-migration-report';
+
+export function getPendingMigrationReport(): MigrationReport | undefined {
+  return pendingMigrationReport;
+}
+
+function publishMigrationReport(report: MigrationReport): void {
+  if (!report.issues.length) return;
+  console.warn('CFS MigrationReport', report);
+  if (typeof window === 'undefined') return;
+  // Remain blocked until an explicit save confirms the current load's losses.
+  pendingMigrationReport = report;
+  setMigrationReviewPending(true);
+  window.dispatchEvent(new Event(MIGRATION_REPORT_EVENT));
+}
+
+export function migrateProjectsPayload(payload: unknown): ProjectData[] {
+  const { projects, report } = migrateProjectsWithReport(payload);
+  publishMigrationReport(report);
+  return projects;
+}
+
+/** JSON omits undefined object properties. Reject non-DTO objects; preserve
+ * invalid arrays/scalars for the existing migration diagnostics unchanged. */
+function projectWireObjectShape<T>(value: T, ancestors = new Set<object>()): T {
+  if (!value || typeof value !== 'object') return value;
+  if (ancestors.has(value)) throw new SaveProtocolError('SAVE_PROJECT_INVALID', '保存対象に循環参照があります。元データを保持して確認してください。');
+  const array = Array.isArray(value);
+  const prototype = Object.getPrototypeOf(value);
+  if (!array && prototype !== Object.prototype && prototype !== null) {
+    throw new SaveProtocolError('SAVE_PROJECT_INVALID', '保存対象にJSON形式ではないオブジェクトがあります。元データを保持して確認してください。');
+  }
+  ancestors.add(value);
+  try {
+    return (array
+      // map retains holes, undefined elements and non-finite numbers.
+      ? value.map(item => projectWireObjectShape(item, ancestors))
+      : Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)
+        .map(([key, item]) => [key, projectWireObjectShape(item, ancestors)]))) as T;
+  } finally { ancestors.delete(value); }
+}
+
+/** Use the same migration as POST/GET before fixing the immutable wire intent. */
+export function normalizeProjectSave(project: ProjectData): ProjectData {
+  const { projects, report } = migrateProjectsWithReport([projectWireObjectShape(project)]);
+  const normalized = projectWireObjectShape(projects[0]);
+  if (projects.length !== 1 || normalized.id !== project.id) {
+    throw new SaveProtocolError('SAVE_PROJECT_INVALID', '保存対象の構造またはIDを確認できません。元データを保持して確認してください。');
+  }
+  if (normalized.commonRevisions !== undefined && !validCommonHistory(normalized.commonRevisions)) {
+    throw new SaveProtocolError('COMMON_HISTORY_PROTECTED', '共通履歴が不正です。元データを保持して確認してください。');
+  }
+  // Generated defaults/IDs must settle in this captured snapshot, never in a retry.
+  const repeated = projectWireObjectShape(migrateProjectsWithReport([normalized]).projects[0]);
+  if (canonicalJson(normalized) !== canonicalJson(repeated)) {
+    throw new SaveProtocolError('SAVE_NORMALIZATION_UNSTABLE', '保存形式の変換結果が安定しません。元データを保持して確認してください。');
+  }
+  if (report.issues.length) {
+    publishMigrationReport(migrationReport([...(pendingMigrationReport?.issues ?? []), ...report.issues]));
+  }
+  return normalized;
+}
+
+/** The returned Project is both the durable intent and the exact POST body. */
+export async function prepareProjectSave(project: ProjectData, kind: 'current' | 'revision' | 'idle', operationId?: string): Promise<ProjectData> {
+  return prepareSaveProject(normalizeProjectSave(structuredClone(project)), kind, operationId);
+}
+
+async function projectSaveSubmission(project: ProjectData): Promise<ProjectData> {
+  const snapshot = structuredClone(project);
+  if (snapshot.lastSaveOperation && snapshot.lastSaveOperation.fingerprint === await projectFingerprint(snapshot)) {
+    const normalized = normalizeProjectSave(snapshot);
+    if (!await matchesSaveIntent(snapshot, normalized)) {
+      // Do not silently replace an already checkpointed operation/payload on retry.
+      throw new SaveProtocolError('SAVE_INTENT_NOT_NORMALIZED', '退避した保存要求の形式が一致しません。自動再送せず、保存状態と元データを確認してください。');
+    }
+    return snapshot;
+  }
+  return prepareProjectSave(snapshot, 'current');
 }
 
 export function emptyTrashData(): TrashData {
   return { projects: [], roomTypes: [] };
 }
 
+const trashDisplayTokens = new WeakMap<object, string>();
 export function migrateTrashPayload(payload: unknown): TrashData {
   if (payload === null || typeof payload !== 'object') return emptyTrashData();
   const source = 'trash' in payload && typeof (payload as { trash?: unknown }).trash === 'object'
@@ -1063,7 +1118,14 @@ export function migrateTrashPayload(payload: unknown): TrashData {
     })
     .filter((item): item is TrashData['roomTypes'][number] => item !== null);
 
-  return { projects, roomTypes };
+  const result = { projects, roomTypes };
+  const token = typeof (payload as Record<string, unknown>).updatedAt === 'string'
+    ? (payload as { updatedAt: string }).updatedAt : trashDisplayTokens.get(payload);
+  if (token !== undefined) {
+    trashDisplayTokens.set(result, token);
+    projects.forEach(item => trashDisplayTokens.set(item, token));
+  }
+  return result;
 }
 
 export function createProjectBackupPayload(
@@ -1115,8 +1177,8 @@ export function loadProjects(): ProjectData[] {
         }
         // In-place migration for older v13 payloads that pre-date scenes/area.
         const migrated = migrateProjectsPayload(parsed);
-        if (migrated.length > 0) {
-          safeSetItem(STORAGE_KEY, JSON.stringify(migrated), { cleanupProjectCacheOnRetry: true });
+        if (migrated.length > 0 || pendingMigrationReport) {
+          if (!pendingMigrationReport) safeSetItem(STORAGE_KEY, JSON.stringify(migrated), { cleanupProjectCacheOnRetry: true });
           return migrated;
         }
       }
@@ -1131,6 +1193,7 @@ export function loadProjects(): ProjectData[] {
       const parsed: unknown = JSON.parse(legacyV13);
       if (Array.isArray(parsed)) {
         const migrated: ProjectData[] = migrateProjectsPayload(parsed);
+        if (pendingMigrationReport) return migrated;
         safeSetItem(STORAGE_KEY, JSON.stringify(migrated), { cleanupProjectCacheOnRetry: true });
         safeSetItem(LEGACY_STORAGE_KEY_V13_BACKUP, legacyV13, { cleanupProjectCacheOnRetry: true });
         window.localStorage.removeItem(LEGACY_STORAGE_KEY_V13);
@@ -1148,6 +1211,7 @@ export function loadProjects(): ProjectData[] {
       const parsed: unknown = JSON.parse(legacyV12);
       if (Array.isArray(parsed)) {
         const migrated: ProjectData[] = migrateProjectsPayload(parsed);
+        if (pendingMigrationReport) return migrated;
         safeSetItem(STORAGE_KEY, JSON.stringify(migrated), { cleanupProjectCacheOnRetry: true });
         safeSetItem(LEGACY_STORAGE_KEY_V12_BACKUP, legacyV12, { cleanupProjectCacheOnRetry: true });
         window.localStorage.removeItem(LEGACY_STORAGE_KEY_V12);
@@ -1177,6 +1241,7 @@ function loadLocalProjects(): ProjectData[] {
 
 function saveLocalProjects(projects: ReadonlyArray<ProjectData>, options: { notifyOnError?: boolean } = {}): boolean {
   if (typeof window === 'undefined') return true;
+  if (pendingMigrationReport) return false;
   if (projects.length === 0) {
     localStorage.removeItem(STORAGE_KEY);
     return true;
@@ -1188,41 +1253,22 @@ function saveLocalProjects(projects: ReadonlyArray<ProjectData>, options: { noti
 }
 
 function loadLocalProjectDrafts(): ProjectData[] {
-  if (typeof window === 'undefined') return [];
-  const current = window.localStorage.getItem(PROJECT_DRAFT_STORAGE_KEY);
-  if (!current) return [];
-  try {
-    return migrateProjectsPayload(JSON.parse(current));
-  } catch {
-    return [];
-  }
+  // Drafts are recovery candidates, never an implicit authoritative database baseline.
+  return [];
 }
 
 function saveLocalProjectDrafts(projects: ReadonlyArray<ProjectData>, options: { notifyOnError?: boolean } = {}): boolean {
-  if (typeof window === 'undefined') return true;
-  if (projects.length === 0) {
-    window.localStorage.removeItem(PROJECT_DRAFT_STORAGE_KEY);
-    return true;
-  }
-  return safeSetItem(PROJECT_DRAFT_STORAGE_KEY, JSON.stringify(projects), {
-    notifyOnError: options.notifyOnError ?? false,
-    cleanupProjectCacheOnRetry: true,
-  });
+  void options;
+  return saveProjectsDraftLocally(projects);
 }
 
 function clearLocalProjectDrafts(): void {
-  if (typeof window === 'undefined') return;
-  window.localStorage.removeItem(PROJECT_DRAFT_STORAGE_KEY);
+  // Server reload/empty state cannot authorize deleting recovery copies.
 }
 
 function clearLocalProjectDraft(projectId: string): void {
-  if (typeof window === 'undefined') return;
-  const nextDrafts = loadLocalProjectDrafts().filter((project) => project.id !== projectId);
-  if (nextDrafts.length > 0) {
-    saveLocalProjectDrafts(nextDrafts, { notifyOnError: false });
-  } else {
-    clearLocalProjectDrafts();
-  }
+  void projectId;
+  // The page acknowledges exactly the submitted owner/tab/generation after readback.
 }
 
 function projectUpdatedAtTime(project: ProjectData): number {
@@ -1264,7 +1310,7 @@ function mergeSavedProjectsWithLocalDrafts(
 }
 
 export function loadProjectDrafts(): ProjectData[] {
-  return loadLocalProjectDrafts();
+  return cachedProjectDrafts();
 }
 
 export function clearProjectDrafts(): void {
@@ -1272,7 +1318,8 @@ export function clearProjectDrafts(): void {
 }
 
 export function saveProjectsDraftLocally(projects: ReadonlyArray<ProjectData>): boolean {
-  return saveLocalProjectDrafts(projects, { notifyOnError: false });
+  projects.forEach(project => { void checkpointProject(project, null); });
+  return false; // Async transaction completion is reported through DRAFT_STATUS_EVENT.
 }
 
 function saveLocalTrash(trash: TrashData): void {
@@ -1350,6 +1397,35 @@ function collaborationSaveHeaders(identity?: CollaborationSaveIdentity): Headers
   };
 }
 
+/** Only called by explicit database saves. Background local drafts never open a confirmation. */
+async function postProjectsWithConfirmation(body: Record<string, unknown>, headers: HeadersInit): Promise<Response> {
+  const pending = pendingMigrationReport;
+  if (pending && !window.confirm(`${migrationMessage(pending)}\n今回読み込んだ全プロジェクトの修復・除外を確認し、保存を許可しますか？`)) {
+    throw new Error('修復・除外を含む保存をキャンセルしました。元データは保持されています。');
+  }
+  const post = (payload: Record<string, unknown>) => finiteFetch('/api/projects', {
+    method: 'POST', headers, body: JSON.stringify({ ...payload, saveProtocol: SAVE_PROTOCOL_VERSION }),
+  });
+  let response = await post(body);
+  if (response.status === 409) {
+    const rejection = await response.clone().json().catch(() => ({}));
+    if (rejection.code === 'MIGRATION_CONFIRMATION_REQUIRED' && typeof rejection.migrationConfirmation === 'string') {
+      const report = rejection.migrationReport as MigrationReport;
+      const details = report.issues.map((issue) => `${issue.path}: ${issue.action === 'excluded' ? '除外/削除' : '修復'} ${issue.count} 件`).join('\n');
+      if (window.confirm(`${rejection.error}\n${details}\nこの変更を保存しますか？`)) {
+        response = await post({ ...body, migrationConfirmation: rejection.migrationConfirmation });
+      }
+    }
+  }
+  return response;
+}
+
+function acknowledgeConfirmedMigration(): void {
+  pendingMigrationReport = undefined;
+  setMigrationReviewPending(false);
+  window.dispatchEvent(new Event(MIGRATION_REPORT_EVENT));
+}
+
 export async function loadProjectsFromDatabase(
   options: { signal?: AbortSignal; throwOnError?: boolean; accessToken?: string; secureSharing?: boolean } = {},
 ): Promise<ProjectData[]> {
@@ -1362,7 +1438,18 @@ export async function loadProjectsFromDatabase(
     });
     if (!response.ok) throw new Error(`GET /api/projects failed: ${response.status}`);
     const payload: unknown = await response.json();
-    const savedProjects = migrateProjectsPayload(payload);
+    const serverReport = payload && typeof payload === 'object'
+      ? (payload as { migrationReport?: MigrationReport }).migrationReport : undefined;
+    if (serverReport?.issues?.length) publishMigrationReport(serverReport);
+    // The API has already migrated this load. Re-migrating its excluded-to-empty
+    // RoomScenes would generate legacy defaults and hide the diagnostic state.
+    // Only accept typed server projects; raw/older responses still use migration.
+    const reportedProjects = payload && typeof payload === 'object'
+      ? (payload as { projects?: unknown }).projects : undefined;
+    const savedProjects = serverReport?.issues?.length && Array.isArray(reportedProjects) && reportedProjects.every(isProjectData)
+      ? reportedProjects
+      : migrateProjectsPayload(payload);
+    if (pendingMigrationReport) return savedProjects;
     if (savedProjects.length === 0) {
       clearLocalProjectDrafts();
       if (!options.secureSharing) saveLocalProjects([], { notifyOnError: false });
@@ -1385,6 +1472,8 @@ export async function loadProjectsFromDatabase(
   }
 }
 
+let trashServerUpdatedAt: string | undefined;
+
 export async function loadTrashFromDatabase(
   options: { signal?: AbortSignal; throwOnError?: boolean; accessToken?: string; secureSharing?: boolean } = {},
 ): Promise<TrashData> {
@@ -1398,6 +1487,7 @@ export async function loadTrashFromDatabase(
     if (!response.ok) throw new Error(`GET /api/trash failed: ${response.status}`);
     const payload: unknown = await response.json();
     const trash = migrateTrashPayload(payload);
+    trashServerUpdatedAt = typeof (payload as { updatedAt?: unknown }).updatedAt === 'string' ? (payload as { updatedAt: string }).updatedAt : undefined;
     if (!options.secureSharing) saveLocalTrash(trash);
     return trash;
   } catch (error) {
@@ -1426,21 +1516,17 @@ export async function saveProjectToDatabase(
   } = {},
 ): Promise<ProjectData> {
   if (typeof window === 'undefined') return project;
+  project = await projectSaveSubmission(project);
   const notifyOnError = options.notifyOnError ?? true;
-  const shouldCacheLocally = !options.collaboration?.accessToken;
-  const localCacheSaved = shouldCacheLocally ? saveLocalProjects(allProjects, { notifyOnError: false }) : false;
+  void allProjects;
   try {
-    const response = await fetch('/api/projects', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...collaborationSaveHeaders(options.collaboration) },
-      body: JSON.stringify({
+    const response = await postProjectsWithConfirmation({
         project,
         expectedUpdatedAt: options.expectedUpdatedAt ?? '',
         createOnly: options.createOnly === true,
         forceOverwrite: options.forceOverwrite === true,
         forceOverwriteUpdatedAt: options.forceOverwriteUpdatedAt ?? '',
-      }),
-    });
+      }, { 'Content-Type': 'application/json', ...collaborationSaveHeaders(options.collaboration) });
     if (!response.ok) {
       const payload = (await response.json().catch(() => ({}))) as ProjectSaveErrorPayload;
       const message = payload.error || `POST /api/projects failed: ${response.status}`;
@@ -1457,57 +1543,219 @@ export async function saveProjectToDatabase(
           serverUpdatedAt: payload.serverUpdatedAt || serverProject?.updatedAt,
         });
       }
-      throw new Error(message);
+      throw saveError(response.status, payload.code);
     }
-    const payload: unknown = await response.json().catch(() => ({}));
-    const savedProjects = migrateProjectsPayload([payload && typeof payload === 'object' ? (payload as { project?: unknown }).project : undefined]);
-    clearLocalProjectDraft(project.id);
-    return savedProjects[0] ?? project;
+    const payload: unknown = await response.json().catch(() => null);
+    const record = payload && typeof payload === 'object' ? payload as { ok?: boolean; project?: ProjectData } : null;
+    if (!record?.ok || !record.project || !Array.isArray(record.project.roomTypes)
+      || !await matchesSaveIntent(project, record.project)) {
+      throw new SaveProtocolError('SAVE_RESPONSE_INVALID', '保存応答の内容を確認できません。保存状態を確認してください。', response.status, true);
+    }
+    const confirmed = await confirmProjectSave(project, options.collaboration);
+    acknowledgeConfirmedMigration();
+    return confirmed;
   } catch (error) {
     console.error('Failed to save project to database.', error);
     if (notifyOnError) {
-      window.alert(
-        localCacheSaved
-          ? 'Failed to save this project to the database. The data is temporarily saved in the browser. Reload before retrying if another user may have saved changes.'
-          : 'Failed to save this project to the database. Browser storage is also full, so a local backup could not be saved. Keep this page open and try saving again after checking the connection.',
-      );
+      window.alert(`${error instanceof Error ? error.message : '保存を確認できません。'}\n端末の退避状況を確認し、必要ならJSONをバックアップしてください。`);
+    }
+    if (error instanceof TypeError || (error instanceof DOMException && error.name === 'TimeoutError')) {
+      throw new SaveProtocolError('SAVE_RESULT_UNKNOWN', '保存結果が不明です。下書きを保持して保存状態を確認してください。', undefined, true);
     }
     throw error;
   }
 }
 
+/** Read-only, no fallback, draft merge, migration side effects or recovery cleanup. */
+export async function confirmProjectSave(sent: ProjectData, collaboration?: CollaborationSaveIdentity): Promise<ProjectData> {
+  const response = await finiteFetch('/api/projects', { cache: 'no-store', headers: collaborationSaveHeaders(collaboration) }, 15_000);
+  if (!response.ok) throw new SaveProtocolError('SAVE_CONFIRMATION_FAILED', '保存先の確認ができません。下書きは保持しています。', response.status, true);
+  const body = await response.json().catch(() => null) as { projects?: ProjectData[] } | null;
+  const project = body && Array.isArray(body.projects) ? body.projects.find(item => item.id === sent.id) : undefined;
+  if (!project || !Array.isArray(project.roomTypes) || !await matchesSaveIntent(sent, project)) {
+    throw new SaveProtocolError('SAVE_RESULT_UNKNOWN', '送信した内容を保存先で確認できません。自動再送せず、保存状態を確認してください。', undefined, true);
+  }
+  return project;
+}
+
+/** Trash restores retain the immutable original schema; ordinary writers still normalize. */
+export async function prepareProjectRestore(project: ProjectData): Promise<ProjectData> {
+  return prepareSaveProject(project, 'current');
+}
+
+export async function confirmProjectRestore(sent: ProjectData, collaboration?: CollaborationSaveIdentity, confirmedReceipt?: ProjectData): Promise<ProjectData> {
+  if (confirmedReceipt && !await matchesSaveIntent(sent, confirmedReceipt)) throw new SaveProtocolError('RESTORE_RECEIPT_INVALID', '復旧確認の記録が一致しません。原文を保持します。');
+  const response = await finiteFetch('/api/projects?restoreRaw=1', { cache: 'no-store', headers: collaborationSaveHeaders(collaboration) }, 15_000);
+  if (!response.ok) throw new SaveProtocolError('RESTORE_CONFIRMATION_FAILED', '復元先を確認できません。', response.status, true);
+  const body = await response.json().catch(() => null) as { projects?: ProjectData[] } | null;
+  const matches = Array.isArray(body?.projects) ? body.projects.filter(item => item?.id === sent.id) : [];
+  const valid = matches.length === 1 && typeof matches[0].id === 'string' && typeof matches[0].name === 'string'
+    && typeof matches[0].updatedAt === 'string' && Array.isArray(matches[0].roomTypes)
+    && ['circuits', 'locations', 'fixtures'].every(key => Array.isArray((matches[0] as unknown as Record<string, unknown>)[key]))
+    && matches[0].roomTypes.every(room => Boolean(room && typeof room === 'object' && !Array.isArray(room)));
+  if (!valid || (!confirmedReceipt && !await matchesSaveIntent(sent, matches[0]))) {
+    throw new SaveProtocolError('RESTORE_RESULT_UNKNOWN', '復元先の本体を確認できません。原文と復元要求を保持します。', undefined, true);
+  }
+  return matches[0];
+}
+
+export async function saveProjectRestore(sent: ProjectData, collaboration?: CollaborationSaveIdentity): Promise<ProjectData> {
+  if (!sent.lastSaveOperation || sent.lastSaveOperation.fingerprint !== await projectFingerprint(sent)) throw new SaveProtocolError('RESTORE_INTENT_INVALID', '復元要求が変更されています。原文を保持します。');
+  const response = await finiteFetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json', ...collaborationSaveHeaders(collaboration) },
+    body: JSON.stringify({ projects: [sent], restoreProjectIds: [sent.id], expectedUpdatedAts: { [sent.id]: null }, saveProtocol: SAVE_PROTOCOL_VERSION, restoreRaw: true }) });
+  if (!response.ok) { const body = await response.json().catch(() => null); throw saveError(response.status, body?.code); }
+  const body = await response.json().catch(() => null) as { ok?: boolean; projects?: ProjectData[] } | null;
+  const matches = Array.isArray(body?.projects) ? body.projects.filter(item => item?.id === sent.id) : [];
+  if (body?.ok !== true || matches.length !== 1 || !await matchesSaveIntent(sent, matches[0])) throw new SaveProtocolError('RESTORE_RESPONSE_INVALID', '復元の保存応答を確認できません。', response.status, true);
+  return confirmProjectRestore(sent, collaboration);
+}
+
 export async function saveProjectsToDatabase(
   projects: ReadonlyArray<ProjectData>,
-  options: { notifyOnError?: boolean; collaboration?: CollaborationSaveIdentity } = {},
+  options: { notifyOnError?: boolean; collaboration?: CollaborationSaveIdentity; expectedUpdatedAts?: Record<string, string | null>; restoreProjectIds?: string[] } = {},
 ): Promise<ProjectData[]> {
   if (typeof window === 'undefined') return [...projects];
   const notifyOnError = options.notifyOnError ?? true;
-  const shouldCacheLocally = !options.collaboration?.accessToken;
-  const localCacheSaved = shouldCacheLocally ? saveLocalProjects(projects, { notifyOnError: false }) : false;
+  projects = await Promise.all(projects.map(project => projectSaveSubmission(project)));
   try {
-    const response = await fetch('/api/projects', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...collaborationSaveHeaders(options.collaboration) },
-      body: JSON.stringify({ projects }),
-    });
+    const response = await postProjectsWithConfirmation({ projects, expectedUpdatedAts: options.expectedUpdatedAts, restoreProjectIds: options.restoreProjectIds },
+      { 'Content-Type': 'application/json', ...collaborationSaveHeaders(options.collaboration) });
     if (!response.ok) {
-      throw new Error(`POST /api/projects failed: ${response.status}`);
+      const payload = await response.json().catch(() => ({}));
+      throw saveError(response.status, payload.code);
     }
     const payload: unknown = await response.json().catch(() => ({}));
-    const savedProjects = migrateProjectsPayload(payload);
-    clearLocalProjectDrafts();
-    return savedProjects.length > 0 ? savedProjects : [...projects];
+    const savedProjects = (payload as { projects?: ProjectData[] }).projects;
+    if ((payload as { ok?: unknown }).ok !== true || !Array.isArray(savedProjects) || !(await Promise.all(projects.map(project => {
+      const saved = savedProjects.find(item => item?.id === project.id);
+      return saved ? matchesSaveIntent(project, saved) : false;
+    }))).every(Boolean)) throw new SaveProtocolError('SAVE_RESPONSE_INVALID', '保存応答の内容を確認できません。', response.status, true);
+    const confirmed = await Promise.all(projects.map(project => confirmProjectSave(project, options.collaboration)));
+    acknowledgeConfirmedMigration();
+    return confirmed;
   } catch (error) {
     console.error('Failed to save projects to database.', error);
     if (notifyOnError) {
-      window.alert(
-        localCacheSaved
-          ? 'Failed to save to the database. The data is temporarily saved in the browser. Check the saved state before restarting the app.'
-          : 'Failed to save to the database. Browser storage is also full, so a local backup could not be saved. Keep this page open and try saving again after checking the connection.',
-      );
+      window.alert(`${error instanceof Error ? error.message : '保存を確認できません。'}\n端末の退避状況を確認し、必要ならJSONをバックアップしてください。`);
     }
     throw error;
   }
+}
+
+export async function renameProjectInDatabase(projectId: string, name: string, expectedUpdatedAt: string, collaboration?: CollaborationSaveIdentity): Promise<ProjectData> {
+  const response = await fetch('/api/projects/rename', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...collaborationSaveHeaders(collaboration) },
+    body: JSON.stringify({ projectId, name, expectedUpdatedAt }), signal: AbortSignal.timeout(30_000),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || `Rename failed: ${response.status}`);
+  const project = migrateProjectsPayload([body.project])[0];
+  if (!project || project.id !== projectId) throw new Error('Rename response was incomplete. Reload before retrying.');
+  return project;
+}
+
+export async function deleteProjectToTrash(
+  projectId: string,
+  expectedUpdatedAt: string,
+  collaboration?: CollaborationSaveIdentity,
+): Promise<{ projects: ProjectData[]; trash: TrashData }> {
+  const response = await fetch('/api/projects/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...collaborationSaveHeaders(collaboration) },
+    body: JSON.stringify({ projectId, expectedUpdatedAt }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || `Project deletion failed: ${response.status}`);
+  if (!Array.isArray(result.projects) || !result.trash || typeof result.updatedAt !== 'string') {
+    throw new Error('Deletion response was incomplete. Reload to check the project and Trash.');
+  }
+  const projects = migrateProjectsPayload(result.projects);
+  const trash = migrateTrashPayload(result);
+  trashServerUpdatedAt = result.updatedAt;
+  if (!collaboration?.accessToken) saveLocalProjects(projects, { notifyOnError: false });
+  saveLocalTrash(trash);
+  clearLocalProjectDraft(projectId);
+  return { projects, trash };
+}
+
+async function readRestoreTrashSnapshot(collaboration?: CollaborationSaveIdentity, isCurrent: () => boolean = () => true) {
+  if (!isCurrent()) throw new Error('利用者が変更されました。復元結果を再確認してください。');
+  const response = await finiteFetch('/api/trash?restoreRaw=1', { cache: 'no-store', headers: collaborationSaveHeaders(collaboration) }, 15_000);
+  if (!response.ok) throw new SaveProtocolError('RESTORE_TRASH_READ_FAILED', 'Trash更新を確認できません。', response.status, true);
+  const body = await response.json().catch(() => null) as { trash?: TrashData; updatedAt?: string } | null;
+  if (!body || typeof body.updatedAt !== 'string' || !body.trash || !Array.isArray(body.trash.projects) || !Array.isArray(body.trash.roomTypes)) {
+    throw new SaveProtocolError('RESTORE_TRASH_RESPONSE_INVALID', 'Trash応答を確認できません。', response.status, true);
+  }
+  if (!isCurrent()) throw new Error('利用者が変更されました。復元結果を再確認してください。');
+  return { trash: body.trash, updatedAt: body.updatedAt };
+}
+
+/** Capture the server original without dropping unknown fields; migration is only for display identity. */
+function restoredDisplayProjection(value: unknown, original: unknown): unknown {
+  if (Array.isArray(original)) return Array.isArray(value) && value.length === original.length
+    ? original.map((item, index) => restoredDisplayProjection(value[index], item)) : { incompatibleArray: true };
+  if (original && typeof original === 'object') {
+    const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+    return Object.fromEntries(Object.entries(original).map(([key, item]) => [key, restoredDisplayProjection(source[key], item)]));
+  }
+  return value;
+}
+
+export async function readProjectRestoreTrashItem(expected: TrashData['projects'][number], collaboration?: CollaborationSaveIdentity,
+  isCurrent: () => boolean = () => true): Promise<TrashData['projects'][number]> {
+  const token = trashDisplayTokens.get(expected);
+  const { trash, updatedAt } = await readRestoreTrashSnapshot(collaboration, isCurrent);
+  if (token === undefined || token !== updatedAt) throw new SaveProtocolError('RESTORE_TRASH_CONFLICT', '表示後にTrashが変化したか、表示の保存基準が不明です。一覧を再読み込みしてください。', 409);
+  const matches = trash.projects.filter(item => item.id === expected.id);
+  // Missing legacy defaults can generate fresh IDs on each display migration.
+  // Compare all original fields; generated fields absent from the raw original
+  // are display-only. The raw original itself remains the exact write/CAS basis.
+  const displayed = matches.length === 1 ? migrateTrashPayload({ projects: matches, roomTypes: [] }).projects[0] : undefined;
+  if (matches.length !== 1 || !displayed || canonicalJson(restoredDisplayProjection(displayed, matches[0])) !== canonicalJson(restoredDisplayProjection(expected, matches[0]))) {
+    throw new SaveProtocolError('RESTORE_TRASH_CONFLICT', 'Trash原本が変更されています。削除せず保持します。', 409);
+  }
+  return matches[0];
+}
+
+/** Restore cleanup only: preserve every other entry and use the freshly read Trash CAS token. */
+export async function cleanupRestoredProjectTrash(
+  original: TrashData['projects'][number],
+  collaboration?: CollaborationSaveIdentity,
+  isCurrent: () => boolean = () => true,
+): Promise<TrashData> {
+  const checkOwner = () => { if (!isCurrent()) throw new Error('利用者が変更されました。復元結果を再確認してください。'); };
+  const headers = collaborationSaveHeaders(collaboration);
+  const read = () => readRestoreTrashSnapshot(collaboration, isCurrent);
+  const initial = await read();
+  if (initial.trash.projects.filter(item => item.id === original.id).length > 1) {
+    throw new SaveProtocolError('RESTORE_TRASH_CONFLICT', '同じIDのTrash原本が複数あります。削除せず保持します。', 409);
+  }
+  const existing = initial.trash.projects.find(item => item.id === original.id);
+  if (existing && canonicalJson(existing) !== canonicalJson(original)) {
+    throw new SaveProtocolError('RESTORE_TRASH_CONFLICT', 'Trash原本が変更されています。削除せず保持します。', 409);
+  }
+  let confirmed = initial;
+  if (existing) {
+    const next: TrashData = { ...initial.trash, projects: initial.trash.projects.filter(item => item.id !== original.id) };
+    checkOwner();
+    const response = await finiteFetch('/api/trash', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ saveProtocol: SAVE_PROTOCOL_VERSION, restoreCleanup: { original }, trash: next, expectedUpdatedAt: initial.updatedAt }) });
+    if (!response.ok) throw new SaveProtocolError('RESTORE_TRASH_SAVE_FAILED', 'Trash更新を確認できません。', response.status, true);
+    const body = await response.json().catch(() => null) as { ok?: boolean; trash?: TrashData; updatedAt?: string } | null;
+    if (body?.ok !== true || typeof body.updatedAt !== 'string' || canonicalJson(body.trash) !== canonicalJson(next)) {
+      throw new SaveProtocolError('RESTORE_TRASH_RESPONSE_INVALID', 'Trash保存応答を確認できません。', response.status, true);
+    }
+    confirmed = await read();
+    if (canonicalJson(confirmed.trash) !== canonicalJson(next)) {
+      throw new SaveProtocolError('RESTORE_TRASH_RESULT_UNKNOWN', 'Trashの保存先が変化しています。再確認してください。', undefined, true);
+    }
+  }
+  checkOwner();
+  trashServerUpdatedAt = confirmed.updatedAt;
+  trashDisplayTokens.set(confirmed.trash, confirmed.updatedAt);
+  if (!collaboration?.accessToken) saveLocalTrash(confirmed.trash);
+  return confirmed.trash;
 }
 
 export async function saveTrashToDatabase(
@@ -1521,11 +1769,13 @@ export async function saveTrashToDatabase(
     const response = await fetch('/api/trash', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...collaborationSaveHeaders(options.collaboration) },
-      body: JSON.stringify({ trash }),
+      body: JSON.stringify({ trash, expectedUpdatedAt: trashServerUpdatedAt }),
     });
     if (!response.ok) {
       throw new Error(`POST /api/trash failed: ${response.status}`);
     }
+    const result = await response.json();
+    trashServerUpdatedAt = typeof result.updatedAt === 'string' ? result.updatedAt : undefined;
   } catch (error) {
     console.error('Failed to save trash to database.', error);
     if (notifyOnError) {

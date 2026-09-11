@@ -1,4 +1,4 @@
-import { test, expect, type Dialog, type Page } from '@playwright/test';
+import { test, expect, type Dialog, type Page } from './support/safe-test';
 import { installLocalEditingMocks } from './support/secure-sharing-mock';
 
 /**

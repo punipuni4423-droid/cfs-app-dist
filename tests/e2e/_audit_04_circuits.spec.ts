@@ -8,7 +8,7 @@
  * 本テストはアプリ本体を一切変更しない。APIで空配列に書き戻して隔離する。
  * スクショは test-results/audit-04/<step>.png に保存する。
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./support/safe-test";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
 const SHOT_DIR = "test-results/audit-04";

@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./support/safe-test";
 import { writeFile } from "node:fs/promises";
 import ExcelJS from "exceljs";
 import { createNewProject } from "../../app/lib/storage";
@@ -12,7 +12,68 @@ const note: ProjectRemark = {
   hasTable: true, columns: ["ID", "Procedure", "State"], rows: [["A", procedure, "OK"]],
 };
 
+test("Remarks Excel keeps each mixed table's own widths after serialization", async ({}, testInfo) => {
+  const notes: ProjectRemark[] = [note,
+    { ...note, id: "compact", title: "Compact", columns: ["ID", "Action", "State"], rows: [["B", "Door", "OK"]] },
+    { ...note, id: "ratio", title: "Ratio", columns: ["ID", "First", "Second"], rows: [["C", "X".repeat(400), "Y".repeat(800)]] },
+    { ...note, id: "tall", title: "Tall", columns: ["Code", "Detail"], rows: [["D", "日本語\n".repeat(90)]] },
+  ];
+  const saved = structuredClone(notes);
+  const tableMetrics = (sheet: ExcelJS.Worksheet, remark: ProjectRemark) => {
+    let headerRow = 0;
+    sheet.eachRow((row) => {
+      if (row.getCell(1).value === remark.title) headerRow = row.number + 2;
+    });
+    return remark.columns.map((_, index) => {
+      const masters: ExcelJS.Cell[] = [];
+      sheet.getRow(headerRow).eachCell((cell) => {
+        if (cell.master.address === cell.address) masters.push(cell);
+      });
+      const cell = masters[index];
+      let width = 0;
+      for (let col = Number(cell.col); col <= sheet.columnCount; col += 1) {
+        if (sheet.getCell(headerRow, col).master.address !== cell.address) break;
+        // ExcelJS omits columns at its default width (9) when serializing.
+        width += sheet.getColumn(col).width ?? 9;
+      }
+      for (const side of ["top", "bottom", "left", "right"] as const) expect(cell.border[side]?.style).toBe("thin");
+      expect(cell.alignment.wrapText).toBe(true);
+      return width;
+    });
+  };
+  const expected = notes.map((remark) => tableMetrics(appendRemarksSheet(new ExcelJS.Workbook(), "Remarks", [remark]), remark));
+  for (const [name, ordered] of [["forward", notes], ["reverse", [...notes].reverse()]] as const) {
+    const book = new ExcelJS.Workbook();
+    appendRemarksSheet(book, "Remarks", ordered);
+    const file = testInfo.outputPath(`mixed-${name}.xlsx`);
+    await book.xlsx.writeFile(file);
+    const loaded = new ExcelJS.Workbook();
+    await loaded.xlsx.readFile(file);
+    notes.forEach((remark, index) => {
+      const actual = tableMetrics(loaded.worksheets[0], remark);
+      actual.forEach((width, column) => expect.soft(width, `${name}/${remark.id}/${column}`).toBeCloseTo(expected[index][column], 5));
+      for (const value of remark.rows[0]) {
+        let found: ExcelJS.Cell | undefined;
+        loaded.worksheets[0].eachRow((row) => row.eachCell((cell) => {
+          if (cell.address === cell.master.address && cell.value === value) found = cell;
+        }));
+        expect(found, `${remark.id}: ${value.slice(0, 20)}`).toBeDefined();
+        const master = found!;
+        expect(master.alignment.wrapText).toBe(true);
+        for (const side of ["top", "bottom", "left", "right"] as const) expect(master.border[side]?.style).toBe("thin");
+        if (remark.id === "tall") {
+          const next = loaded.worksheets[0].getCell(Number(master.row) + 1, Number(master.col));
+          expect(next.master.address).toBe(master.address);
+        }
+      }
+    });
+    loaded.worksheets[0].eachRow((row) => expect(row.height ?? 15).toBeLessThanOrEqual(400));
+  }
+  expect(notes).toEqual(saved);
+});
+
 test("Preview uses available width before wrapping and keeps short tables compact", async ({ page }, testInfo) => {
+  await page.context().route('**/api/**', (route) => route.fulfill({ json: {} }));
   test.setTimeout(90000);
   const state = await installLocalEditingMocks(page);
   const notes = [note,

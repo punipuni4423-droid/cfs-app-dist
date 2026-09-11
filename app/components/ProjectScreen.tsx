@@ -1,6 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { appendCommonRevision, commonRevisions, commonSnapshot, commonRestoreProblem } from '../lib/projectCommonHistory';
+import { checkpointProject, draftScope } from '../lib/projectDraftStore';
+import { usePendingCfsAction, type PendingCfsGuard } from "../lib/usePendingCfsAction";
+import { rebaseProjectSave, type ProjectSaveReceipt } from "../lib/projectSaveState";
 import type {
   CfsRowDisplaySettings,
   CircuitEntry,
@@ -33,7 +37,7 @@ import {
   createNewRoomType,
   RESERVED_VALUE,
 } from "../lib/constants";
-import { downloadProjectBackup } from "../lib/storage";
+import { downloadProjectBackup, normalizeProjectSave } from "../lib/storage";
 import { useAppSettings } from "../lib/appSettings";
 import { useGridArrowNavigation } from "../lib/useGridArrowNavigation";
 import { buildProjectCircuitSuggestions } from "../lib/projectCircuitSuggestions";
@@ -79,7 +83,7 @@ import type { CollaborationController } from "../lib/useCollaboration";
 const ROOM_TYPE_MANAGE_ID = "__manage__";
 const HISTORY_LIMIT = 50;
 const PROJECT_NAV_STORAGE_PREFIX = "cfs-project-navigation-v1:";
-const IDLE_AUTO_SAVE_REVISION_NOTE = "Auto-saved draft after 15 minutes idle.";
+const IDLE_AUTO_SAVE_REVISION_NOTE = "自動保存";
 
 const VALID_PROJECT_TABS: readonly ProjectTab[] = ["area", "fixture", "rooms", "remarks"];
 const VALID_ROOM_SUB_TABS: readonly RoomsSubTab[] = [
@@ -286,7 +290,12 @@ function revisionDateInputToIso(value: string, fallback: string): string {
 }
 
 interface ProjectScreenProps {
+  reliabilityNotice?: ReactNode;
   project: ProjectData;
+  saveReceipt: ProjectSaveReceipt | null;
+  hasUnsavedDatabaseChanges: boolean;
+  hasUnsavedCommonChanges?: boolean;
+  hasUnsavedDatabaseChangesNow: () => boolean;
   onBackToProjects: () => void;
   onUpdateProject: (mutate: (project: ProjectData) => ProjectData) => void;
   onSaveProjectDraft: (mutate: (project: ProjectData) => ProjectData | null) => Promise<boolean>;
@@ -309,6 +318,11 @@ interface ProjectScreenProps {
 
 export default function ProjectScreen({
   project,
+  reliabilityNotice,
+  saveReceipt,
+  hasUnsavedDatabaseChanges,
+  hasUnsavedCommonChanges = false,
+  hasUnsavedDatabaseChangesNow,
   onBackToProjects,
   onUpdateProject,
   onSaveProjectDraft,
@@ -321,6 +335,13 @@ export default function ProjectScreen({
   onReadOnlyAction,
 }: ProjectScreenProps) {
   useGridArrowNavigation();
+  const [showCommonHistory, setShowCommonHistory] = useState(false);
+  const pendingCfsGuardRef = useRef<PendingCfsGuard | null>(null);
+  const recoveryContextRef = useRef({ project, canEdit });
+  recoveryContextRef.current = { project, canEdit };
+  const registerPendingCfsGuard = useCallback((guard: PendingCfsGuard | null) => {
+    pendingCfsGuardRef.current = guard;
+  }, []);
   const initialNavigation = readStoredProjectNavigation(
     project.id,
     new Set(project.roomTypes.map((roomType) => roomType.id)),
@@ -342,6 +363,11 @@ export default function ProjectScreen({
   const redoStackRef = useRef<ProjectData[]>([]);
   const lastHistoryPushRef = useRef(0);
   const [historyVersion, setHistoryVersion] = useState(0);
+  useLayoutEffect(() => {
+    if (!saveReceipt || saveReceipt.saved.id !== project.id) return;
+    undoStackRef.current = undoStackRef.current.map((snapshot) => rebaseProjectSave(saveReceipt, snapshot));
+    redoStackRef.current = redoStackRef.current.map((snapshot) => rebaseProjectSave(saveReceipt, snapshot));
+  }, [saveReceipt, project.id]);
   const inspectionHistoryRef = useRef<ProjectInspectionHistoryControls | null>(null);
   const [inspectionHistoryStatus, setInspectionHistoryStatus] = useState<ProjectInspectionHistoryStatus>({
     active: false,
@@ -408,7 +434,7 @@ export default function ProjectScreen({
     [onUpdateProject, project, devices, canEdit, onReadOnlyAction],
   );
 
-  const handleUndo = useCallback((): void => {
+  const handleUndo = usePendingCfsAction((): void => {
     if (!canEdit) {
       onReadOnlyAction?.();
       return;
@@ -427,9 +453,9 @@ export default function ProjectScreen({
     ];
     setHistoryVersion((v) => v + 1);
     onUpdateProject(() => cloneProjectData(previous));
-  }, [onUpdateProject, project, canEdit, onReadOnlyAction]);
+  }, pendingCfsGuardRef, !inspectionHistoryStatus.active);
 
-  const handleRedo = useCallback((): void => {
+  const handleRedo = usePendingCfsAction((): void => {
     if (!canEdit) {
       onReadOnlyAction?.();
       return;
@@ -448,7 +474,7 @@ export default function ProjectScreen({
     ];
     setHistoryVersion((v) => v + 1);
     onUpdateProject(() => cloneProjectData(next));
-  }, [onUpdateProject, project, canEdit, onReadOnlyAction]);
+  }, pendingCfsGuardRef, !inspectionHistoryStatus.active);
 
   const canUndo = inspectionHistoryStatus.active
     ? inspectionHistoryStatus.canUndo
@@ -1230,9 +1256,17 @@ export default function ProjectScreen({
     [updateProject],
   );
 
+  // CSV reads may finish after a render or tab change. Keep the originating
+  // room ID in the callback, but use the latest project and Undo handler.
+  const circuitUpdateContextRef = useRef({ project, updateProject });
+  useLayoutEffect(() => {
+    circuitUpdateContextRef.current = { project, updateProject };
+  }, [project, updateProject]);
+
   const setActiveRoomTypeCircuits = useCallback(
     (next: CircuitEntry[]): void => {
-      updateProject((p) => {
+      const { project, updateProject } = circuitUpdateContextRef.current;
+      const buildCandidate = (p: ProjectData): ProjectData => {
         const scopedProject = normalizeProjectRoomTypeCircuitIds(p);
         const roomType = scopedProject.roomTypes.find((rt) => rt.id === activeRoomTypeId);
         if (!roomType) return p;
@@ -1261,9 +1295,62 @@ export default function ProjectScreen({
               : rt,
           ),
         };
+      };
+      const candidate = buildCandidate(project);
+      const removals = new Map<string, Map<string, Set<string>>>();
+      const affectedZones: string[] = [];
+      const resolve = (circuits: CircuitEntry[], value: string) => circuits.find(
+        (circuit) => circuit.designerNumber === value.trim() || circuit.internalNumber === value.trim(),
+      );
+      for (const room of project.roomTypes) {
+        const nextRoom = candidate.roomTypes.find((entry) => entry.id === room.id);
+        if (!nextRoom) continue;
+        const before = circuitsForRoomType(project, room);
+        const after = circuitsForRoomType(candidate, nextRoom);
+        for (const assignment of room.deviceAssignments) {
+          const removed = (assignment.additionalCircuitNumbers ?? []).filter((value) => {
+            const previous = resolve(before, value);
+            const following = resolve(after, value);
+            return previous && previous.dimmingType !== "DALI" && following?.dimmingType === "DALI";
+          });
+          if (!removed.length) continue;
+          const roomRemovals = removals.get(room.id) ?? new Map<string, Set<string>>();
+          roomRemovals.set(assignment.id, new Set(removed));
+          removals.set(room.id, roomRemovals);
+          affectedZones.push(`${room.name}: ${assignment.device} #${assignment.deviceNum} ${assignment.zoneAddress} — ${removed.join(", ")}`);
+        }
+      }
+      // Confirm before updateProject: Cancel must not create an Undo entry.
+      // CSV replacement also uses this path; resolve aliases rather than new row IDs.
+      if (affectedZones.length && !window.confirm(
+        `DALIに変更すると、次のゾーンの追加回路割当を解除します。変更しますか？\n\n${affectedZones.join("\n")}`,
+      )) return;
+      if (!affectedZones.length) {
+        updateProject(buildCandidate);
+        return;
+      }
+      updateProject((current) => {
+        const latestCandidate = current === project ? candidate : buildCandidate(current);
+        return {
+        ...latestCandidate,
+        roomTypes: latestCandidate.roomTypes.map((room) => ({
+          ...room,
+          deviceAssignments: room.deviceAssignments.map((assignment) => {
+            const removed = removals.get(room.id)?.get(assignment.id);
+            if (!removed) return assignment;
+            const values = (assignment.additionalCircuitNumbers ?? []).filter((value) => !removed.has(value));
+            const updated: typeof assignment = { ...assignment, additionalCircuitNumbers: values };
+            if (!values.length) {
+              delete updated.additionalCircuitNumbers;
+              delete updated.zoneDetail;
+            }
+            return updated;
+          }),
+        })),
+        };
       });
     },
-    [activeRoomTypeId, updateProject],
+    [activeRoomTypeId],
   );
 
   // ---- Room type management ----
@@ -1314,6 +1401,8 @@ export default function ProjectScreen({
         name: `${project.name} - ${roomType.name}`,
         updatedAt: new Date().toISOString(),
         roomTypes: [cloneProjectData(roomType)],
+        commonRevisions: undefined,
+        lastSaveOperation: undefined,
       };
       downloadProjectBackup([exportedProject], `${project.name}_${roomType.name}_share`);
     },
@@ -1401,14 +1490,19 @@ export default function ProjectScreen({
     setLutronExportRoomTypeId(null);
   }, []);
 
-  const handleSelectRoomTypeTab = useCallback((id: string): void => {
+  const handleSelectRoomTypeTab = usePendingCfsAction((id: string): void => {
     if (id === ROOM_TYPE_MANAGE_ID) {
       setActiveRoomTypeId("");
       return;
     }
     setActiveRoomTypeId(id);
     setActiveSubTab((prev) => prev);
-  }, []);
+  }, pendingCfsGuardRef);
+  const handleSelectParentTab = usePendingCfsAction((id: string) => setActiveTab(id as ProjectTab), pendingCfsGuardRef);
+  const handleSelectSubTab = usePendingCfsAction((id: string) => {
+    setActiveSubTab(id as RoomsSubTab);
+    setShowRevisionManager(false);
+  }, pendingCfsGuardRef);
 
   // ---- CFS row management ----
   const updateActiveRoomType = useCallback(
@@ -1449,6 +1543,11 @@ export default function ProjectScreen({
     circuits: CircuitEntry[],
     options: SaveRevisionOptions = {},
   ): RoomType => {
+    // New history captures the same normalized values that the writer persists.
+    // Existing historical snapshot strings are retained verbatim.
+    const normalized = normalizeProjectSave({ ...project, roomTypes: [rt], circuits });
+    rt = normalized.roomTypes[0];
+    circuits = normalized.circuits;
     const revision = normalizedRevisionValue(options.revisionOverride, nextRoomTypeRevisionValue(rt));
     const revisionSource = options.clearInspectionMarks ? { ...rt, inspectionMarks: [] } : rt;
     const snapshot = createRevisionSnapshot(revisionSource, circuits);
@@ -1471,7 +1570,7 @@ export default function ProjectScreen({
         },
       ],
     };
-  }, [collaboration.user]);
+  }, [collaboration.user, project]);
 
   const roomTypeHasRevisionDraftInProject = useCallback((sourceProject: ProjectData, rt: RoomType): boolean => {
     const latest = rt.revisions?.at(-1);
@@ -1507,6 +1606,7 @@ export default function ProjectScreen({
       return false;
     }
     return onSaveProjectRevision((current) => {
+      current = appendCommonRevision(current, options.note ?? '', collaboration.user?.displayName ?? '');
       const draftIds = new Set(
         current.roomTypes
           .filter((rt) => roomTypeHasRevisionDraftInProject(current, rt))
@@ -1535,6 +1635,7 @@ export default function ProjectScreen({
     onSaveProjectRevision,
     roomTypeHasRevisionDraftInProject,
     saveRoomTypeRevision,
+    collaboration.user?.displayName,
   ]);
 
   const handleSaveCurrentProject = useCallback(async (): Promise<boolean> => {
@@ -1670,7 +1771,6 @@ export default function ProjectScreen({
       onReadOnlyAction?.();
       return;
     }
-    if (project.roomTypes.length === 0) return;
     batchRevisionOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setBatchRevisionDrafts(
       project.roomTypes.map((rt) => ({
@@ -1723,7 +1823,7 @@ export default function ProjectScreen({
         selected: draft?.selected ?? true,
       };
     }).filter((draft) => draft.selected);
-    if (normalizedDrafts.length === 0) {
+    if (normalizedDrafts.length === 0 && !hasUnsavedCommonChanges) {
       setBatchRevisionError("Select at least one room type to save.");
       return;
     }
@@ -1743,6 +1843,7 @@ export default function ProjectScreen({
     setBatchRevisionError("");
     let saveValidationError = "";
     const saved = await onSaveProjectRevision((current) => {
+      current = appendCommonRevision(current, normalizedDrafts.map(draft => draft.note).filter(Boolean).join('\n'), collaboration.user?.displayName ?? '');
       const currentDrafts = current.roomTypes.map((rt) => {
         const visibleDraft = normalizedDraftByRoomTypeId.get(rt.id);
         return {
@@ -1752,7 +1853,7 @@ export default function ProjectScreen({
           selected: Boolean(visibleDraft),
         };
       }).filter((draft) => draft.selected);
-      if (currentDrafts.length === 0) {
+      if (currentDrafts.length === 0 && !hasUnsavedCommonChanges) {
         saveValidationError = "Select at least one room type to save.";
         return null;
       }
@@ -1803,6 +1904,8 @@ export default function ProjectScreen({
   }, [
     batchRevisionDrafts,
     canEdit,
+    collaboration.user?.displayName,
+    hasUnsavedCommonChanges,
     devices,
     onReadOnlyAction,
     onSaveProjectRevision,
@@ -1905,6 +2008,13 @@ export default function ProjectScreen({
     setFinishRevisionDialogOpen(true);
   }, []);
 
+  const canFinishAfterSave = useCallback((): boolean => {
+    if (!hasUnsavedDatabaseChangesNow()) return true;
+    setFinishRevisionError("Changes made while saving are still unsaved. Save again or continue editing.");
+    setIsFinishingRevision(false);
+    return false;
+  }, [hasUnsavedDatabaseChangesNow]);
+
   const handleFinishWithRevision = useCallback(async (): Promise<void> => {
     const exitAction = finishRevisionExitAction;
     setIsFinishingRevision(true);
@@ -1915,11 +2025,12 @@ export default function ProjectScreen({
       setIsFinishingRevision(false);
       return;
     }
+    if (!canFinishAfterSave()) return;
     setFinishRevisionDialogOpen(false);
     setFinishRevisionNote("");
     setIsFinishingRevision(false);
     await completeFinishFlow(exitAction);
-  }, [completeFinishFlow, finishRevisionExitAction, finishRevisionNote, saveDraftRoomTypeRevisions]);
+  }, [completeFinishFlow, finishRevisionExitAction, finishRevisionNote, saveDraftRoomTypeRevisions, canFinishAfterSave]);
 
   const handleFinishWithCurrentProject = useCallback(async (): Promise<void> => {
     const exitAction = finishRevisionExitAction;
@@ -1931,11 +2042,12 @@ export default function ProjectScreen({
       setIsFinishingRevision(false);
       return;
     }
+    if (!canFinishAfterSave()) return;
     setFinishRevisionDialogOpen(false);
     setFinishRevisionNote("");
     setIsFinishingRevision(false);
     await completeFinishFlow(exitAction);
-  }, [completeFinishFlow, finishRevisionExitAction, handleSaveCurrentProject]);
+  }, [completeFinishFlow, finishRevisionExitAction, handleSaveCurrentProject, canFinishAfterSave]);
 
   const handleDiscardDraftAndFinish = useCallback(async (): Promise<void> => {
     const exitAction = finishRevisionExitAction;
@@ -1965,6 +2077,7 @@ export default function ProjectScreen({
       setIsFinishingRevision(false);
       return;
     }
+    if (!canFinishAfterSave()) return;
     setShowRevisionChanges(false);
     setFinishRevisionDialogOpen(false);
     setFinishRevisionNote("");
@@ -1976,13 +2089,19 @@ export default function ProjectScreen({
     devices,
     finishRevisionExitAction,
     onSaveProjectDraft,
+    canFinishAfterSave,
     revisionDraftRoomTypes,
     roomTypeHasRevisionDraftInProject,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     collaboration.setFinishGuard(async ({ idle }) => {
-      if (revisionDraftRoomTypes.length === 0) return true;
+      const pendingGuard = pendingCfsGuardRef.current;
+      if (pendingGuard) {
+        if (await pendingGuard()) window.setTimeout(() => { collaboration.resumeIdleAfterSave?.(); void collaboration.finishEditing({ idle }); }, 0);
+        return false;
+      }
+      if (revisionDraftRoomTypes.length === 0 && !hasUnsavedDatabaseChangesNow()) return true;
       if (idle) {
         setIsFinishingRevision(true);
         setFinishRevisionError("");
@@ -1991,24 +2110,27 @@ export default function ProjectScreen({
           note: IDLE_AUTO_SAVE_REVISION_NOTE,
         });
         setIsFinishingRevision(false);
-        if (saved) return true;
+        if (saved && !hasUnsavedDatabaseChangesNow()) return true;
         openFinishRevisionDialog(true, "stay");
-        setFinishRevisionError("Idle auto-save failed. Choose how to finish this editing session.");
+        setFinishRevisionError(saved
+          ? "Changes made while saving are still unsaved. Save again or continue editing."
+          : "Idle auto-save failed. Choose how to finish this editing session.");
         return false;
       }
       openFinishRevisionDialog(false, "stay");
       return false;
     });
     return () => collaboration.setFinishGuard(null);
-  }, [collaboration, openFinishRevisionDialog, revisionDraftRoomTypes.length, saveDraftRoomTypeRevisions]);
+  }, [collaboration, openFinishRevisionDialog, revisionDraftRoomTypes.length, saveDraftRoomTypeRevisions, hasUnsavedDatabaseChangesNow]);
 
   // Closing the window/tab while editing with draft changes: the browser only
   // allows its generic leave-confirmation during beforeunload, so when the
   // user cancels the close we surface the finish dialog (save as new revision
   // / save current / discard draft) instead of losing the choice.
   useEffect(() => {
-    if (collaboration.mode !== "edit" || revisionDraftRoomTypes.length === 0) return;
+    if (!hasUnsavedDatabaseChanges && (collaboration.mode !== "edit" || revisionDraftRoomTypes.length === 0)) return;
     const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+      if (pendingCfsGuardRef.current) return;
       event.preventDefault();
       event.returnValue = "";
       window.setTimeout(() => {
@@ -2021,9 +2143,13 @@ export default function ProjectScreen({
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [collaboration.mode, revisionDraftRoomTypes.length, openFinishRevisionDialog]);
+  }, [collaboration.mode, revisionDraftRoomTypes.length, openFinishRevisionDialog, hasUnsavedDatabaseChanges]);
 
-  const handleBackToProjectList = useCallback((): void => {
+  const handleBackToProjectList = usePendingCfsAction((): void => {
+    if (hasUnsavedDatabaseChangesNow()) {
+      openFinishRevisionDialog(false, "back");
+      return;
+    }
     if (collaboration.mode !== "edit") {
       onBackToProjects();
       return;
@@ -2036,7 +2162,7 @@ export default function ProjectScreen({
       await collaboration.finishEditing({ bypassGuard: true });
       onBackToProjects();
     })();
-  }, [collaboration, onBackToProjects, openFinishRevisionDialog, revisionDraftRoomTypes.length]);
+  }, pendingCfsGuardRef);
 
   const handlePrepareInspectionStart = useCallback((choice: InspectionRevisionChoice): boolean => {
     if (!canEdit) {
@@ -2257,7 +2383,7 @@ export default function ProjectScreen({
     ],
   );
 
-  const handleRestoreRevision = useCallback(
+  const handleRestoreRevision = usePendingCfsAction(
     (revisionIndex: number): void => {
       if (!canEdit) {
         onReadOnlyAction?.();
@@ -2272,7 +2398,7 @@ export default function ProjectScreen({
 
       restoreActiveRoomTypeToRevision(targetRevision);
     },
-    [activeRoomType, restoreActiveRoomTypeToRevision, canEdit, onReadOnlyAction],
+    pendingCfsGuardRef,
   );
 
   const setDeviceAssignments = useCallback(
@@ -2511,7 +2637,7 @@ export default function ProjectScreen({
     lastSavedAt && (saveStatus === "draftSaved" || saveStatus === "projectSaved" || saveStatus === "revisionSaved")
       ? lastSavedAt
       : "";
-  const draftStatusTitle =
+  const draftStatusDetail =
     saveStatus === "savingDraft"
       ? "Saving local draft"
       : saveStatus === "draftSaved"
@@ -2535,7 +2661,9 @@ export default function ProjectScreen({
                   : draftStatusTime
                     ? `Draft saved at ${draftStatusTime}`
                     : "Draft";
-  const draftStatusLabel = saveStatus === "error" ? "Error" : saveStatus === "projectSaved" ? "Saved" : "Draft";
+  const draftStatusLabel = saveStatus === "error" ? "Error" : saveInProgress ? "Saving" : hasUnsavedDatabaseChanges ? "Draft" : "Saved";
+  const draftStatusTitle = saveStatus === 'error' || saveInProgress ? draftStatusDetail
+    : hasUnsavedDatabaseChanges ? 'Unshared draft changes' : draftStatusTime ? `Current project saved at ${draftStatusTime}` : 'Current project matches the saved data';
   const draftStatusAria =
     draftStatusTime ? `${draftStatusLabel} ${draftStatusTime}. ${draftStatusTitle}` : draftStatusTitle;
   const canRestoreLatestRevisionOnFinish =
@@ -2548,6 +2676,37 @@ export default function ProjectScreen({
 
   return (
     <main className={`app-shell project-screen-shell${canEdit ? "" : " is-view-only"}`}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 480px' }}>{reliabilityNotice}</div>
+        <button className="btn btn-secondary" onClick={() => setShowCommonHistory(value => !value)}>共通項目の履歴</button>
+      </div>
+      {showCommonHistory && <section className="card card-padded" aria-label="共通項目の履歴">
+        <p>Project名・設定・Remarks・Area・Fixtureの履歴です。部屋のRevとは独立しています。</p>
+        {commonRevisions(project).map(revision => <div key={revision.id} style={{ marginBottom: 8 }}>
+          <span>{revision.revision} / {revision.savedAt} / {revision.savedBy} / {revision.note} </span>
+          <details><summary>復旧する内容をプレビュー</summary><pre style={{ whiteSpace: 'pre-wrap', maxHeight: 260, overflow: 'auto' }}>{JSON.stringify({ 現在: commonSnapshot(project), 復旧先: revision.snapshot }, null, 2)}</pre></details>
+          <button className="btn btn-secondary" disabled={!canEdit} onClick={() => {
+            const problem = commonRestoreProblem(project, revision.snapshot);
+            if (problem) { window.alert(problem); return; }
+            const details = `共通項目 ${revision.revision} を編集へ戻します。\nProject: ${revision.snapshot.name}\nArea: ${revision.snapshot.locations.length} / Fixture: ${revision.snapshot.fixtures.length} / Remarks: ${revision.snapshot.remarks?.length ?? 0}\n部屋の値と履歴は変更しません。共有保存は別操作です。`;
+            if (!window.confirm(details)) return;
+            void (async () => {
+              const owner = draftScope();
+              if (pendingCfsGuardRef.current && !await pendingCfsGuardRef.current()) return;
+              const current = recoveryContextRef.current;
+              if (owner !== draftScope() || !current.canEdit || current.project.id !== project.id) return;
+              const problem = commonRestoreProblem(current.project, revision.snapshot);
+              if (problem) { window.alert(problem); return; }
+              const original = canonicalJson(current.project);
+              if (!await checkpointProject(current.project, null, undefined, owner)) { window.alert('復旧前の内容を退避できませんでした。JSONをバックアップしてから再試行してください。'); return; }
+              if (owner !== draftScope() || !recoveryContextRef.current.canEdit || original !== canonicalJson(recoveryContextRef.current.project)) { window.alert('退避中に編集対象か内容が変わりました。改めて復旧内容を確認してください。'); return; }
+              updateProject(latest => ({ ...latest, name: revision.snapshot.name,
+                settings: structuredClone(revision.snapshot.settings), remarks: structuredClone(revision.snapshot.remarks),
+                locations: structuredClone(revision.snapshot.locations), fixtures: structuredClone(revision.snapshot.fixtures) }));
+            })();
+          }}>内容を確認して復旧</button>
+        </div>)}
+      </section>}
       {isTopUiCollapsed ? (
         <button
           type="button"
@@ -2683,7 +2842,7 @@ export default function ProjectScreen({
                 type="button"
                 className="btn btn-primary"
                 onClick={() => void handleSaveAllRevisions()}
-                disabled={isSavingBatchRevision || batchRevisionSelectedCount === 0}
+                disabled={isSavingBatchRevision || (batchRevisionSelectedCount === 0 && !hasUnsavedCommonChanges)}
               >
                 {isSavingBatchRevision ? "Saving revisions..." : "Save Revision"}
               </button>
@@ -2697,8 +2856,8 @@ export default function ProjectScreen({
             <h2 id="finishRevisionTitle">Finish editing with draft changes?</h2>
             <p>
               {finishRevisionDialogIdle
-                ? "This editing session is idle and has unpublished revision changes. Choose how to save or discard the draft before returning to View Only."
-                : "This editing session has unpublished revision changes. Choose how to save or discard the draft before returning to View Only."}
+                ? "This editing session is idle and has unsaved project changes or unpublished revision changes. Choose how to save the draft before returning to View Only."
+                : "This editing session has unsaved project changes or unpublished revision changes. Choose how to save the draft before returning to View Only."}
             </p>
             <label className="revision-note-field">
               <span>Note</span>
@@ -2818,9 +2977,9 @@ export default function ProjectScreen({
                   type="button"
                   className="history-button history-icon-button save-revision-button"
                   onClick={openBatchRevisionDialog}
-                  disabled={project.roomTypes.length === 0 || !canEdit || saveInProgress}
-                  title={project.roomTypes.length > 0 ? "Save all room types as new revisions" : "Create a room type to save a revision"}
-                  aria-label={project.roomTypes.length > 0 ? "Save all room types as new revisions" : "Create a room type to save a revision"}
+                  disabled={!canEdit || saveInProgress}
+                  title="Save all room types as new revisions"
+                  aria-label="Save all room types as new revisions"
                 >
                   <ActionIcon name="save" />
                 </button>
@@ -2875,10 +3034,7 @@ export default function ProjectScreen({
         <TabsBar
           tabs={parentTabs}
           activeId={activeTab}
-          onChange={(id) => {
-            const next = id as ProjectTab;
-            setActiveTab(next);
-          }}
+          onChange={(id) => { if (id !== activeTab) handleSelectParentTab(id); }}
         />
 
         {activeTab === "rooms" ? (
@@ -2887,14 +3043,14 @@ export default function ProjectScreen({
               tabs={roomTypeTabs}
               activeId={activeRoomType ? activeRoomTypeId : ROOM_TYPE_MANAGE_ID}
               variant="sub"
-              onChange={handleSelectRoomTypeTab}
+              onChange={(id) => { if (id !== (activeRoomType ? activeRoomTypeId : ROOM_TYPE_MANAGE_ID)) handleSelectRoomTypeTab(id); }}
             />
             {activeRoomType ? (
               <TabsBar
                 tabs={subTabs}
                 activeId={activeSubTab}
                 variant="sub"
-                onChange={(id) => setActiveSubTab(id as RoomsSubTab)}
+                onChange={(id) => { if (id !== activeSubTab) handleSelectSubTab(id); }}
               />
             ) : null}
           </>
@@ -2987,10 +3143,7 @@ export default function ProjectScreen({
                             onBaseChange={(value) =>
                               setRevisionCompareBases((prev) => ({ ...prev, [revision.id]: value }))
                             }
-                            onJumpToTab={(tabId) => {
-                              setActiveSubTab(tabId);
-                              setShowRevisionManager(false);
-                            }}
+                            onJumpToTab={handleSelectSubTab}
                           />
                         </div>
                       </td>
@@ -3021,7 +3174,7 @@ export default function ProjectScreen({
         <FixturesView fixtures={project.fixtures} onChange={setFixtures} />
       )}
       {activeTab === "remarks" && (
-        <RemarksView projectName={project.name} remarks={project.remarks ?? []} onChange={setRemarks} />
+        <RemarksView projectName={project.name} remarks={project.remarks ?? []} onChange={setRemarks} canEdit={canEdit} />
       )}
 
       {activeTab === "rooms" && !activeRoomType && (
@@ -3197,6 +3350,7 @@ export default function ProjectScreen({
               resetKey={`${project.id}:${activeRoomType.id}`}
             >
               <CfsView
+                onPendingCfsGuardChange={registerPendingCfsGuard}
                 projectName={project.name}
                 projectId={project.id}
                 roomType={activeRoomType}

@@ -5,6 +5,7 @@ import type { CollaborationLock, ProjectData, TrashData } from "../types";
 import ActionIconButton from "./ActionIconButton";
 import AppUpdateControl from "./AppUpdateControl";
 import TabletUrlBar from "./TabletUrlBar";
+import { getApiIdentity } from "../lib/apiAccessClient";
 
 interface ProjectListScreenProps {
   projects: ProjectData[];
@@ -84,8 +85,7 @@ export default function ProjectListScreen({
   return (
     <main className="app-shell project-list-shell">
       <div className="project-list-top-tools" aria-label="Project selection tools">
-        <AppUpdateControl />
-        <TabletUrlBar />
+        {getApiIdentity()?.role !== 'editor' && <><AppUpdateControl /><TabletUrlBar /></>}
       </div>
       <header className="app-header fade-in">
         <h1 className="app-title project-selection-title">CFS Project Selection</h1>

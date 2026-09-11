@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./support/safe-test";
 import { writeFile } from "node:fs/promises";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 

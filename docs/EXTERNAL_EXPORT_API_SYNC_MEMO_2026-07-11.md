@@ -98,3 +98,20 @@ For future CFS changes that touch data, API, or export behavior, include this li
 
 - XC API list / LD API list: no change。API・保存データ・logical ID・内部ウィンドウsnapshotは不変。
 - Project export: updated (単体/All RoomsのRemarks列幅のみ)。列ごとの48上限を表全体180の幅予算へ変更し、最小8を確保した残り幅を内容量に比例配分する。23列以上は最小幅を優先する。シート共通の列幅であり、レスポンシブなPreviewとのピクセル一致は意図しない。罫線・行高算定・シート構成・単一RoomType Excel・Project/Share JSON・storage v14は不変。
+
+## 2026-09-09 T-107 ストレージ移行保護（実装中・仕様確認待ち）
+- XC API list / LD API list / Project・Share JSON / Excel: 形式変更なし。正常実データの移行結果SHA256は旧実装と一致。
+- Projects API: GETにmigrationReport追加。POSTの縮小を409 MIGRATION_CONFIRMATION_REQUIREDで拒否し、確認後に同じ本文+返されたmigrationConfirmationで再送。既存の競合チェックは維持。詳細: MIGRATION_SAFETY_JA.md。
+- 全件不正roomScenesの再読込時の扱いはユーザー判断待ち。未完了・未コミット・未配布。
+
+- 2026-09-09 T-107追記: 上記の仕様確認待ちはMaster裁定で解消。当該読込中の除外後空Sceneだけ保持し、正常空配列の既定生成は維持。形式変更なし、最終34spec PASS。独立V-71未実施・未配布。
+
+## 2026-09-09 T-108 全APIの接続認証
+- XC/LDを含む全APIクライアントはCFS接続cookieまたはx-cfs-access-tokenが必要。localhostも免除なし。Supabase Authorizationは引き続き併用する。自己更新/強制ロック解除/タブレット招待発行はPC管理者セッションに限定。
+- ランチャーは資格情報を初期リンクからcookieへ交換する。詳細とCLI連携はAPI_ACCESS_JA.md。既存のExcel/Project・Share JSON/XC/LD出力のデータ形式は不変。
+- ローカルTrash GETのupdatedAtをPOSTのexpectedUpdatedAtで返す。古い/欠けた世代は409/TRASH_CONFLICT。Supabase Trashは既存Edge Functionに委譲。
+
+## 2026-09-10 T-116 改名・一覧保存の安全化
+- Projects API: POST /api/projects/renameはprojectId・name・expectedUpdatedAtで対象IDのみ改名。POST /api/projectsの一覧保存はexpectedUpdatedAts（既存IDは取得時token、新規/復元は明示null）を必須とし、送信外IDは保持。確定後の更新tokenを応答する。削除はT-115専用APIのみ。
+- Edge: project.rename / projects.mergeを追加、旧projects.saveとsave_cfs_project_set RPCを拒否。SQL migration→Edge→appの適用順。新Edge未適用時は新appの改名/一覧保存は失敗し、旧RPCへのfallbackなし。
+- XC API list / LD API list / Project・Share JSON / Excel / storage v14: データ形式は不変。外部クライアントが一覧書込みを利用する場合だけ新CAS契約への対応が必要。

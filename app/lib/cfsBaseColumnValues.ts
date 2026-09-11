@@ -116,11 +116,12 @@ function deviceProgrammingToken(
 export function cfsRowProgrammingNameValues(
   row: CfsZoneRow,
   context: CfsBaseValueContext,
+  prepared?: PreparedBaseContext,
 ): string[] {
   if (row.isBacklight || row.isHvac || row.isCurtain || row.circuits.length === 0) return [];
-  const locationById = new Map(context.locations.map((location) => [location.id, location]));
-  const deviceByModel = new Map(context.devices.map((device) => [device.model, device]));
-  const settings = normalizeProgrammingNameSettings(context.programmingNameSettings);
+  const locationById = prepared?.locationById ?? new Map(context.locations.map((location) => [location.id, location]));
+  const deviceByModel = prepared?.end.deviceByModel ?? new Map(context.devices.map((device) => [device.model, device]));
+  const settings = prepared?.settings ?? normalizeProgrammingNameSettings(context.programmingNameSettings);
   const deviceToken = deviceProgrammingToken(row, deviceByModel);
   return row.circuits.map((item) => {
     const locationNumber = programmingLocationNumberToken(item, locationById);
@@ -249,6 +250,7 @@ export function cfsBaseColumnValues(
   key: BaseColumnKey,
   numberMode: CfsNumberMode,
   context: CfsBaseValueContext,
+  prepared?: PreparedBaseContext,
 ): string[] {
   if (row.isBacklight) {
     if (key === "device") return ["Backlight Logic"];
@@ -280,14 +282,14 @@ export function cfsBaseColumnValues(
     case "areaAddress":
       return row.circuits.map((item) => item.areaAddress || "-");
     case "programmingName":
-      return cfsRowProgrammingNameValues(row, context);
+      return cfsRowProgrammingNameValues(row, context, prepared);
     case "dimmingType":
       return rowDimmingValues(row);
     case "totalVa":
-      return rowTotalVaValues(row, zoneVaContextFrom(context));
+      return rowTotalVaValues(row, prepared?.va ?? zoneVaContextFrom(context));
     case "zoneLowEnd":
     case "zoneHighEnd":
-      return rowZoneLowHighEndValues(row, key, zoneEndContextFrom(context));
+      return rowZoneLowHighEndValues(row, key, prepared?.end ?? zoneEndContextFrom(context));
     case "area":
       return row.location ? [row.location] : [];
     case "detail":
@@ -310,4 +312,22 @@ export function cfsBaseColumnValues(
     default:
       return [];
   }
+}
+
+interface PreparedBaseContext {
+  locationById: ReadonlyMap<string, LocationMaster>;
+  settings: ProgrammingNameSettings;
+  va: CfsZoneVaContext;
+  end: CfsZoneEndContext;
+}
+
+/** Prepare lookups once per room context, shared by screen and workbook cells. */
+export function createCfsBaseValueResolver(context: CfsBaseValueContext, numberMode: CfsNumberMode) {
+  const prepared: PreparedBaseContext = {
+    locationById: new Map(context.locations.map((location) => [location.id, location])),
+    settings: normalizeProgrammingNameSettings(context.programmingNameSettings),
+    va: zoneVaContextFrom(context),
+    end: zoneEndContextFrom(context),
+  };
+  return (row: CfsZoneRow, key: BaseColumnKey) => cfsBaseColumnValues(row, key, numberMode, context, prepared);
 }

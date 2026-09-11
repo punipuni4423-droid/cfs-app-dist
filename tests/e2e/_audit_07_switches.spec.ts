@@ -13,9 +13,10 @@
  *
  * 対象: PLAYWRIGHT_BASE_URL (未指定時は http://localhost:3014)
  */
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from './support/safe-test';
 import { STORAGE_KEY } from '../../app/lib/constants';
 import { installLocalEditingMocks } from './support/secure-sharing-mock';
+import { readNativeDraftProject, readNativeDraftProjects, readNativeDraftRecords } from './support/native-project-drafts';
 
 const SHOT_DIR = 'test-results/audit-07';
 const PROJECT_NAME = 'AUDIT-07-Sw';
@@ -174,6 +175,8 @@ async function createRoomTypeAndSelect(page: Page, roomName: string): Promise<vo
  */
 async function waitForApiProjectWithRoom(page: Page): Promise<ApiProject[]> {
   for (let i = 0; i < 30; i++) {
+    const drafts = await readNativeDraftProjects(page);
+    if (drafts[0]?.roomTypes?.[0]) return drafts as unknown as ApiProject[];
     const projects = await apiGetProjects(page);
     if (projects[0]?.roomTypes?.[0]) return projects;
     await page.waitForTimeout(400);
@@ -259,10 +262,9 @@ async function waitForSeededSwitchHarnessData(page: Page): Promise<void> {
   throw new Error('audit_07 seed did not survive autosave/session restore isolation');
 }
 
-/** サーバ DB から現在のプロジェクトのルームタイプ[0].switches を取得 */
+/** 未保存スイッチ編集をnative IndexedDBの完了transactionから取得。 */
 async function readSwitches(page: Page): Promise<ApiProject['roomTypes'][number]['switches']> {
-  const projects = await apiGetProjects(page);
-  return projects[0]?.roomTypes?.[0]?.switches ?? [];
+  return (await readNativeDraftProject(page))?.roomTypes?.[0]?.switches as unknown as ApiProject['roomTypes'][number]['switches'] ?? [];
 }
 
 /** Switch サブタブに移動 */
@@ -739,7 +741,13 @@ test.describe('AUDIT-07 Switch management', () => {
 
     await page.waitForTimeout(1600);
     const stored = (await readSwitches(page)).length;
+    await test.info().attach('native-draft-after-delete.json', { body: JSON.stringify(await readNativeDraftRecords(page), null, 2), contentType: 'application/json' });
     expect(stored).toBe(0);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await reopenProjectRoomSwitch(page);
+    await page.locator(KIND_CHIP('CCI')).first().click();
+    await expect(page.getByText('No switches are registered. Add a row below.', { exact: true })).toBeVisible();
+    expect((await readSwitches(page)).length).toBe(0);
   });
 
   // ---- G. PIR 種別 ----

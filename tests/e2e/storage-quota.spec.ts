@@ -1,5 +1,10 @@
-import { expect, test, type Route } from "@playwright/test";
+import { expect, test, type Route } from "./support/safe-test";
 import { createNewProject } from "../../app/lib/storage";
+
+test.beforeEach(async ({ page }) => {
+  await page.context().route('**/api/**', (route) => route.fulfill({ json: {} }));
+  await page.context().route('**/auth/connect', route => route.fulfill({ json: { role: 'admin', userId: 'user:quota-test', sessionId: 'session:quota-test' } }));
+});
 
 function json(body: unknown): string {
   return JSON.stringify(body);
@@ -45,23 +50,23 @@ test("project cache quota failures do not block database-backed editing", async 
     await dialog.dismiss();
   });
 
-  await page.route("**/api/sharing/config", async (route) => {
+  await page.context().route("**/api/sharing/config", async (route) => {
     await fulfillJson(route, { mode: "local" });
   });
-  await page.route("**/api/projects", async (route) => {
+  await page.context().route("**/api/projects", async (route) => {
     if (route.request().method() === "POST") {
       await fulfillJson(route, { ok: true, projects: [project], lastUpdatedBy: null });
       return;
     }
     await fulfillJson(route, { projects: [project] });
   });
-  await page.route("**/api/trash", async (route) => {
+  await page.context().route("**/api/trash", async (route) => {
     await fulfillJson(route, { projects: [], roomTypes: [] });
   });
-  await page.route("**/api/tablet-url", async (route) => {
+  await page.context().route("**/api/tablet-url", async (route) => {
     await fulfillJson(route, { url: "" });
   });
-  await page.route("**/api/app-update/status**", async (route) => {
+  await page.context().route("**/api/app-update/status**", async (route) => {
     await fulfillJson(route, {
       enabled: true,
       state: "current",
@@ -73,7 +78,7 @@ test("project cache quota failures do not block database-backed editing", async 
       appDir: "mock",
     });
   });
-  await page.route("**/api/collaboration/status**", async (route) => {
+  await page.context().route("**/api/collaboration/status**", async (route) => {
     await fulfillJson(route, {
       enabled: true,
       mode: "edit",
@@ -134,19 +139,19 @@ test("empty project response is authoritative over stale local project cache", a
     window.localStorage.setItem("cfs-project-drafts-v2", JSON.stringify([project]));
   }, staleProject);
 
-  await page.route("**/api/sharing/config", async (route) => {
+  await page.context().route("**/api/sharing/config", async (route) => {
     await fulfillJson(route, { mode: "local" });
   });
-  await page.route("**/api/projects", async (route) => {
+  await page.context().route("**/api/projects", async (route) => {
     await fulfillJson(route, { projects: [] });
   });
-  await page.route("**/api/trash", async (route) => {
+  await page.context().route("**/api/trash", async (route) => {
     await fulfillJson(route, { projects: [], roomTypes: [] });
   });
-  await page.route("**/api/tablet-url", async (route) => {
+  await page.context().route("**/api/tablet-url", async (route) => {
     await fulfillJson(route, { url: "" });
   });
-  await page.route("**/api/app-update/status**", async (route) => {
+  await page.context().route("**/api/app-update/status**", async (route) => {
     await fulfillJson(route, {
       enabled: true,
       state: "current",
@@ -158,7 +163,7 @@ test("empty project response is authoritative over stale local project cache", a
       appDir: "mock",
     });
   });
-  await page.route("**/api/collaboration/status**", async (route) => {
+  await page.context().route("**/api/collaboration/status**", async (route) => {
     await fulfillJson(route, {
       enabled: true,
       mode: "view",
@@ -183,5 +188,5 @@ test("empty project response is authoritative over stale local project cache", a
         draftCache: window.localStorage.getItem("cfs-project-drafts-v2"),
       })),
     )
-    .toEqual({ projectCache: null, draftCache: null });
+    .toEqual({ projectCache: null, draftCache: JSON.stringify([staleProject]) });
 });

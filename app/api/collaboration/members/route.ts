@@ -1,3 +1,4 @@
+import { requireApiAccess } from "../../../lib/apiAuth";
 import { NextResponse } from "next/server";
 import { isAllowedWriteRequest } from "../../../lib/requestGuard";
 import { callSecureSharingFunction, isSecureSharingEnabled } from "../../../lib/secureSharingServer";
@@ -5,6 +6,8 @@ import { callSecureSharingFunction, isSecureSharingEnabled } from "../../../lib/
 export const runtime = "nodejs";
 
 export async function GET(request: Request): Promise<NextResponse> {
+  const denied = await requireApiAccess(request);
+  if (denied) return denied;
   if (!isSecureSharingEnabled()) {
     return NextResponse.json({ error: "Secure sharing is not enabled." }, { status: 404 });
   }
@@ -12,6 +15,8 @@ export async function GET(request: Request): Promise<NextResponse> {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const denied = await requireApiAccess(request);
+  if (denied) return denied;
   if (!isAllowedWriteRequest(request)) {
     return NextResponse.json({ error: "write request origin is not allowed" }, { status: 403 });
   }

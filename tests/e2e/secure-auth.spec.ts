@@ -1,4 +1,4 @@
-import { expect, test, type Route } from "@playwright/test";
+import { expect, test, type Route } from "./support/safe-test";
 import { createNewProject } from "../../app/lib/storage";
 
 function json(body: unknown): string {
@@ -28,14 +28,14 @@ test("secure sign-in stays signed in when edit status is temporarily unavailable
     exp: expiresAt,
   });
 
-  await page.route("**/api/sharing/config", async (route) => {
+  await page.context().route("**/api/sharing/config", async (route) => {
     await fulfillJson(route, {
       mode: "supabase",
       url: "https://demo.supabase.co",
       publishableKey,
     });
   });
-  await page.route("https://demo.supabase.co/**", async (route) => {
+  await page.context().route("https://demo.supabase.co/**", async (route) => {
     await fulfillJson(route, {
       user: {
         id: "auth-user",
@@ -45,7 +45,7 @@ test("secure sign-in stays signed in when edit status is temporarily unavailable
       },
     });
   });
-  await page.route("**/api/collaboration/auth", async (route) => {
+  await page.context().route("**/api/collaboration/auth", async (route) => {
     await fulfillJson(route, {
       membership: {
         id: "member-1",
@@ -58,19 +58,19 @@ test("secure sign-in stays signed in when edit status is temporarily unavailable
       },
     });
   });
-  await page.route("**/api/collaboration/status**", async (route) => {
+  await page.context().route("**/api/collaboration/status**", async (route) => {
     await fulfillJson(route, { error: "Failed to read collaboration status." }, 500);
   });
-  await page.route("**/api/projects", async (route) => {
+  await page.context().route("**/api/projects", async (route) => {
     await fulfillJson(route, { projects: [project] });
   });
-  await page.route("**/api/trash", async (route) => {
+  await page.context().route("**/api/trash", async (route) => {
     await fulfillJson(route, { projects: [], roomTypes: [] });
   });
-  await page.route("**/api/tablet-url", async (route) => {
+  await page.context().route("**/api/tablet-url", async (route) => {
     await fulfillJson(route, { url: "" });
   });
-  await page.route("**/api/app-update/status**", async (route) => {
+  await page.context().route("**/api/app-update/status**", async (route) => {
     await fulfillJson(route, {
       enabled: true,
       state: "current",
@@ -93,23 +93,23 @@ test("secure sign-in stays signed in when edit status is temporarily unavailable
 });
 
 test("auth error search params are cleared after returning from provider", async ({ page }) => {
-  await page.route("**/api/sharing/config", async (route) => {
+  await page.context().route("**/api/sharing/config", async (route) => {
     await fulfillJson(route, {
       mode: "supabase",
       url: "https://demo.supabase.co",
       publishableKey: fakeJwt({ role: "anon", exp: Math.floor(Date.now() / 1000) + 3600 }),
     });
   });
-  await page.route("**/api/projects", async (route) => {
+  await page.context().route("**/api/projects", async (route) => {
     await fulfillJson(route, { projects: [] });
   });
-  await page.route("**/api/trash", async (route) => {
+  await page.context().route("**/api/trash", async (route) => {
     await fulfillJson(route, { projects: [], roomTypes: [] });
   });
-  await page.route("**/api/tablet-url", async (route) => {
+  await page.context().route("**/api/tablet-url", async (route) => {
     await fulfillJson(route, { url: "" });
   });
-  await page.route("**/api/app-update/status**", async (route) => {
+  await page.context().route("**/api/app-update/status**", async (route) => {
     await fulfillJson(route, {
       enabled: true,
       state: "current",

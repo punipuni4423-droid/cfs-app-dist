@@ -4,15 +4,14 @@
  * /api/projects is fully mocked by installLocalEditingMocks; the shared
  * data/projects.json file must not be mutated by this spec.
  */
-import { expect, test, type Page } from "@playwright/test";
-import { STORAGE_KEY, createDefaultLocations, createEmptyRoomScene, createEmptySwitchEntry, createNewRoomType } from "../../app/lib/constants";
+import { expect, test, type Page } from "./support/safe-test";
+import { createDefaultLocations, createEmptyRoomScene, createEmptySwitchEntry, createNewRoomType } from "../../app/lib/constants";
 import { createNewProject } from "../../app/lib/storage";
 import type { ProjectData, RoomScene, SwitchEntry } from "../../app/types";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
+import { readNativeDraftProject } from './support/native-project-drafts';
 
 type LocalEditingMockState = Awaited<ReturnType<typeof installLocalEditingMocks>>;
-
-const PROJECT_DRAFT_STORAGE_KEY = "cfs-project-drafts-v2";
 
 let mockState: LocalEditingMockState;
 
@@ -22,6 +21,7 @@ test.beforeEach(async ({ page }) => {
     localStorage.clear();
     sessionStorage.clear();
   });
+  await page.context().route('**/api/**', route => route.fulfill({ json: {} }));
   mockState = await installLocalEditingMocks(page);
 });
 
@@ -157,6 +157,66 @@ function seedProject(project: ProjectData): void {
   mockState.projects = [project as unknown as Record<string, unknown>];
 }
 
+for (const kind of ['switch', 'scene'] as const) {
+  test(`T109 ${kind}: first checked source moves on removal and resets when cleared`, async ({ page }) => {
+    const projectId = `t109-move-${kind}`;
+    seedProject(makeProject(projectId, projectId));
+    await page.goto('/');
+    await openProjectCfs(page, projectId);
+    await selectToolbarButton(page).click();
+    const first = settingLinkCheck(page, kind === 'switch' ? /^Select 3 \/ PD-3 \// : /^Select Scene \/ Check Out \/ Relax Scene/);
+    const second = settingLinkCheck(page, kind === 'switch' ? /^Select 1 \/ PD-1 \// : /^Select Scene \/ Check In \/ Welcome Scene/);
+    await first.check();
+    await second.check();
+    await expect(page.locator('.cfs-header-column-controls.is-link-source input[type=checkbox]')).toHaveAttribute('aria-label', await first.getAttribute('aria-label') as string);
+    await expect(page.locator('.cfs-setting-link-source-label')).toContainText(kind === 'switch' ? 'PD-3' : 'Relax Scene');
+    await first.uncheck();
+    await expect(page.locator('.cfs-header-column-controls.is-link-source input[type=checkbox]')).toHaveAttribute('aria-label', await second.getAttribute('aria-label') as string);
+    await first.check();
+    await expect(page.locator('.cfs-setting-link-source-label')).toContainText(kind === 'switch' ? 'PD-1' : 'Welcome Scene');
+    await first.uncheck(); await second.uncheck();
+    await expect(page.locator('.is-link-source')).toHaveCount(0);
+    await expect(page.locator('.cfs-setting-link-source-label')).toHaveCount(0);
+    await first.check(); await selectToolbarButton(page).click();
+    await expect(page.locator('.is-link-source')).toHaveCount(0);
+  });
+
+  test(`T109 ${kind}: source matches applied settings and notification includes absorbed members`, async ({ page }, testInfo) => {
+    const projectId = `t109-apply-${kind}`;
+    const project = makeProject(projectId, projectId);
+    const room = project.roomTypes[0];
+    if (kind === 'switch') {
+      room.switches[0].settingLinkGroupId = 'group-a'; room.switches[1].settingLinkGroupId = 'group-a';
+      room.switches[2].buttonSetting = { sceneId: `${projectId}-scene-relax`, sceneIds: [`${projectId}-scene-relax`], circuitSettings: [] };
+    } else {
+      room.roomScenes[1].settingLinkGroupId = 'scene-b';
+      room.roomScenes.push({ ...structuredClone(room.roomScenes[1]), id: `${projectId}-scene-extra`, sceneType: 'Extra Scene' });
+    }
+    seedProject(project);
+    await page.goto('/'); await openProjectCfs(page, projectId); await selectToolbarButton(page).click();
+    if (kind === 'switch') await selectSwitchColumns(page, [3, 1]);
+    else await selectSceneColumns(page, [/^Select Scene \/ Check Out \/ Relax Scene/, /^Select Scene \/ Check In \/ Welcome Scene/]);
+    await expect(page.locator('.cfs-setting-link-source-label')).toContainText(kind === 'switch' ? 'PD-3' : 'Relax Scene');
+    await page.setViewportSize({ width: 2400, height: 900 });
+    await page.locator('.cfs-header-column-controls.is-link-source').evaluate((element) => element.scrollIntoView({ block: 'nearest', inline: 'end' }));
+    await page.screenshot({ path: testInfo.outputPath('source-selected.png'), fullPage: false });
+    await linkToolbarButton(page).click();
+    await expect(page.locator('.cfs-setting-link-notice')).toHaveText(`${kind === 'switch' ? 4 : 3} columns applied`);
+    if (kind === 'switch') {
+      await expect.poll(async () => (await storedSwitches(page, projectId)).slice(0, 4).map((row) => row.buttonSetting))
+        .toEqual(Array.from({ length: 4 }, () => room.switches[2].buttonSetting));
+    } else {
+      await expect.poll(async () => (await storedRoomScenes(page, projectId)).filter((row) => room.roomScenes.some((scene) => scene.id === row.id)).map((row) => ({
+        settings: row.settings, areaSceneSelections: row.areaSceneSelections,
+      }))).toEqual(Array.from({ length: 3 }, () => ({
+        settings: room.roomScenes[1].settings, areaSceneSelections: room.roomScenes[1].areaSceneSelections,
+      })));
+    }
+    await expect(page.locator('.is-link-source')).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath('link-applied.png'), fullPage: false });
+  });
+}
+
 async function openProjectCfs(page: Page, projectName: string): Promise<void> {
   const backOrCard = page.locator('button:has-text("Back to Project List"), button.screen-card').first();
   await expect(backOrCard).toBeVisible({ timeout: 20_000 });
@@ -180,36 +240,12 @@ async function openProjectCfs(page: Page, projectName: string): Promise<void> {
 
 async function storedSwitches(page: Page, projectId: string): Promise<SwitchEntry[]> {
   await page.waitForTimeout(500);
-  return page.evaluate(({ draftKey, projectId, storageKey }) => {
-    for (const key of [draftKey, storageKey]) {
-      try {
-        const projects = JSON.parse(localStorage.getItem(key) || "[]") as ProjectData[];
-        const project = projects.find((candidate) => candidate.id === projectId);
-        const switches = project?.roomTypes?.[0]?.switches;
-        if (Array.isArray(switches) && switches.length > 0) return switches;
-      } catch {
-        // Try the next storage key.
-      }
-    }
-    return [];
-  }, { draftKey: PROJECT_DRAFT_STORAGE_KEY, projectId, storageKey: STORAGE_KEY });
+  return (await readNativeDraftProject(page, projectId))?.roomTypes?.[0]?.switches ?? [];
 }
 
 async function storedRoomScenes(page: Page, projectId: string): Promise<RoomScene[]> {
   await page.waitForTimeout(500);
-  return page.evaluate(({ draftKey, projectId, storageKey }) => {
-    for (const key of [draftKey, storageKey]) {
-      try {
-        const projects = JSON.parse(localStorage.getItem(key) || "[]") as ProjectData[];
-        const project = projects.find((candidate) => candidate.id === projectId);
-        const roomScenes = project?.roomTypes?.[0]?.roomScenes;
-        if (Array.isArray(roomScenes) && roomScenes.length > 0) return roomScenes;
-      } catch {
-        // Try the next storage key.
-      }
-    }
-    return [];
-  }, { draftKey: PROJECT_DRAFT_STORAGE_KEY, projectId, storageKey: STORAGE_KEY });
+  return (await readNativeDraftProject(page, projectId))?.roomTypes?.[0]?.roomScenes ?? [];
 }
 
 function selectToolbarButton(page: Page) {
@@ -251,8 +287,8 @@ async function closeSettingOverlay(page: Page): Promise<void> {
 }
 
 async function forceViewOnlyCollaboration(page: Page): Promise<void> {
-  await page.unroute("**/api/collaboration/status**").catch(() => undefined);
-  await page.route("**/api/collaboration/status**", async (route) => {
+  await page.context().unroute("**/api/collaboration/status**").catch(() => undefined);
+  await page.context().route("**/api/collaboration/status**", async (route) => {
     const requestUrl = new URL(route.request().url());
     await route.fulfill({
       status: 200,

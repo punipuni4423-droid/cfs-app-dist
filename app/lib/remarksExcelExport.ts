@@ -19,20 +19,14 @@ function textHeight(value: string, width: number, title: boolean): number {
   return lines * (title ? 20 : 16) + 10;
 }
 
-export function appendRemarksSheet(workbook: Workbook, sheetName: string, remarks: readonly ProjectRemark[]): Worksheet {
-  const sheet = workbook.addWorksheet(sheetName);
-  const columnCount = Math.max(1, ...remarks.filter((remark) => remark.hasTable).map((remark) => remark.columns.length));
-  const widths = Array.from({ length: columnCount }, () => MIN_COLUMN_WIDTH);
-  for (const remark of remarks) {
-    if (!remark.hasTable) continue;
-    remark.columns.forEach((column, index) => {
-      const values = [column.trim() ? column : `Column ${index + 1}`, ...remark.rows.map((row) => row[index] ?? "")];
-      widths[index] = Math.max(widths[index], Math.max(...values.map(longestLine)) + 3);
-    });
-  }
+function tableWidths(remark: ProjectRemark): number[] {
+  const widths = remark.columns.map((column, index) => {
+    const values = [column.trim() ? column : `Column ${index + 1}`, ...remark.rows.map((row) => row[index] ?? "")];
+    return Math.max(MIN_COLUMN_WIDTH, Math.max(...values.map(longestLine)) + 3);
+  });
   // Like Preview's auto table layout, use spare width before wrapping and retain a readable minimum.
   const naturalWidth = widths.reduce((total, width) => total + width, 0);
-  const minimumWidth = columnCount * MIN_COLUMN_WIDTH;
+  const minimumWidth = widths.length * MIN_COLUMN_WIDTH;
   const availableWidth = Math.max(TABLE_WIDTH_BUDGET, minimumWidth);
   if (naturalWidth > availableWidth) {
     const ratio = (availableWidth - minimumWidth) / (naturalWidth - minimumWidth);
@@ -40,19 +34,40 @@ export function appendRemarksSheet(workbook: Workbook, sheetName: string, remark
       widths[index] = MIN_COLUMN_WIDTH + (width - MIN_COLUMN_WIDTH) * ratio;
     });
   }
+  return widths;
+}
+
+export function appendRemarksSheet(workbook: Workbook, sheetName: string, remarks: readonly ProjectRemark[]): Worksheet {
+  const sheet = workbook.addWorksheet(sheetName);
+  const layouts = remarks.map((remark) => remark.hasTable ? tableWidths(remark) : []);
+  const boundariesFor = (widths: readonly number[]) => widths.reduce<number[]>((ends, width) => [...ends, ends[ends.length - 1] + width], [0]);
+  const tableBoundaries = layouts.map(boundariesFor);
+  // Excel columns are sheet-wide. Subdivide at every table boundary and merge
+  // logical cells across those subdivisions so each table retains its own widths.
+  const boundaries = tableBoundaries.flat().sort((a, b) => a - b)
+    .reduce<number[]>((accepted, value) => {
+      if (accepted.length === 0 || value - accepted[accepted.length - 1] > 1e-7) accepted.push(value);
+      return accepted;
+    }, []);
+  if (boundaries.length === 0) boundaries.push(0);
+  if (boundaries.length === 1) boundaries.push(MIN_COLUMN_WIDTH);
+  let totalWidth = boundaries[boundaries.length - 1];
   // Extra note-only columns keep short table columns compact while notes stay readable.
-  let totalWidth = widths.reduce((total, width) => total + width, 0);
   while (totalWidth < NOTE_WIDTH) {
     const width = Math.min(40, NOTE_WIDTH - totalWidth);
-    widths.push(width);
     totalWidth += width;
+    boundaries.push(totalWidth);
   }
+  const widths = boundaries.slice(1).map((end, index) => end - boundaries[index]);
+  const boundaryIndex = (value: number) => boundaries.findIndex((boundary) => Math.abs(boundary - value) < 1e-7);
   sheet.columns = widths.map((width) => ({ width }));
   sheet.views = [{ showGridLines: false }];
   let rowNumber = 1;
 
-  function appendRow(values: string[], table: boolean, title = false, header = false): void {
-    const height = Math.max(...values.map((value, index) => textHeight(value, table ? widths[index] : totalWidth, title)));
+  function appendRow(values: string[], layout?: readonly number[], title = false, header = false): void {
+    const table = Boolean(layout);
+    const ends = layout ? boundariesFor(layout) : [];
+    const height = Math.max(...values.map((value, index) => textHeight(value, layout ? layout[index] : totalWidth, title)));
     // Excel caps individual row heights. Split tall logical rows and merge each cell vertically.
     const rowSpan = Math.max(1, Math.ceil(height / 400));
     const lastRow = rowNumber + rowSpan - 1;
@@ -60,8 +75,8 @@ export function appendRemarksSheet(workbook: Workbook, sheetName: string, remark
       sheet.getRow(rowNumber + offset).height = height / rowSpan;
     }
     values.forEach((value, index) => {
-      const column = table ? index + 1 : 1;
-      const lastColumn = table ? column : widths.length;
+      const column = table ? boundaryIndex(ends[index]) + 1 : 1;
+      const lastColumn = table ? boundaryIndex(ends[index + 1]) : widths.length;
       const master = sheet.getCell(rowNumber, column);
       master.value = value;
       master.font = { name: "Arial", size: title ? 14 : 11, bold: title || header, color: { argb: "FF111827" } };
@@ -77,12 +92,12 @@ export function appendRemarksSheet(workbook: Workbook, sheetName: string, remark
     rowNumber = lastRow + 1;
   }
 
-  for (const remark of remarks) {
-    appendRow([remark.title.trim() ? remark.title : "Untitled Remark"], false, true);
-    appendRow([remark.body], false);
+  for (const [index, remark] of remarks.entries()) {
+    appendRow([remark.title.trim() ? remark.title : "Untitled Remark"], undefined, true);
+    appendRow([remark.body]);
     if (remark.hasTable && remark.columns.length > 0) {
-      appendRow(remark.columns.map((column, index) => column.trim() ? column : `Column ${index + 1}`), true, false, true);
-      for (const row of remark.rows) appendRow(remark.columns.map((_, index) => row[index] ?? ""), true);
+      appendRow(remark.columns.map((column, index) => column.trim() ? column : `Column ${index + 1}`), layouts[index], false, true);
+      for (const row of remark.rows) appendRow(remark.columns.map((_, index) => row[index] ?? ""), layouts[index]);
     }
     sheet.getRow(rowNumber).height = 12;
     rowNumber += 1;

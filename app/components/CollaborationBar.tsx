@@ -1,4 +1,5 @@
 "use client";
+import { getApiIdentity } from "../lib/apiAccessClient";
 
 import { useEffect, useRef, useState } from "react";
 import type { CollaborationMembership, CollaborationRole } from "../types";
@@ -51,7 +52,7 @@ export default function CollaborationBar({ collaboration, compact = false, proje
   const editing = collaboration.mode === "edit";
   const occupied = Boolean(collaboration.lock && !editing);
   const canStartEditing = !occupied && (!secure || collaboration.role === "editor" || collaboration.role === "admin");
-  const canForceRelease = occupied && (!secure ? signedIn : collaboration.role === "admin");
+  const canForceRelease = getApiIdentity()?.role !== 'editor' && occupied && (!secure ? signedIn : collaboration.role === "admin");
   const hasRemoteProjectUpdate = !editing && isRemoteProjectNewer(collaboration.lastUpdatedAt, projectUpdatedAt);
   const idleMinutes = Math.max(1, Math.round(collaboration.idleMs / 60000));
   const lastUpdatedText = collaboration.lastUpdatedBy

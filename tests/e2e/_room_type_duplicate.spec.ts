@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./support/safe-test";
 import { circuitsToCsv, csvToCircuits } from "../../app/lib/csv";
 import { normalizeSceneSettingsByCircuitGroup, sceneSettingValueForCircuitGroup, setSceneSettingValueForCircuitGroup, uniqueCircuitGroupHeads } from "../../app/lib/circuitGroups";
 import { buildCircuitRunInfo } from "../../app/lib/circuitRunInfo";

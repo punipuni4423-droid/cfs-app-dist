@@ -9,7 +9,7 @@
  * time and is only overwritten by an actual FFE-relevant fixture transition.
  * Propagation covers the whole circuit group (multi-row) in both directions.
  */
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./support/safe-test";
 import { STORAGE_KEY, createDefaultLocations, createNewRoomType } from "../../app/lib/constants";
 import type { CircuitEntry, ProjectData } from "../../app/types";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";

@@ -1,3 +1,4 @@
+import { requireApiAccess } from "../../../lib/apiAuth";
 import { NextResponse } from "next/server";
 import { collaborationStatus } from "../../../lib/collaborationServer";
 import { isAllowedReadRequest } from "../../../lib/requestGuard";
@@ -6,6 +7,8 @@ import { callSecureSharingFunction, isSecureSharingEnabled } from "../../../lib/
 export const runtime = "nodejs";
 
 export async function GET(request: Request): Promise<NextResponse> {
+  const denied = await requireApiAccess(request);
+  if (denied) return denied;
   try {
     if (!isAllowedReadRequest(request)) {
       return NextResponse.json({ error: "read request origin is not allowed" }, { status: 403 });

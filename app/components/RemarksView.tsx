@@ -16,6 +16,7 @@ type RemarksMode = "edit" | "preview";
 interface RemarksViewProps {
   projectName: string;
   remarks: ProjectRemark[];
+  canEdit: boolean;
   onChange: (next: ProjectRemark[]) => void;
 }
 
@@ -81,10 +82,12 @@ function RemarkTableInput({ value, className = "", ...props }: React.TextareaHTM
   );
 }
 
-export default function RemarksView({ projectName, remarks, onChange }: RemarksViewProps): React.JSX.Element {
+export default function RemarksView({ projectName, remarks, onChange, canEdit }: RemarksViewProps): React.JSX.Element {
   const [mode, setMode] = useState<RemarksMode>("edit");
   const [isExporting, setIsExporting] = useState(false);
-  const reorder = useDragReorder<ProjectRemark>(remarks, onChange, (remark) => remark.id);
+  const reorder = useDragReorder<ProjectRemark>(remarks, (next) => {
+    if (canEdit) onChange(next);
+  }, (remark) => remark.id);
 
   async function handleExcelExport(): Promise<void> {
     if (isExporting || remarks.length === 0) return;
@@ -115,6 +118,7 @@ export default function RemarksView({ projectName, remarks, onChange }: RemarksV
   }
 
   function commit(next: ProjectRemark[]): void {
+    if (!canEdit) return;
     onChange(next.map(normalizeRemark));
   }
 
@@ -233,7 +237,7 @@ export default function RemarksView({ projectName, remarks, onChange }: RemarksV
                 Preview
               </button>
             </div>
-            <button type="button" className="btn btn-primary btn-sm" onClick={handleAddRemark}>
+            <button type="button" className="btn btn-primary btn-sm" disabled={!canEdit} onClick={handleAddRemark}>
               Add Remark
             </button>
           </>
@@ -253,7 +257,7 @@ export default function RemarksView({ projectName, remarks, onChange }: RemarksV
       {remarks.length === 0 ? (
         <div className="screen-empty remarks-empty">
           <p>No remarks yet.</p>
-          <button type="button" className="btn btn-primary btn-sm" onClick={handleAddRemark}>
+          <button type="button" className="btn btn-primary btn-sm" disabled={!canEdit} onClick={handleAddRemark}>
             Add Remark
           </button>
         </div>
@@ -306,22 +310,23 @@ export default function RemarksView({ projectName, remarks, onChange }: RemarksV
                 key={remark.id}
                 className={dragClassName(remark)}
                 data-drag-reorder-key={remark.id}
-                onDragOver={(event) => reorder.onDragOver(event, remark.id)}
-                onDrop={(event) => reorder.onDrop(event, remark.id)}
+                onDragOver={canEdit ? (event) => reorder.onDragOver(event, remark.id) : undefined}
+                onDrop={canEdit ? (event) => reorder.onDrop(event, remark.id) : undefined}
               >
                 <div className="remarks-note-header">
                   <DragHandle
-                    draggable
+                    draggable={canEdit}
                     title="Drag to reorder"
                     aria-label={`Reorder remark ${index + 1}`}
-                    onDragStart={(event) => reorder.onDragStart(event, remark.id)}
+                    onDragStart={canEdit ? (event) => reorder.onDragStart(event, remark.id) : undefined}
                     onDragEnd={reorder.onDragEnd}
-                    onPointerDown={(event) => reorder.onPointerDown(event, remark.id)}
+                    onPointerDown={canEdit ? (event) => reorder.onPointerDown(event, remark.id) : undefined}
                   />
                   <div className="remarks-note-fields">
                     <input
                       className="cell-input remarks-title-input"
                       value={remark.title}
+                      readOnly={!canEdit}
                       onChange={(event) => updateRemark(remark.id, { title: event.target.value })}
                       aria-label={`Title for remark ${index + 1}`}
                       placeholder="Title"
@@ -329,6 +334,7 @@ export default function RemarksView({ projectName, remarks, onChange }: RemarksV
                     <textarea
                       className="cell-input cell-textarea remarks-body-input"
                       value={remark.body}
+                      readOnly={!canEdit}
                       onChange={(event) => updateRemark(remark.id, { body: event.target.value })}
                       aria-label={`Body for remark ${index + 1}`}
                       placeholder="Body"
@@ -338,12 +344,14 @@ export default function RemarksView({ projectName, remarks, onChange }: RemarksV
                     <ActionIconButton
                       icon="copy"
                       label="Duplicate remark"
+                      disabled={!canEdit}
                       className="btn-secondary-ghost"
                       onClick={() => handleDuplicateRemark(remark)}
                     />
                     <ActionIconButton
                       icon="trash"
                       label="Delete remark"
+                      disabled={!canEdit}
                       className="btn-secondary-ghost"
                       onClick={() => handleDeleteRemark(remark)}
                     />
@@ -355,6 +363,7 @@ export default function RemarksView({ projectName, remarks, onChange }: RemarksV
                     <label className="cfs-check remarks-table-toggle">
                       <input
                         type="checkbox"
+                        disabled={!canEdit}
                         checked={remark.hasTable}
                         onChange={(event) => {
                           if (event.target.checked) replaceRemark(ensureTable(remark));
@@ -369,6 +378,7 @@ export default function RemarksView({ projectName, remarks, onChange }: RemarksV
                           {TABLE_PRESETS.map((preset) => (
                             <button
                               key={preset.id}
+                              disabled={!canEdit}
                               type="button"
                               className="btn btn-secondary btn-sm"
                               onClick={() => handleApplyPreset(remark, preset.columns)}
@@ -378,10 +388,10 @@ export default function RemarksView({ projectName, remarks, onChange }: RemarksV
                           ))}
                         </div>
                         <div className="toolbar-spacer" />
-                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleAddColumn(tableRemark)}>
+                        <button type="button" className="btn btn-secondary btn-sm" disabled={!canEdit} onClick={() => handleAddColumn(tableRemark)}>
                           Add Column
                         </button>
-                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleAddRow(tableRemark)}>
+                        <button type="button" className="btn btn-secondary btn-sm" disabled={!canEdit} onClick={() => handleAddRow(tableRemark)}>
                           Add Row
                         </button>
                       </>
@@ -399,6 +409,7 @@ export default function RemarksView({ projectName, remarks, onChange }: RemarksV
                                   <RemarkTableInput
                                     className="remarks-column-input"
                                     value={column}
+                                    readOnly={!canEdit}
                                     onChange={(event) => handleUpdateColumn(tableRemark, columnIndex, event.target.value)}
                                     aria-label={`Column ${columnIndex + 1} name for remark ${index + 1}`}
                                   />
@@ -406,7 +417,7 @@ export default function RemarksView({ projectName, remarks, onChange }: RemarksV
                                     icon="minus"
                                     label={`Remove column ${columnIndex + 1}`}
                                     className="btn-secondary-ghost"
-                                    disabled={tableRemark.columns.length <= 1}
+                                    disabled={!canEdit || tableRemark.columns.length <= 1}
                                     onClick={() => handleRemoveColumn(tableRemark, columnIndex)}
                                   />
                                 </div>
@@ -422,6 +433,7 @@ export default function RemarksView({ projectName, remarks, onChange }: RemarksV
                                 <td key={`${remark.id}-cell-${rowIndex}-${columnIndex}`}>
                                   <RemarkTableInput
                                     value={cell}
+                                    readOnly={!canEdit}
                                     onChange={(event) =>
                                       handleUpdateCell(tableRemark, rowIndex, columnIndex, event.target.value)
                                     }
@@ -433,6 +445,7 @@ export default function RemarksView({ projectName, remarks, onChange }: RemarksV
                                 <ActionIconButton
                                   icon="minus"
                                   label={`Remove row ${rowIndex + 1}`}
+                                  disabled={!canEdit}
                                   className="btn-secondary-ghost"
                                   onClick={() => handleRemoveRow(tableRemark, rowIndex)}
                                 />

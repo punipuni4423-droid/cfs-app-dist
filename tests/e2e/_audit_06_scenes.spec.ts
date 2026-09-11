@@ -10,7 +10,7 @@
  * アプリ本体は変更しない。localStorage.clear() → reload で隔離。
  * スクショ: test-results/audit-06/<step>.png
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./support/safe-test";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
 const SHOT_DIR = "test-results/audit-06";

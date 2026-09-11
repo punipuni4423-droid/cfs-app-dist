@@ -1,3 +1,4 @@
+import { baseURL, isolatedSpecs, testStorageState } from './tests/playwright-safety';
 /**
  * 監査#10 (横断機能: Undo/Redo、リビジョン管理、保存フィードバック、永続化) 専用 Playwright 設定。
  * 本番 playwright.config.ts は変更しない。
@@ -12,7 +13,8 @@ import * as path from "path";
 const ARTIFACT_DIR = path.join(os.tmpdir(), "cfs-audit10-artifacts");
 
 export default defineConfig({
-  testDir: "./tests/e2e",
+  testDir: './tests/e2e',
+  testIgnore: isolatedSpecs,
   testMatch: "**/_audit_10_crosscutting.spec.ts",
   timeout: 90000,
   expect: { timeout: 10000 },
@@ -22,7 +24,9 @@ export default defineConfig({
   outputDir: ARTIFACT_DIR,
   reporter: [["line"]],
   use: {
-    baseURL: "http://localhost:3014",
+    serviceWorkers: 'block',
+    storageState: testStorageState(),
+    baseURL,
     trace: "off",
     screenshot: "only-on-failure",
     video: "off",

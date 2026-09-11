@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./support/safe-test";
 import { createDefaultLocations, createEmptyHvacAssignment, createNewRoomType } from "../../app/lib/constants";
 import { HVAC_AREA_ID } from "../../app/lib/areaSceneMatrix";
 import type { CircuitEntry, ProjectData } from "../../app/types";

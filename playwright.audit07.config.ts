@@ -1,3 +1,4 @@
+import { baseURL, isolatedSpecs, testStorageState } from './tests/playwright-safety';
 /**
  * 監査#7 (スイッチ管理) 専用 Playwright 設定。
  * 本番 playwright.config.ts は変更しない。
@@ -10,10 +11,10 @@ import * as os from "os";
 import * as path from "path";
 
 const ARTIFACT_DIR = path.join(os.tmpdir(), "cfs-audit07-artifacts");
-const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3014";
 
 export default defineConfig({
-  testDir: "./tests/e2e",
+  testDir: './tests/e2e',
+  testIgnore: isolatedSpecs,
   testMatch: "**/_audit_07_switches.spec.ts",
   timeout: 90000,
   expect: { timeout: 10000 },
@@ -23,7 +24,9 @@ export default defineConfig({
   outputDir: ARTIFACT_DIR,
   reporter: [["line"]],
   use: {
-    baseURL: BASE_URL,
+    serviceWorkers: 'block',
+    storageState: testStorageState(),
+    baseURL,
     trace: "off",
     screenshot: "only-on-failure",
     video: "off",

@@ -1,4 +1,6 @@
+import { requireApiAccess } from "../../lib/apiAuth";
 import { networkInterfaces } from "node:os";
+import { createGrant, readAuthKeys } from "../../lib/apiAuthCore.mjs";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +22,9 @@ function portFromHost(host: string): string {
   return match ? match[1] : "";
 }
 
-export function GET(request: Request) {
+export async function GET(request: Request): Promise<NextResponse> {
+  const denied = await requireApiAccess(request, true);
+  if (denied) return denied;
   const host = request.headers.get("host") ?? "";
   const forwardedProto = request.headers.get("x-forwarded-proto");
   const protocol = forwardedProto?.split(",")[0]?.trim() || "http";
@@ -30,11 +34,11 @@ export function GET(request: Request) {
     hostOnly === "localhost" || hostOnly === "127.0.0.1" || hostOnly === "::1"
       ? preferredLanAddress() ?? hostOnly
       : hostOnly;
-  const url = `${protocol}://${lanHost}${port ? `:${port}` : ""}`;
+  const url = `${protocol}://${lanHost}${port ? `:${port}` : ""}/#cfs_access=${createGrant(await readAuthKeys(), 'editor')}`;
 
   return NextResponse.json({
     url,
     host: lanHost,
     port,
-  });
+  }, { headers: { 'Cache-Control': 'no-store' } });
 }

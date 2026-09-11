@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
+import PendingCfsDialog from "./PendingCfsDialog";
+import type { PendingCfsGuard } from "../lib/usePendingCfsAction";
 import { backlightPaleColor } from "../lib/backlightColors";
 import CfsLinkMapPanel from "./CfsLinkMapPanel";
 import CommandView, { type CommandSettingOverlayRequest } from "./CommandView";
@@ -28,11 +30,10 @@ import type {
   SwitchEntry,
   TriggerMaster,
 } from "../types";
-import { buildAreaAddressAssignmentMap, normalizeProgrammingToken } from "../lib/programming";
+import { buildAreaAddressAssignmentMap } from "../lib/programming";
 import { buildCfsLinkageGraph, sourceIdsForIssue, type CfsLinkIssue } from "../lib/cfsLinkageGraph";
 import {
   areaSceneDisplayName,
-  cellValues,
   isSceneNameLine,
   stripSceneNameLinePrefix,
   formatLevel,
@@ -40,18 +41,11 @@ import {
   isPercentInspectionType,
   normalizeInspectionInput,
   normalizeLevelForCompare,
-  roomSceneCellValue,
-  roomSceneHasAreaSceneValue,
   roomSceneSelectedAreaSceneId,
-  roomSceneSettingValue,
-  roomSceneUsesAreaSceneValue,
   sceneMatchesArea,
-  sceneRawValuesForCircuit,
-  sceneRawValuesForTarget,
   sceneValueForCircuit,
   selectedSceneIdsForSwitch,
   setSettingsValue,
-  switchUsesAreaSceneValue,
 } from "../lib/cfsValueResolver";
 import {
   BACKLIGHT_LOGIC_MERGE_KEYS,
@@ -69,11 +63,11 @@ import {
 } from "../lib/cfsTableModel";
 import { appendCfsSheet, loadExcelJs, type CfsExcelHeaderGroups, type CfsExcelSheetModel } from "../lib/cfsExcelExport";
 import { appendRemarksSheet } from "../lib/remarksExcelExport";
+import { createCfsCellResolvers } from "../lib/cfsCellResolvers";
 import {
-  rowTotalVaValues,
+  createCfsBaseValueResolver,
   rowZoneLowHighEndValues,
   type CfsZoneEndContext,
-  type CfsZoneVaContext,
 } from "../lib/cfsBaseColumnValues";
 import { cfsTargetsForRow, type CfsResolvedTarget } from "../lib/cfsTargets";
 import { isLowHighEndEligibleDimmingTypes } from "../lib/lowHighEnd";
@@ -153,6 +147,7 @@ interface CfsViewProps {
   onOpenExternalWindow?: () => void;
   onOpenPinnedWindow?: () => void;
   canEdit?: boolean;
+  onPendingCfsGuardChange?: (guard: PendingCfsGuard | null) => void;
   hasRevisionDraft?: boolean;
   onBeforeInspectionStart?: (choice: InspectionRevisionChoice) => boolean;
   onInspectionModeStart?: (roomTypeId: string, payload: InspectionCompletionPayload) => void;
@@ -246,6 +241,20 @@ interface LowHighEndDraft {
 
 interface LowHighEndHistorySnapshot {
   drafts: Record<string, LowHighEndDraft>;
+}
+
+function readPendingLowHighEnds(key: string): Record<string, LowHighEndDraft> {
+  if (typeof window === "undefined") return {};
+  try {
+    const saved: unknown = JSON.parse(sessionStorage.getItem(key) ?? "{}");
+    if (!saved || typeof saved !== "object" || Array.isArray(saved)) return {};
+    return Object.fromEntries(Object.entries(saved).filter(([id, value]) => {
+      if (!value || typeof value !== "object") return false;
+      const draft = value as Partial<LowHighEndDraft>;
+      return draft.key === id && [draft.assignmentId, draft.rowId, draft.label, draft.previousValue, draft.value].every((part) => typeof part === "string") &&
+        (draft.field === "lowEnd" || draft.field === "highEnd");
+    })) as Record<string, LowHighEndDraft>;
+  } catch { return {}; }
 }
 
 interface InspectionHistoryControls {
@@ -812,12 +821,17 @@ function cloneInspectionData<T>(value: T): T {
 }
 
 function safeExcelSheetName(value: string, fallback: string, usedNames: Set<string>): string {
-  const cleaned =
-    value
-      .trim()
-      .replace(/[\[\]:*?\/\\]/g, "_")
-      .replace(/\s+/g, " ") || fallback;
-  const base = (cleaned || "Sheet").slice(0, 31);
+  // Excel forbids boundary apostrophes and the reserved name History as well
+  // as its usual invalid characters. Recheck boundaries after truncation.
+  const normalize = (name: string): string => name
+    .replace(/[\[\]:*?\/\\]/g, "_")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s']+|[\s']+$/g, "")
+    .slice(0, 31)
+    .replace(/[\uD800-\uDBFF]$/, "")
+    .replace(/^[\s']+|[\s']+$/g, "");
+  const cleaned = normalize(value) || normalize(fallback) || "Sheet";
+  const base = cleaned.toLowerCase() === "history" ? `${cleaned}_` : cleaned;
   let candidate = base;
   let suffix = 2;
   while (usedNames.has(candidate.toLowerCase())) {
@@ -1210,6 +1224,7 @@ export default function CfsView({
   onOpenExternalWindow,
   onOpenPinnedWindow,
   canEdit = true,
+  onPendingCfsGuardChange,
   hasRevisionDraft = false,
   onBeforeInspectionStart,
   onInspectionModeStart,
@@ -1286,10 +1301,15 @@ export default function CfsView({
   const inspectionRedoStackRef = useRef<InspectionHistorySnapshot[]>([]);
   const [inspectionHistoryVersion, setInspectionHistoryVersion] = useState(0);
   const [lowHighEndDrafts, setLowHighEndDrafts] = useState<Record<string, LowHighEndDraft>>({});
+  const lowHighEndStorageKey = `cfs-low-high-pending-v1:${projectId ?? projectName}:${roomType.id}`;
+  const [lowHighEndLoadedKey, setLowHighEndLoadedKey] = useState("");
+  const [lowHighEndBackupError, setLowHighEndBackupError] = useState(false);
   const lowHighEndUndoStackRef = useRef<LowHighEndHistorySnapshot[]>([]);
   const lowHighEndRedoStackRef = useRef<LowHighEndHistorySnapshot[]>([]);
   const [lowHighEndHistoryVersion, setLowHighEndHistoryVersion] = useState(0);
   const [lowHighEndPopover, setLowHighEndPopover] = useState<LowHighEndPopoverState | null>(null);
+  const [lowHighEndLeaveOpen, setLowHighEndLeaveOpen] = useState(false);
+  const lowHighEndLeaveResolveRef = useRef<((proceed: boolean) => void) | null>(null);
   const [inspectionPopover, setInspectionPopover] = useState<InspectionPopoverState | null>(null);
   const [inspectionSessionBaseline, setInspectionSessionBaseline] = useState<InspectionCompletionPayload | null>(null);
   const [inspectionSessionSavedRevision, setInspectionSessionSavedRevision] = useState(false);
@@ -1301,6 +1321,13 @@ export default function CfsView({
   const [inspectionClipboard, setInspectionClipboard] = useState<InspectionClipboard | null>(null);
   const [cfsEditMode, setCfsEditMode] = useState(false);
   const [selectedSettingLinkColumnIds, setSelectedSettingLinkColumnIds] = useState<Set<string>>(new Set());
+  const [pendingSettingLink, setPendingSettingLink] = useState<{
+    kind: "switch" | "roomScene";
+    templateId: string;
+    roomTypeId: string;
+    before: readonly { id: string; settingLinkGroupId?: string }[];
+  } | null>(null);
+  const [settingLinkNotice, setSettingLinkNotice] = useState<{ roomTypeId: string; count: number } | null>(null);
   const [cfsScrollEndSpace, setCfsScrollEndSpace] = useState<CfsScrollEndSpace>({ inline: 0, block: 352 });
   const [showLinkMap, setShowLinkMap] = useState(false);
   const [cfsSwitchSettingRequest, setCfsSwitchSettingRequest] = useState<SwitchSettingOverlayRequest | null>(null);
@@ -1330,6 +1357,34 @@ export default function CfsView({
   const canLowHighEndUndo = lowHighEndHistoryVersion >= 0 && lowHighEndUndoStackRef.current.length > 0;
   const canLowHighEndRedo = lowHighEndHistoryVersion >= 0 && lowHighEndRedoStackRef.current.length > 0;
   const lowHighEndDraftSessionActive = lowHighEndDraftList.length > 0 || canLowHighEndUndo || canLowHighEndRedo;
+  const canConfirmLowHighEnd = Boolean(canEdit && onDeviceAssignmentsChange && lowHighEndDraftList.length > 0 &&
+    lowHighEndDraftList.every((draft) => roomType.deviceAssignments.some((assignment) => assignment.id === draft.assignmentId)));
+  const askLowHighEndLeave = useCallback((): Promise<boolean> => {
+    if (lowHighEndLeaveResolveRef.current) return Promise.resolve(false);
+    setLowHighEndPopover(null);
+    setLowHighEndLeaveOpen(true);
+    return new Promise((resolve) => { lowHighEndLeaveResolveRef.current = resolve; });
+  }, []);
+  useLayoutEffect(() => {
+    onPendingCfsGuardChange?.(lowHighEndDraftList.length ? askLowHighEndLeave : null);
+    return () => onPendingCfsGuardChange?.(null);
+  }, [onPendingCfsGuardChange, lowHighEndDraftList.length, askLowHighEndLeave]);
+  useLayoutEffect(() => {
+    if (lowHighEndLoadedKey !== lowHighEndStorageKey) return;
+    try {
+      if (lowHighEndDraftList.length) sessionStorage.setItem(lowHighEndStorageKey, JSON.stringify(lowHighEndDrafts));
+      else sessionStorage.removeItem(lowHighEndStorageKey);
+      setLowHighEndBackupError(false);
+    } catch { setLowHighEndBackupError(true); }
+  }, [lowHighEndDrafts, lowHighEndDraftList.length, lowHighEndStorageKey, lowHighEndLoadedKey]);
+  useEffect(() => {
+    if (!lowHighEndDraftList.length) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault(); event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [lowHighEndDraftList.length]);
   const clearLowHighEndDraftSession = useCallback((): void => {
     setLowHighEndDrafts({});
     lowHighEndUndoStackRef.current = [];
@@ -1367,14 +1422,6 @@ export default function CfsView({
   const locationById = useMemo(() => new Map(locations.map((loc) => [loc.id, loc])), [locations]);
   const deviceByModel = useMemo(() => new Map(devices.map((device) => [device.model, device])), [devices]);
   // T-33: contexts for the zone Total VA / Low End / High End base columns.
-  const fixtureByName = useMemo(
-    () => new Map(fixtures.map((fixture) => [fixture.fixture, fixture])),
-    [fixtures],
-  );
-  const zoneVaContext = useMemo<CfsZoneVaContext>(
-    () => ({ circuits, fixtureByName }),
-    [circuits, fixtureByName],
-  );
   const circuitById = useMemo(() => new Map(circuits.map((circuit) => [circuit.id, circuit])), [circuits]);
   const deviceAssignmentById = useMemo(
     () => new Map(roomType.deviceAssignments.map((assignment) => [assignment.id, assignment])),
@@ -1402,6 +1449,10 @@ export default function CfsView({
     },
     [circuitById, deviceAssignmentById, deviceByModel, lowHighEndDraftList],
   );
+  const resolveBaseValue = useMemo(() => createCfsBaseValueResolver({
+    locations, devices, programmingNameSettings: activeProgrammingNameSettings, circuits, fixtures,
+    deviceAssignments: [...zoneEndContext.assignmentById.values()],
+  }, numberMode), [locations, devices, activeProgrammingNameSettings, circuits, fixtures, zoneEndContext, numberMode]);
   const areaAddressByAssignmentCircuit = useMemo(
     () => buildAreaAddressAssignmentMap(roomType.deviceAssignments, circuits, locations),
     [circuits, locations, roomType.deviceAssignments],
@@ -1878,10 +1929,24 @@ export default function CfsView({
     setInspectionSelectionEnd(null);
     setInspectionPasteTarget(null);
     setInspectionClipboard(null);
-    clearLowHighEndDraftSession();
+    setLowHighEndLoadedKey(lowHighEndStorageKey);
+    lowHighEndLeaveResolveRef.current?.(false);
+    lowHighEndLeaveResolveRef.current = null;
+    setLowHighEndLeaveOpen(false);
+    setLowHighEndDrafts(readPendingLowHighEnds(lowHighEndStorageKey));
+    lowHighEndUndoStackRef.current = [];
+    lowHighEndRedoStackRef.current = [];
+    setLowHighEndHistoryVersion((value) => value + 1);
+    setLowHighEndPopover(null);
     setCfsEditMode(false);
+    setPendingSettingLink(null);
+    setSettingLinkNotice(null);
     setSelectedSettingLinkColumnIds(new Set());
-  }, [clearLowHighEndDraftSession, roomType.id]);
+  }, [lowHighEndStorageKey, roomType.id]);
+  useEffect(() => () => {
+    lowHighEndLeaveResolveRef.current?.(false);
+    lowHighEndLeaveResolveRef.current = null;
+  }, []);
 
   useEffect(() => {
     if (inspectionMode) return;
@@ -1897,8 +1962,8 @@ export default function CfsView({
 
   useEffect(() => {
     if (canEdit) return;
-    clearLowHighEndDraftSession();
-  }, [canEdit, clearLowHighEndDraftSession]);
+    setLowHighEndPopover(null);
+  }, [canEdit]);
 
   useEffect(() => {
     if (!inspectionMode) return;
@@ -2025,6 +2090,24 @@ export default function CfsView({
     .map((id) => visibleSettingLinkColumnsById.get(id))
     .filter((col): col is CfsSettingLinkColumn => Boolean(col));
   const selectedSettingLinkCount = selectedVisibleSettingLinkColumns.length;
+  const sourceSettingLinkColumn = selectedVisibleSettingLinkColumns[0];
+  // Count the committed group, including members absorbed from existing links.
+  // Keep parent state updaters pure: notification state is updated after commit.
+  useEffect(() => {
+    if (!cfsEditMode || (pendingSettingLink && pendingSettingLink.roomTypeId !== roomType.id)) {
+      setPendingSettingLink(null);
+      setSettingLinkNotice(null);
+      return;
+    }
+    if (!pendingSettingLink) return;
+    const rows = pendingSettingLink.kind === "roomScene" ? roomType.roomScenes : roomType.switches;
+    if (rows === pendingSettingLink.before) return;
+    const groupId = rows?.find((row) => row.id === pendingSettingLink.templateId)?.settingLinkGroupId;
+    if (groupId) {
+      setSettingLinkNotice({ roomTypeId: roomType.id, count: rows!.filter((row) => row.settingLinkGroupId === groupId).length });
+    }
+    setPendingSettingLink(null);
+  }, [cfsEditMode, pendingSettingLink, roomType.id, roomType.roomScenes, roomType.switches]);
   const selectedSettingLinkKinds = new Set(selectedVisibleSettingLinkColumns.map(settingLinkKindForColumn));
   const selectedSettingLinkKind =
     selectedSettingLinkKinds.size === 1 ? Array.from(selectedSettingLinkKinds)[0] : null;
@@ -2984,6 +3067,10 @@ export default function CfsView({
     return entries.length > 0 ? entries : [{ roomType, circuits }];
   }, [circuits, projectRoomTypeEntries, roomType]);
 
+  const currentCellResolvers = createCfsCellResolvers({
+    scenesById, showAreaSceneNames, displayBacklightCondition, inspectionDisplayValues,
+  });
+
   function buildCurrentCfsExcelSheetModel(): CfsExcelSheetModel {
     return {
       visibleBaseColumns,
@@ -3028,6 +3115,10 @@ export default function CfsView({
   function buildProjectCfsExcelSheetModel(entry: CfsProjectExcelRoomTypeEntry): CfsExcelSheetModel {
     const targetRoomType = entry.roomType;
     const targetCircuits = entry.circuits;
+    const baseValuesForEntry = createCfsBaseValueResolver({
+      locations, devices, programmingNameSettings: activeProgrammingNameSettings,
+      circuits: targetCircuits, fixtures, deviceAssignments: targetRoomType.deviceAssignments,
+    }, numberMode);
     const isActiveEntry = targetRoomType.id === roomType.id;
     const targetSharedCfsRowDisplay = normalizeCfsRowDisplaySettings(targetRoomType.cfsRowDisplay);
     const targetCfsRowDisplay = isActiveEntry
@@ -3069,7 +3160,7 @@ export default function CfsView({
             .map((row, index) => ({
               row,
               index,
-              label: rowProgrammingNameValuesForEntry(row).find((value) => value.trim()) ?? "",
+              label: baseValuesForEntry(row, "programmingName").find((value) => value.trim()) ?? "",
             }))
             .sort((a, b) => {
               const aMissing = !a.label;
@@ -3102,323 +3193,16 @@ export default function CfsView({
     const targetInspectionMarksByKey = new Map(
       (targetRoomType.inspectionMarks ?? []).map((mark) => [inspectionDraftKey(mark.sourceType, mark.sourceId, mark.targetId), mark]),
     );
-    // T-33: per-entry contexts for the zone Total VA / Low / High End columns.
-    const targetZoneVaContext: CfsZoneVaContext = { circuits: targetCircuits, fixtureByName };
-    const targetZoneEndContext: CfsZoneEndContext = {
-      circuitById: new Map(targetCircuits.map((circuit) => [circuit.id, circuit])),
-      assignmentById: new Map(targetRoomType.deviceAssignments.map((assignment) => [assignment.id, assignment])),
-      deviceByModel,
-    };
-
-    function rowAreaAddressValuesForEntry(row: CfsZoneRow): string[] {
-      return row.circuits.map((item) => item.areaAddress || "-");
-    }
-
-    function programmingAreaTokenForEntry(item: CfsZoneRow["circuits"][number]): string {
-      const location = locationById.get(item.locationId);
-      return normalizeProgrammingToken(location?.code || item.location || "");
-    }
-
-    function isOtherProgrammingLocationForEntry(item: CfsZoneRow["circuits"][number]): boolean {
-      return item.locationId === OTHER_AREA_ID || item.location.trim().toLowerCase() === "other";
-    }
-
-    function programmingLocationNumberTokenForEntry(item: CfsZoneRow["circuits"][number]): string {
-      const locationNumber = locationById.get(item.locationId)?.number.trim() ?? "";
-      return isOtherProgrammingLocationForEntry(item) ? locationNumber || "99" : locationNumber;
-    }
-
-    function programmingAreaTokenForNameForEntry(
-      item: CfsZoneRow["circuits"][number],
-      locationNumber: string,
-    ): string {
-      if (!isOtherProgrammingLocationForEntry(item)) return programmingAreaTokenForEntry(item);
-      return activeProgrammingNameSettings.tokens.includes("locationNumber") ? "" : locationNumber || "99";
-    }
-
-    function programmingAddressTokenForEntry(item: CfsZoneRow["circuits"][number]): string {
-      const rawAddress = normalizeProgrammingToken(item.areaAddress);
-      if (!rawAddress) return "";
-      const area = programmingAreaTokenForEntry(item);
-      if (area && rawAddress.toUpperCase().startsWith(area.toUpperCase())) {
-        return rawAddress.slice(area.length);
-      }
-      return rawAddress;
-    }
-
-    function deviceProgrammingTokenForEntry(row: CfsZoneRow): string {
-      const device = deviceByModel.get(row.device);
-      const code = normalizeProgrammingToken(device?.programmingCode || device?.abbrev || row.device);
-      const deviceNum = normalizeProgrammingToken(row.deviceNum === "-" ? "" : row.deviceNum);
-      const prefix = `${code}${deviceNum}`;
-      if (row.isDali) {
-        const line = normalizeProgrammingToken(row.daliLine);
-        const group = normalizeProgrammingToken(row.group === "-" ? "" : row.group);
-        const address = normalizeZoneNumber(row.zone === "-" ? "" : row.zone);
-        const route = (/2D/i.test(code) ? [line, group, address] : [group, address])
-          .filter(Boolean)
-          .join("-");
-        return route ? `${prefix}-${route}` : prefix;
-      }
-      const zone = normalizeControlAddressToken(row.zone === "-" ? "" : row.zone);
-      return zone ? `${prefix}-${zone}` : prefix;
-    }
-
-    function rowProgrammingNameValuesForEntry(row: CfsZoneRow): string[] {
-      if (row.isBacklight || row.isHvac || row.isCurtain || row.circuits.length === 0) return [];
-      const deviceToken = deviceProgrammingTokenForEntry(row);
-      return row.circuits.map((item) => {
-        const locationNumber = programmingLocationNumberTokenForEntry(item);
-        const designerNumber = item.designerNumber.trim();
-        const detail = item.detail.trim();
-        return formatProgrammingName(
-          {
-            locationNumber,
-            designerNumber,
-            area: programmingAreaTokenForNameForEntry(item, locationNumber),
-            address: programmingAddressTokenForEntry(item),
-            device: deviceToken,
-          },
-          detail,
-          activeProgrammingNameSettings,
-        );
-      });
-    }
-
-    function baseValuesForEntry(row: CfsZoneRow, key: BaseColumnKey): string[] {
-      if (row.isBacklight) {
-        switch (key) {
-          case "device":
-          case "deviceNum":
-          case "dimmingType":
-          case "group":
-          case "zone":
-          case "designerNumber":
-          case "area":
-          case "areaAddress":
-            return key === "device" ? ["Backlight Logic"] : [];
-          case "detail":
-            return row.circuits.map((item) => item.detail || "-");
-          case "programmingName":
-            return [];
-          default:
-            return [];
-        }
-      }
-      if (row.isHvac) {
-        switch (key) {
-          case "designerNumber":
-          case "group":
-          case "areaAddress":
-          case "programmingName":
-            return [];
-          case "zone":
-            return rowZoneValues(row);
-          case "dimmingType":
-            return rowDimmingValues(row);
-          case "detail":
-            return row.circuits.map((item) => item.detail || "-");
-          case "area":
-            return [row.location];
-          case "device":
-          case "deviceNum":
-            return [String(row[key] ?? "")];
-          default:
-            return [];
-        }
-      }
-      switch (key) {
-        case "designerNumber":
-          return rowNumberValues(row, numberMode);
-        case "areaAddress":
-          return rowAreaAddressValuesForEntry(row);
-        case "programmingName":
-          return rowProgrammingNameValuesForEntry(row);
-        case "dimmingType":
-          return rowDimmingValues(row);
-        case "totalVa":
-          return rowTotalVaValues(row, targetZoneVaContext);
-        case "zoneLowEnd":
-        case "zoneHighEnd":
-          return rowZoneLowHighEndValues(row, key, targetZoneEndContext);
-        case "area":
-          return row.location ? [row.location] : [];
-        case "detail":
-          if (row.circuits.length === 0 && row.isIoAssignment) {
-            const ioDetail = row.assignmentDetail || row.assignmentValue || "";
-            return ioDetail ? [ioDetail] : [];
-          }
-          return row.circuits.length === 0
-            ? [row.assignmentDetail || row.assignmentValue || "-"]
-            : row.circuits.map((item) => item.detail || item.designerNumber || item.internalNumber || "-");
-        case "zone":
-          return rowZoneValues(row);
-        case "group":
-          return row.isDali ? [row.group || "Reserved"] : [];
-        case "number":
-          return [];
-        case "device":
-        case "deviceNum":
-          return [String(row[key] ?? "")];
-        default:
-          return [];
-      }
-    }
+    const entryCellResolvers = createCfsCellResolvers({
+      scenesById: targetScenesById, showAreaSceneNames,
+      displayBacklightCondition: (value, source) => displayBacklightConditionFromMap(targetBacklightConditionNameByValue, value, source),
+    });
 
     function sceneIdsForSwitchTargetForEntry(sw: SwitchEntry, _targetId: string, areaId: string): string[] {
       return selectedSceneIdsForSwitch(sw)
         .map((sceneId) => targetScenesById.get(sceneId))
         .filter((scene): scene is Scene => scene !== undefined && sceneMatchesArea(scene, areaId))
         .map((scene) => scene.id);
-    }
-
-    function rawInspectionValueForTargetForEntry(col: FunctionColumn, targetId: string, areaId: string): string {
-      if (col.roomScene) {
-        const direct = col.roomScene.settings.find((setting) => setting.circuitId === targetId)?.percentage.trim() ?? "";
-        if (direct) return direct;
-        const areaSceneId = roomSceneSelectedAreaSceneId(col.roomScene, areaId);
-        const areaScene = targetScenesById.get(areaSceneId);
-        return areaScene ? sceneValueForCircuit(areaScene, targetId) : "";
-      }
-      if (!col.source) return "";
-      const direct = col.source.buttonSetting.circuitSettings
-        .find((setting) => setting.circuitId === targetId)
-        ?.percentage.trim() ?? "";
-      if (direct) return direct;
-      const sceneIds = sceneIdsForSwitchTargetForEntry(col.source, targetId, areaId);
-      return sceneIds
-        .map((sceneId) => {
-          const scene = targetScenesById.get(sceneId);
-          return scene ? sceneValueForCircuit(scene, targetId) : "";
-        })
-        .find(Boolean) ?? "";
-    }
-
-    function inspectionAreaSceneNameForTargetForEntry(col: FunctionColumn, target: InspectionTarget): string {
-      if (!showAreaSceneNames) return "";
-      if (col.roomScene) {
-        const direct = col.roomScene.settings.find((setting) => setting.circuitId === target.targetId)?.percentage.trim() ?? "";
-        if (direct) return "";
-        const areaSceneId = roomSceneSelectedAreaSceneId(col.roomScene, target.areaId);
-        const areaScene = targetScenesById.get(areaSceneId);
-        return areaScene ? areaSceneDisplayName(areaScene) : "";
-      }
-      if (!col.source) return "";
-      const direct = col.source.buttonSetting.circuitSettings
-        .find((setting) => setting.circuitId === target.targetId)
-        ?.percentage.trim() ?? "";
-      if (direct) return "";
-      const sceneId = sceneIdsForSwitchTargetForEntry(col.source, target.targetId, target.areaId).find((id) => {
-        const scene = targetScenesById.get(id);
-        return scene ? sceneValueForCircuit(scene, target.targetId).trim() !== "" : false;
-      });
-      const scene = sceneId ? targetScenesById.get(sceneId) : undefined;
-      return scene ? areaSceneDisplayName(scene) : "";
-    }
-
-    function targetDisplayValuesForEntry(row: CfsZoneRow, col: FunctionColumn): string[] {
-      const targets = rowTargetIds(row);
-      if (targets.length === 0) return [""];
-      return uniqueValues(
-        targets.flatMap((target) => {
-          const rawValue = rawInspectionValueForTargetForEntry(col, target.targetId, target.areaId);
-          const formattedValue = formatInspectionValue(rawValue, target.dimmingType);
-          if (!formattedValue) return [];
-          const sceneName = inspectionAreaSceneNameForTargetForEntry(col, target);
-          return sceneName ? [sceneName, formattedValue] : [formattedValue];
-        }),
-      );
-    }
-
-    function rawFunctionValuesForEntry(row: CfsZoneRow, col: FunctionColumn): string[] {
-      if (row.isBacklight) {
-        if (col.roomScene) {
-          const condition = displayBacklightConditionFromMap(
-            targetBacklightConditionNameByValue,
-            col.roomScene.backlightCondition,
-          );
-          return condition ? [condition] : [""];
-        }
-        if (!col.source || !row.backlightTargetGroupId) return [""];
-        const targetIds = col.source.backlightTarget.split(",").map((value) => value.trim()).filter(Boolean);
-        const condition = displayBacklightConditionFromMap(
-          targetBacklightConditionNameByValue,
-          col.source.backlightCondition,
-          col.source,
-        );
-        return targetIds.includes(row.backlightTargetGroupId) && condition ? [condition] : [""];
-      }
-      if (row.isHvac && row.hvacSettingId) {
-        const dimmingType = row.hvacMetric || "HVAC";
-        if (col.roomScene) {
-          return [roomSceneSettingValue(col.roomScene, row.hvacSettingId, dimmingType) || ""];
-        }
-        if (!col.source) return [""];
-        const direct = col.source.buttonSetting.circuitSettings
-          .find((setting) => setting.circuitId === row.hvacSettingId)
-          ?.percentage ?? "";
-        if (direct.trim()) return [formatLevel(direct, dimmingType)];
-        return sceneRawValuesForTarget(col.source, row.hvacSettingId, row.locationId, targetScenesById)
-          .map((value) => formatLevel(value, dimmingType))
-          .filter(Boolean);
-      }
-      if (row.circuits.length === 0) {
-        const targets = rowTargetIds(row);
-        return targets.length > 0 && targets.every(isCcoInspectionTarget)
-          ? targetDisplayValuesForEntry(row, col)
-          : [""];
-      }
-      if (col.roomScene) {
-        return row.circuits.flatMap((item) => roomSceneCellValue(col.roomScene!, item.circuit, targetScenesById, showAreaSceneNames));
-      }
-      if (!col.source) return [""];
-      return row.circuits.flatMap((item) => cellValues(col.source!, item.circuit, targetScenesById, showAreaSceneNames));
-    }
-
-    function functionValuesForEntry(row: CfsZoneRow, col: FunctionColumn): string[] {
-      const values = rawFunctionValuesForEntry(row, col);
-      if (row.isBacklight) return values;
-      return values.some((value) => value.trim() !== "") ? values : ["-"];
-    }
-
-    function hasSceneDifferentOverrideForEntry(row: CfsZoneRow, col: FunctionColumn): boolean {
-      if (col.roomScene) {
-        if (row.isBacklight || row.isHvac || row.circuits.length === 0) return false;
-        return row.circuits.some((item) => {
-          const direct = col.roomScene!.settings
-            .find((setting) => setting.circuitId === item.circuit.id)
-            ?.percentage.trim() ?? "";
-          return direct !== "" && roomSceneHasAreaSceneValue(col.roomScene!, item.circuit, targetScenesById);
-        });
-      }
-      const sw = col.source;
-      if (!sw) return false;
-      if (row.isBacklight || row.circuits.length === 0) return false;
-      return row.circuits.some((item) => {
-        const direct = sw.buttonSetting.circuitSettings
-          .find((setting) => setting.circuitId === item.circuit.id)
-          ?.percentage.trim() ?? "";
-        if (!direct) return false;
-        const sceneValues = sceneRawValuesForCircuit(sw, item.circuit, targetScenesById);
-        if (sceneValues.length === 0) return false;
-        const normalizedDirect = normalizeLevelForCompare(direct);
-        return sceneValues.some((sceneValue) => normalizeLevelForCompare(sceneValue) !== normalizedDirect);
-      });
-    }
-
-    function hasAreaSceneValueCellForEntry(row: CfsZoneRow, col: FunctionColumn): boolean {
-      if (row.isBacklight) return false;
-      if (row.isHvac && row.hvacSettingId) {
-        return col.source ? switchUsesAreaSceneValue(col.source, row.hvacSettingId, row.locationId, targetScenesById) : false;
-      }
-      if (row.circuits.length === 0) return false;
-      if (col.roomScene) {
-        return row.circuits.some((item) => roomSceneUsesAreaSceneValue(col.roomScene!, item.circuit, targetScenesById));
-      }
-      if (col.source) {
-        return row.circuits.some((item) => switchUsesAreaSceneValue(col.source!, item.circuit.id, item.circuit.area, targetScenesById));
-      }
-      return false;
     }
 
     function hasInspectionSourceMark(sourceType: InspectionDraftSource, sourceId: string, targetId: string): boolean {
@@ -3465,12 +3249,12 @@ export default function CfsView({
       expandedPirHeaderKeys,
       resolvers: {
         baseValues: baseValuesForEntry,
-        functionValues: functionValuesForEntry,
+        functionValues: entryCellResolvers.functionValues,
         baseColumnLabel,
         hasChangedBaseCell: () => false,
         hasChangedFunctionCell: () => false,
-        hasAreaSceneValueCell: hasAreaSceneValueCellForEntry,
-        hasSceneDifferentOverride: hasSceneDifferentOverrideForEntry,
+        hasAreaSceneValueCell: entryCellResolvers.hasAreaSceneValueCell,
+        hasSceneDifferentOverride: entryCellResolvers.hasSceneDifferentOverride,
         hasInspectionMarkForCell: hasInspectionMarkForCellForEntry,
         isPriorityTriggerColumn,
       },
@@ -3522,89 +3306,8 @@ export default function CfsView({
     }
   }
 
-  function rowAreaAddressValues(row: CfsZoneRow): string[] {
-    return row.circuits.map((item) => item.areaAddress || "-");
-  }
-
-  function programmingAreaToken(item: CfsZoneRow["circuits"][number]): string {
-    const location = locationById.get(item.locationId);
-    return normalizeProgrammingToken(location?.code || item.location || "");
-  }
-
-  function isOtherProgrammingLocation(item: CfsZoneRow["circuits"][number]): boolean {
-    return item.locationId === OTHER_AREA_ID || item.location.trim().toLowerCase() === "other";
-  }
-
-  function programmingLocationNumberToken(item: CfsZoneRow["circuits"][number]): string {
-    const locationNumber = locationById.get(item.locationId)?.number.trim() ?? "";
-    return isOtherProgrammingLocation(item) ? locationNumber || "99" : locationNumber;
-  }
-
-  function programmingAreaTokenForName(item: CfsZoneRow["circuits"][number], locationNumber: string): string {
-    if (!isOtherProgrammingLocation(item)) return programmingAreaToken(item);
-    return activeProgrammingNameSettings.tokens.includes("locationNumber") ? "" : locationNumber || "99";
-  }
-
-  function programmingAddressToken(item: CfsZoneRow["circuits"][number]): string {
-    const rawAddress = normalizeProgrammingToken(item.areaAddress);
-    if (!rawAddress) return "";
-    const area = programmingAreaToken(item);
-    if (area && rawAddress.toUpperCase().startsWith(area.toUpperCase())) {
-      return rawAddress.slice(area.length);
-    }
-    return rawAddress;
-  }
-
-  function normalizeZoneNumber(value: string): string {
-    return normalizeProgrammingToken(value).replace(/^ZN/, "");
-  }
-
-  function normalizeControlAddressToken(value: string): string {
-    const zone = normalizeZoneNumber(value);
-    const cco = zone.match(/^CCO(\d*)$/);
-    if (cco) return `O${cco[1] ?? ""}`;
-    const cci = zone.match(/^CCI(\d*)$/);
-    if (cci) return `I${cci[1] ?? ""}`;
-    return zone;
-  }
-
-  function deviceProgrammingToken(row: CfsZoneRow): string {
-    const device = deviceByModel.get(row.device);
-    const code = normalizeProgrammingToken(device?.programmingCode || device?.abbrev || row.device);
-    const deviceNum = normalizeProgrammingToken(row.deviceNum === "-" ? "" : row.deviceNum);
-    const prefix = `${code}${deviceNum}`;
-    if (row.isDali) {
-      const line = normalizeProgrammingToken(row.daliLine);
-      const group = normalizeProgrammingToken(row.group === "-" ? "" : row.group);
-      const address = normalizeZoneNumber(row.zone === "-" ? "" : row.zone);
-      const route = (/2D/i.test(code) ? [line, group, address] : [group, address])
-        .filter(Boolean)
-        .join("-");
-      return route ? `${prefix}-${route}` : prefix;
-    }
-    const zone = normalizeControlAddressToken(row.zone === "-" ? "" : row.zone);
-    return zone ? `${prefix}-${zone}` : prefix;
-  }
-
   function rowProgrammingNameValues(row: CfsZoneRow): string[] {
-    if (row.isBacklight || row.isHvac || row.isCurtain || row.circuits.length === 0) return [];
-    const deviceToken = deviceProgrammingToken(row);
-    return row.circuits.map((item) => {
-      const locationNumber = programmingLocationNumberToken(item);
-      const designerNumber = item.designerNumber.trim();
-      const detail = item.detail.trim();
-      return formatProgrammingName(
-        {
-          locationNumber,
-          designerNumber,
-          area: programmingAreaTokenForName(item, locationNumber),
-          address: programmingAddressToken(item),
-          device: deviceToken,
-        },
-        detail,
-        activeProgrammingNameSettings,
-      );
-    });
+    return resolveBaseValue(row, "programmingName");
   }
 
   function programmingNamePreview(): string {
@@ -3732,9 +3435,10 @@ export default function CfsView({
     );
   }
 
-  function toggleCfsEditMode(): void {
+  async function toggleCfsEditMode(): Promise<void> {
     if (!canEnterCfsEditMode) return;
     if (cfsEditMode) {
+      if (lowHighEndDraftList.length && !(await askLowHighEndLeave())) return;
       setSelectedSettingLinkColumnIds(new Set());
       setLowHighEndPopover(null);
       setCfsEditMode(false);
@@ -3749,6 +3453,7 @@ export default function CfsView({
   }
 
   function toggleSettingLinkColumnSelection(col: FunctionColumn, checked: boolean): void {
+    setSettingLinkNotice(null);
     if (!canEditSettingLinksFromCfs || !isCfsSettingLinkSelectableColumn(col)) return;
     if (!canChangeSettingLinkColumn(col)) return;
     const nextKind = settingLinkKindForColumn(col);
@@ -3771,6 +3476,8 @@ export default function CfsView({
           .filter((id): id is string => Boolean(id)),
       );
       const templateId = selectedVisibleSettingLinkColumns.find((col) => col.category === "scene")?.roomScene?.id;
+      if (!templateId) return;
+      setPendingSettingLink({ kind: "roomScene", templateId, roomTypeId: roomType.id, before: roomType.roomScenes ?? [] });
       onRoomScenesChange((current) => {
         const linked = linkRoomSceneSettingSelection(current, sceneIds, createAppId, templateId);
         return normalizeRoomSceneSettingLinksAfterCommit(current, linked);
@@ -3786,6 +3493,8 @@ export default function CfsView({
         .filter((id): id is string => Boolean(id)),
     );
     const templateId = selectedVisibleSettingLinkColumns.find((col) => col.category !== "scene")?.source?.id;
+    if (!templateId) return;
+    setPendingSettingLink({ kind: "switch", templateId, roomTypeId: roomType.id, before: roomType.switches });
     onSwitchesChange((current) => {
       const linked = linkSwitchSettingSelection(current, switchIds, createAppId, templateId);
       return normalizeSwitchSettingLinksAfterCommit(current, linked);
@@ -3852,7 +3561,7 @@ export default function CfsView({
                 : `Select ${functionColumnLabel(col)} for setting link`
             : "Settings are not available for this column";
           return (
-            <div key={col.id} className="cfs-header-column-controls" data-column-id={col.id}>
+            <div key={col.id} className={`cfs-header-column-controls${editing && sourceSettingLinkColumn?.id === col.id ? " is-link-source" : ""}`} data-column-id={col.id}>
               {editing ? (
                 <label
                   className={`cfs-setting-link-select-cell${checked ? " is-selected" : ""}${
@@ -4815,83 +4524,7 @@ export default function CfsView({
   }
 
   function baseValues(row: CfsZoneRow, key: BaseColumnKey): string[] {
-    if (row.isBacklight) {
-      switch (key) {
-        case "device":
-        case "deviceNum":
-        case "dimmingType":
-        case "group":
-        case "zone":
-        case "designerNumber":
-        case "area":
-        case "areaAddress":
-          return key === "device" ? ["Backlight Logic"] : [];
-        case "detail":
-          return row.circuits.map((item) => item.detail || "-");
-        case "programmingName":
-          return [];
-        default:
-          return [];
-      }
-    }
-    if (row.isHvac) {
-      switch (key) {
-        case "designerNumber":
-        case "group":
-        case "areaAddress":
-        case "programmingName":
-          return [];
-        case "zone":
-          return rowZoneValues(row);
-        case "dimmingType":
-          return rowDimmingValues(row);
-        case "detail":
-          return row.circuits.map((item) => item.detail || "-");
-        case "area":
-          return [row.location];
-        case "device":
-        case "deviceNum":
-          return [String(row[key] ?? "")];
-        default:
-          return [];
-      }
-    }
-    switch (key) {
-      case "designerNumber":
-        return rowNumberValues(row, numberMode);
-      case "areaAddress":
-        return rowAreaAddressValues(row);
-      case "programmingName":
-        return rowProgrammingNameValues(row);
-      case "dimmingType":
-        return rowDimmingValues(row);
-      case "totalVa":
-        return rowTotalVaValues(row, zoneVaContext);
-      case "zoneLowEnd":
-      case "zoneHighEnd":
-        return rowZoneLowHighEndValues(row, key, zoneEndContext);
-      case "area":
-        return row.location ? [row.location] : [];
-      case "detail":
-        if (row.circuits.length === 0 && row.isIoAssignment) {
-          const ioDetail = row.assignmentDetail || row.assignmentValue || "";
-          return ioDetail ? [ioDetail] : [];
-        }
-        return row.circuits.length === 0
-          ? [row.assignmentDetail || row.assignmentValue || "-"]
-          : row.circuits.map((item) => item.detail || item.designerNumber || item.internalNumber || "-");
-      case "zone":
-        return rowZoneValues(row);
-      case "group":
-        return row.isDali ? [row.group || "Reserved"] : [];
-      case "number":
-        return [];
-      case "device":
-      case "deviceNum":
-        return [String(row[key] ?? "")];
-      default:
-        return [];
-    }
+    return resolveBaseValue(row, key);
   }
 
   function lowHighEndAssignmentForRow(row: CfsZoneRow): DeviceAssignment | undefined {
@@ -5006,7 +4639,7 @@ export default function CfsView({
   }
 
   function confirmLowHighEndDrafts(): void {
-    if (!canEdit || !onDeviceAssignmentsChange || lowHighEndDraftList.length === 0) return;
+    if (!canConfirmLowHighEnd || !onDeviceAssignmentsChange) return;
     const draftsByAssignment = new Map<string, LowHighEndDraft[]>();
     for (const draft of lowHighEndDraftList) {
       const list = draftsByAssignment.get(draft.assignmentId) ?? [];
@@ -5203,67 +4836,11 @@ export default function CfsView({
     );
   }
 
-  function targetDisplayValues(row: CfsZoneRow, col: FunctionColumn): string[] {
-    const targets = rowTargetIds(row);
-    if (targets.length === 0) return [""];
-    return uniqueValues(
-      targets.flatMap((target) => {
-        const rawValue = rawInspectionValueForTarget(col, target.targetId, target.areaId);
-        const formattedValue = formatInspectionValue(rawValue, target.dimmingType);
-        if (!formattedValue) return [];
-        const sceneName = inspectionAreaSceneNameForTarget(col, target, undefined);
-        return sceneName ? [sceneName, formattedValue] : [formattedValue];
-      }),
-    );
-  }
-
-  function rawFunctionValues(row: CfsZoneRow, col: FunctionColumn): string[] {
-    const draftValues = inspectionDisplayValues(row, col);
-    if (draftValues) return draftValues.length > 0 ? draftValues : [""];
-    if (row.isBacklight) {
-      if (col.roomScene) {
-        const condition = displayBacklightCondition(col.roomScene.backlightCondition);
-        return condition ? [condition] : [""];
-      }
-      if (!col.source || !row.backlightTargetGroupId) return [""];
-      const targetIds = col.source.backlightTarget.split(",").map((value) => value.trim()).filter(Boolean);
-      const condition = displayBacklightCondition(col.source.backlightCondition, col.source);
-      return targetIds.includes(row.backlightTargetGroupId) && condition ? [condition] : [""];
-    }
-    if (row.isHvac && row.hvacSettingId) {
-      const dimmingType = row.hvacMetric || "HVAC";
-      if (col.roomScene) {
-        return [roomSceneSettingValue(col.roomScene, row.hvacSettingId, dimmingType) || ""];
-      }
-      if (!col.source) return [""];
-      const direct = col.source.buttonSetting.circuitSettings
-        .find((setting) => setting.circuitId === row.hvacSettingId)
-        ?.percentage ?? "";
-      if (direct.trim()) return [formatLevel(direct, dimmingType)];
-      return sceneRawValuesForTarget(col.source, row.hvacSettingId, row.locationId, scenesById)
-        .map((value) => formatLevel(value, dimmingType))
-        .filter(Boolean);
-    }
-    if (row.circuits.length === 0) {
-      const targets = rowTargetIds(row);
-      return targets.length > 0 && targets.every(isCcoInspectionTarget)
-        ? targetDisplayValues(row, col)
-        : [""];
-    }
-    if (col.roomScene) {
-      return row.circuits.flatMap((item) => roomSceneCellValue(col.roomScene!, item.circuit, scenesById, showAreaSceneNames));
-    }
-    if (!col.source) return [""];
-    return row.circuits.flatMap((item) => cellValues(col.source!, item.circuit, scenesById, showAreaSceneNames));
-  }
-
   // Cells a scene names but does not set stay "-": the dash means "nothing
   // operates here" (2026-08-22 decision — an "Uneffected" label was tried and
   // rejected).
   function functionValues(row: CfsZoneRow, col: FunctionColumn): string[] {
-    const values = rawFunctionValues(row, col);
-    if (row.isBacklight) return values;
-    return values.some((value) => value.trim() !== "") ? values : ["-"];
+    return currentCellResolvers.functionValues(row, col);
   }
 
   function hasRepairedLinkCell(row: CfsZoneRow, values: string[]): boolean {
@@ -5277,28 +4854,7 @@ export default function CfsView({
   }
 
   function hasSceneDifferentOverride(row: CfsZoneRow, col: FunctionColumn): boolean {
-    if (col.roomScene) {
-      if (row.isBacklight || row.isHvac || row.circuits.length === 0) return false;
-      return row.circuits.some((item) => {
-        const direct = col.roomScene!.settings
-          .find((setting) => setting.circuitId === item.circuit.id)
-          ?.percentage.trim() ?? "";
-        return direct !== "" && roomSceneHasAreaSceneValue(col.roomScene!, item.circuit, scenesById);
-      });
-    }
-    const sw = col.source;
-    if (!sw) return false;
-    if (row.isBacklight || row.circuits.length === 0) return false;
-    return row.circuits.some((item) => {
-      const direct = sw.buttonSetting.circuitSettings
-        .find((setting) => setting.circuitId === item.circuit.id)
-        ?.percentage.trim() ?? "";
-      if (!direct) return false;
-      const sceneValues = sceneRawValuesForCircuit(sw, item.circuit, scenesById);
-      if (sceneValues.length === 0) return false;
-      const normalizedDirect = normalizeLevelForCompare(direct);
-      return sceneValues.some((sceneValue) => normalizeLevelForCompare(sceneValue) !== normalizedDirect);
-    });
+    return currentCellResolvers.hasSceneDifferentOverride(row, col);
   }
 
   function hasRevisionFields(changes: RevisionFieldChanges | undefined, id: string, fields?: readonly string[]): boolean {
@@ -5431,18 +4987,7 @@ export default function CfsView({
   }
 
   function hasAreaSceneValueCell(row: CfsZoneRow, col: FunctionColumn): boolean {
-    if (row.isBacklight) return false;
-    if (row.isHvac && row.hvacSettingId) {
-      return col.source ? switchUsesAreaSceneValue(col.source, row.hvacSettingId, row.locationId, scenesById) : false;
-    }
-    if (row.circuits.length === 0) return false;
-    if (col.roomScene) {
-      return row.circuits.some((item) => roomSceneUsesAreaSceneValue(col.roomScene!, item.circuit, scenesById));
-    }
-    if (col.source) {
-      return row.circuits.some((item) => switchUsesAreaSceneValue(col.source!, item.circuit.id, item.circuit.area, scenesById));
-    }
-    return false;
+    return currentCellResolvers.hasAreaSceneValueCell(row, col);
   }
 
   const hasHighlightLegend =
@@ -6082,6 +5627,14 @@ export default function CfsView({
               {cfsEditMode ? (
                 <>
                   <span className="cfs-setting-link-selected-count">{selectedSettingLinkCount} selected</span>
+                  {sourceSettingLinkColumn ? (
+                    <span className="cfs-setting-link-source-label" title={functionColumnLabel(sourceSettingLinkColumn)}>
+                      Source: {functionColumnLabel(sourceSettingLinkColumn)}
+                    </span>
+                  ) : null}
+                  <span className="cfs-setting-link-notice" role="status" aria-live="polite">
+                    {settingLinkNotice?.roomTypeId === roomType.id ? `${settingLinkNotice.count} columns applied` : ""}
+                  </span>
                   <button
                     type="button"
                     className="btn btn-secondary"
@@ -6226,9 +5779,21 @@ export default function CfsView({
             </button>
           </div>
         </div>
+        {lowHighEndLeaveOpen ? <PendingCfsDialog canConfirm={canConfirmLowHighEnd} onChoice={(choice) => {
+          if (choice === "confirm" && !canConfirmLowHighEnd) return;
+          const resolve = lowHighEndLeaveResolveRef.current;
+          lowHighEndLeaveResolveRef.current = null;
+          flushSync(() => {
+            if (choice === "confirm") confirmLowHighEndDrafts();
+            if (choice === "discard") clearLowHighEndDraftSession();
+            setLowHighEndLeaveOpen(false);
+          });
+          resolve?.(choice !== "cancel");
+        }} /> : null}
         {lowHighEndDraftSessionActive ? (
           <div className="cfs-inspection-draft-bar cfs-low-high-draft-bar" aria-label="Low/High End draft controls">
             <span className="cfs-low-high-draft-label">Low/High End</span>
+            {lowHighEndBackupError ? <span role="alert">Pending values could not be backed up. Keep this page open until Confirm or Discard.</span> : null}
             <span className="cfs-inspection-draft-count">{lowHighEndDraftList.length} draft</span>
             <button
               type="button"
@@ -6246,13 +5811,16 @@ export default function CfsView({
             >
               Redo
             </button>
-            <button type="button" className="btn btn-secondary" onClick={clearLowHighEndDraftSession}>
+            <button type="button" className="btn btn-secondary" onClick={() => {
+              if (lowHighEndDraftList.length) void askLowHighEndLeave();
+              else clearLowHighEndDraftSession();
+            }}>
               Discard
             </button>
             <button
               type="button"
               className="btn btn-primary"
-              disabled={!canEdit || lowHighEndDraftList.length === 0}
+              disabled={!canConfirmLowHighEnd}
               onClick={confirmLowHighEndDrafts}
             >
               Confirm

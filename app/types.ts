@@ -385,11 +385,30 @@ export interface ProjectRemark {
   rows: string[][];
 }
 
+export interface ProjectCommonSnapshot {
+  name: string;
+  settings?: ProjectSettings;
+  remarks?: ProjectRemark[];
+  locations: LocationMaster[];
+  fixtures: FixtureMaster[];
+}
+
+export interface ProjectCommonRevision {
+  id: string;
+  revision: string;
+  savedAt: string;
+  savedBy: string;
+  note: string;
+  snapshot: ProjectCommonSnapshot;
+}
+
 export interface ProjectData {
   id: string;
   name: string;
   updatedAt: string;
   lastUpdatedBy?: CollaborationEditorInfo | null;
+  commonRevisions?: ProjectCommonRevision[];
+  lastSaveOperation?: { id: string; kind: 'current' | 'revision' | 'idle'; fingerprint: string };
   settings?: ProjectSettings;
   remarks?: ProjectRemark[];
   locations: LocationMaster[];

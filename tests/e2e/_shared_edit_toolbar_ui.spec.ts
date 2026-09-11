@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./support/safe-test";
 import { createNewRoomType } from "../../app/lib/constants";
 import type { ProjectData, RoomType } from "../../app/types";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
@@ -43,8 +43,8 @@ test.beforeEach(async ({ page }) => {
     sessionStorage.clear();
   });
   const mockState = await installLocalEditingMocks(page);
-  mockState.projects = [makeSharedToolbarProject() as any];
-  await page.route("**/api/collaboration/status**", async (route) => {
+  mockState.projects = [{ ...makeSharedToolbarProject() }];
+  await page.context().route("**/api/collaboration/status**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -78,11 +78,11 @@ test("shows the compact shared-edit tile and dedicated update highlight control"
   await page.getByRole("tab", { name: "Room Type" }).click();
   await page.getByRole("tab", { name: "A", exact: true }).click();
 
-  const collaborationTile = page.locator(".project-screen-shell > .collaboration-bar.is-compact");
+  const collaborationTile = page.locator(".project-top-action-groups > .collaboration-bar.is-compact");
   await expect(collaborationTile).toBeVisible();
-  await expect.poll(() => collaborationTile.evaluate((element) => getComputedStyle(element).position)).toBe("absolute");
+  await expect(collaborationTile).toContainText("View Only");
 
-  const highlightButton = page.getByRole("button", { name: /Highlight Updates/ });
+  const highlightButton = page.getByRole("button", { name: /Turn (on|off) update highlights/ });
   await expect(highlightButton).toBeVisible();
   await expect(highlightButton).toHaveAttribute("aria-pressed", "false");
   const highlightOffBox = await highlightButton.boundingBox();
@@ -90,7 +90,7 @@ test("shows the compact shared-edit tile and dedicated update highlight control"
   if (!highlightOffBox || !historyOffBox) throw new Error("Toolbar controls are not measurable");
   await highlightButton.click();
   await expect(highlightButton).toHaveAttribute("aria-pressed", "true");
-  await expect(highlightButton).toContainText("On");
+  await expect(highlightButton).toHaveAccessibleName("Turn off update highlights");
   const highlightOnBox = await highlightButton.boundingBox();
   const historyOnBox = await page.locator(".history-controls").boundingBox();
   if (!highlightOnBox || !historyOnBox) throw new Error("Toolbar controls are not measurable after toggling");
@@ -99,12 +99,12 @@ test("shows the compact shared-edit tile and dedicated update highlight control"
   expect(historyOnBox.x).toBeCloseTo(historyOffBox.x, 4);
   expect(historyOnBox.width).toBeCloseTo(historyOffBox.width, 4);
 
-  const saveRevisionButton = page.getByRole("button", { name: "Save Revision", exact: true });
+  const saveRevisionButton = page.getByRole("button", { name: "Save all room types as new revisions", exact: true });
   await expect(saveRevisionButton).toBeVisible();
   await expect(saveRevisionButton).toBeDisabled();
   await expect(page.getByRole("button", { name: "Tools", exact: true })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Revision Management", exact: true }).click();
+  await page.getByRole("button", { name: "Open revision management", exact: true }).click();
   const revisionPanel = page.locator(".revision-manager-panel");
   await expect(revisionPanel).toBeVisible();
   await expect(revisionPanel).not.toContainText(/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/i);
@@ -122,6 +122,8 @@ test("shows the compact shared-edit tile and dedicated update highlight control"
   const tabletHistory = await page.locator(".history-controls").boundingBox();
   expect(tabletTile).not.toBeNull();
   expect(tabletHistory).not.toBeNull();
-  expect((tabletTile?.y ?? 0) + (tabletTile?.height ?? 0)).toBeLessThanOrEqual(tabletHistory?.y ?? 0);
+  // The approved top toolbar remains a single row above the 760px breakpoint.
+  expect((tabletTile?.x ?? 0) + (tabletTile?.width ?? 0)).toBeLessThanOrEqual(tabletHistory?.x ?? 0);
+  expect((tabletHistory?.x ?? 0) + (tabletHistory?.width ?? 0)).toBeLessThanOrEqual(1024);
   await page.screenshot({ path: testInfo.outputPath("shared-edit-toolbar-tablet.png"), fullPage: false });
 });

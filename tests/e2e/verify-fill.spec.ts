@@ -9,7 +9,7 @@ test('debug 404 errors and React behavior', async ({ page }) => {
   const consoleLogs: string[] = [];
   page.on('console', m => consoleLogs.push(`[${m.type()}] ${m.text()}`));
   
-  await page.goto('http://localhost:3001/');
+  await page.goto('/');
   await page.waitForLoadState('networkidle');
   
   // Check if React is running

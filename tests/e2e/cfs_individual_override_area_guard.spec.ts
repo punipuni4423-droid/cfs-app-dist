@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./support/safe-test";
 import type { CircuitEntry, Scene, SwitchEntry } from "../../app/types";
 import {
   SCENE_NAME_LINE_PREFIX,

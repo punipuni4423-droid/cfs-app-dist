@@ -39,7 +39,7 @@
  *
  * データ保護: installLocalEditingMocks で /api/projects を全モック。
  */
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./support/safe-test";
 import { createDefaultLocations, createEmptySwitchEntry, createNewRoomType } from "../../app/lib/constants";
 import { SETTING_LINK_COLORS } from "../../app/lib/settingLinkGroups";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
@@ -48,6 +48,7 @@ type LocalEditingMockState = Awaited<ReturnType<typeof installLocalEditingMocks>
 let mockState: LocalEditingMockState;
 
 test.beforeEach(async ({ page }) => {
+  await page.context().route("**/api/**", (route) => route.fulfill({ json: {} }));
   mockState = await installLocalEditingMocks(page);
 });
 
@@ -138,6 +139,13 @@ async function openProject(page: Page, projectName: string): Promise<void> {
   const back = page.getByRole("button", { name: /Back to Project List/i }).first();
   if (await back.isVisible().catch(() => false)) {
     await back.click();
+    // Keep the normalized synthetic project when moving between projects;
+    // T114 requires an explicit save decision for its unsaved draft.
+    const finish = page.getByRole("dialog", { name: "Finish editing with draft changes?" });
+    if (await finish.isVisible()) {
+      await finish.getByRole("button", { name: "Save Current & Finish", exact: true }).click();
+      await expect(finish).toBeHidden();
+    }
   }
   const card = page.locator("button.screen-card").filter({ hasText: projectName }).first();
   await expect(card).toBeVisible({ timeout: 10000 });

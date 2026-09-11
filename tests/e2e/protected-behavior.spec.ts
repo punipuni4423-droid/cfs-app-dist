@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./support/safe-test";
 import {
   APP_SETTINGS_KEY,
   createDefaultBacklightLevels,
@@ -890,8 +890,8 @@ async function seedProjects(projects: unknown[]): Promise<void> {
 }
 
 async function forceViewOnlyCollaboration(page: Page): Promise<void> {
-  await page.unroute("**/api/collaboration/status**").catch(() => undefined);
-  await page.route("**/api/collaboration/status**", async (route) => {
+  await page.context().unroute("**/api/collaboration/status**").catch(() => undefined);
+  await page.context().route("**/api/collaboration/status**", async (route) => {
     const requestUrl = new URL(route.request().url());
     await route.fulfill({
       status: 200,
@@ -963,8 +963,8 @@ async function enableLocalCollaboration(page: Page, options: { idleMs?: number }
     window.sessionStorage.setItem("cfs-collaboration-session-v1", "test-session");
   }, user);
 
-  await page.unroute("**/api/collaboration/status**").catch(() => undefined);
-  await page.route("**/api/collaboration/status**", async (route) => {
+  await page.context().unroute("**/api/collaboration/status**").catch(() => undefined);
+  await page.context().route("**/api/collaboration/status**", async (route) => {
     const requestUrl = new URL(route.request().url());
     await route.fulfill({
       status: 200,
@@ -973,7 +973,7 @@ async function enableLocalCollaboration(page: Page, options: { idleMs?: number }
     });
   });
 
-  await page.route("**/api/collaboration/lock/acquire", async (route) => {
+  await page.context().route("**/api/collaboration/lock/acquire", async (route) => {
     const payload = route.request().postDataJSON() as { projectId?: string };
     mode = "edit";
     const status = buildStatus(payload.projectId ?? "");
@@ -984,7 +984,7 @@ async function enableLocalCollaboration(page: Page, options: { idleMs?: number }
     });
   });
 
-  await page.route("**/api/collaboration/lock/heartbeat", async (route) => {
+  await page.context().route("**/api/collaboration/lock/heartbeat", async (route) => {
     const payload = route.request().postDataJSON() as { projectId?: string };
     const status = buildStatus(payload.projectId ?? "");
     await route.fulfill({
@@ -994,7 +994,7 @@ async function enableLocalCollaboration(page: Page, options: { idleMs?: number }
     });
   });
 
-  await page.route("**/api/collaboration/lock/release", async (route) => {
+  await page.context().route("**/api/collaboration/lock/release", async (route) => {
     const payload = route.request().postDataJSON() as { projectId?: string };
     mode = "view";
     const status = buildStatus(payload.projectId ?? "");
@@ -1442,7 +1442,7 @@ test.describe("Protected CFS behaviors", () => {
     const roomTypeName = `Room-Conflict-${Date.now()}`;
     await createRoomType(page, roomTypeName);
 
-    await page.route("**/api/projects**", async (route) => {
+    await page.context().route("**/api/projects**", async (route) => {
       if (route.request().method() === "POST") {
         await route.fulfill({
           status: 409,
@@ -1482,12 +1482,12 @@ test.describe("Protected CFS behaviors", () => {
     const roomTypeName = `Room-Overwrite-${Date.now()}`;
     await createRoomType(page, roomTypeName);
 
-    await page.unroute("**/api/projects**").catch(() => undefined);
+    await page.context().unroute("**/api/projects**").catch(() => undefined);
     const serverUpdatedAt = "2099-01-01T00:00:00.000Z";
     let firstSave = true;
     let retryPayload: Record<string, unknown> | null = null;
 
-    await page.route("**/api/projects**", async (route) => {
+    await page.context().route("**/api/projects**", async (route) => {
       if (route.request().method() !== "POST") {
         await route.fulfill({
           status: 200,
@@ -1584,8 +1584,8 @@ test.describe("Protected CFS behaviors", () => {
       window.sessionStorage.setItem("cfs-collaboration-session-v1", "test-session");
     });
 
-    await page.unroute("**/api/collaboration/status**").catch(() => undefined);
-    await page.route("**/api/collaboration/status**", async (route) => {
+    await page.context().unroute("**/api/collaboration/status**").catch(() => undefined);
+    await page.context().route("**/api/collaboration/status**", async (route) => {
       const requestUrl = new URL(route.request().url());
       const requestedProjectId = requestUrl.searchParams.get("projectId") ?? "";
       const lock = {
@@ -1631,8 +1631,8 @@ test.describe("Protected CFS behaviors", () => {
     let createOnly = false;
     let requireLockHeader = "";
     let scopedProjectId = "";
-    await page.unroute("**/api/projects**").catch(() => undefined);
-    await page.route("**/api/projects**", async (route) => {
+    await page.context().unroute("**/api/projects**").catch(() => undefined);
+    await page.context().route("**/api/projects**", async (route) => {
       if (route.request().method() !== "POST") {
         await route.fulfill({
           status: 200,
@@ -1656,7 +1656,7 @@ test.describe("Protected CFS behaviors", () => {
     });
 
     let lockAcquireCount = 0;
-    await page.route("**/api/collaboration/lock/acquire", async (route) => {
+    await page.context().route("**/api/collaboration/lock/acquire", async (route) => {
       lockAcquireCount += 1;
       await route.fulfill({
         status: 409,
@@ -1748,7 +1748,8 @@ test.describe("Protected CFS behaviors", () => {
     // "Rows" was added ahead of the visual menus by the CFS revision
     // workflows update (row-level revision filter) and is part of the
     // approved compact order.
-    expect(visualLabels).toEqual(["Rows", "Base", "Function", "Device", "Area", "Display", "Programming Name", "Highlights"]);
+    // T-60 adds Link after Highlights; retain the full approved menu order.
+    expect(visualLabels).toEqual(["Rows", "Base", "Function", "Device", "Area", "Display", "Programming Name", "Highlights", "Link"]);
 
     await page.locator(".cfs-matrix-controls .cfs-filter-menu-trigger").filter({ hasText: /^Base$/ }).click();
     const basePanel = page.locator(".cfs-filter-list-portal").last();
@@ -2650,7 +2651,7 @@ test.describe("Protected CFS behaviors", () => {
       roomTypes?: Array<{ name?: string; revisions?: Array<{ note?: string; snapshot?: unknown }> }>;
     } | undefined;
     const persistedRoomType = persistedProject?.roomTypes?.find((candidate) => candidate.name === roomName);
-    expect(persistedRoomType?.revisions?.at(-1)?.note).toContain("Auto-saved draft after 15 minutes idle.");
+    expect(persistedRoomType?.revisions?.at(-1)?.note).toBe("自動保存");
     expect(JSON.stringify(persistedRoomType?.revisions?.at(-1)?.snapshot)).toContain("IDLE-AUTO");
     await expect(page.locator("section.collaboration-bar")).toContainText("View Only", { timeout: 12000 });
   });

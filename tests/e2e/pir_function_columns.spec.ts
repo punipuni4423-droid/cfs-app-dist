@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./support/safe-test";
 import ExcelJS from "exceljs";
 import { createDefaultLocations, createEmptySwitchEntry, createNewRoomType } from "../../app/lib/constants";
 import { pirInstanceValue } from "../../app/lib/switchSync";

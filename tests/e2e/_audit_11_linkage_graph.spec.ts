@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./support/safe-test";
 import type { CircuitEntry, HvacAssignment, LocationMaster, RoomType, SwitchEntry } from "../../app/types";
 import { BY_SCENE_VALUE } from "../../app/lib/cfsTableModel";
 import { buildCfsLinkageGraph } from "../../app/lib/cfsLinkageGraph";

@@ -419,7 +419,7 @@ async function projectLastUpdatedAt(projectId: string): Promise<string | null> {
   return projectUpdatedAt(await readProject(projectId).catch(() => null)) || null;
 }
 
-function validatedProjects(value: unknown, membership: Membership) {
+function validatedProjects(value: unknown, membership: Membership): Record<string, unknown>[] {
   if (!Array.isArray(value)) throw Object.assign(new Error("Projects must be an array."), { status: 400 });
   const now = new Date().toISOString();
   return value.map((candidate) => {
@@ -435,25 +435,54 @@ function validatedProjects(value: unknown, membership: Membership) {
   });
 }
 
-function validatedProject(value: unknown, membership: Membership) {
+function validatedProject(value: unknown, membership: Membership): Record<string, unknown> {
   return validatedProjects([value], membership)[0];
 }
 
+function requireSaveProtocol(body: Record<string, unknown>) {
+  if (body.saveProtocol !== 2) throw Object.assign(new Error('Upgrade the app before saving.'), { status: 409, code: 'SAVE_PROTOCOL_REQUIRED' });
+}
+
+function throwSaveContractError(error: { message?: string; code?: string; details?: string }): never {
+  const message = [error.message, error.code, error.details].filter(Boolean).join(' ');
+  if (/CFS_(SAVE_PROTOCOL_REQUIRED|PROJECT_LIST_UPGRADE_REQUIRED)/.test(message)) throw Object.assign(new Error('Upgrade the app before saving.'), { status: 409, code: 'SAVE_PROTOCOL_REQUIRED' });
+  if (message.includes('CFS_COMMON_HISTORY_PROTECTED')) throw Object.assign(new Error('Existing common revision history must be preserved.'), { status: 409, code: 'COMMON_HISTORY_PROTECTED' });
+  if (message.includes('CFS_PROJECT_RESTORE_REQUIRED')) throw Object.assign(new Error('Restore the original project explicitly from Trash.'), { status: 409, code: 'PROJECT_RESTORE_REQUIRED' });
+  if (message.includes('CFS_SAVE_OPERATION_CONFLICT')) throw Object.assign(new Error('The save operation has different content. Check the saved project.'), { status: 409, code: 'SAVE_OPERATION_CONFLICT' });
+  throwTrashMutationError(error);
+}
+
 async function saveProjects(body: Record<string, unknown>, membership: Membership) {
+  requireSaveProtocol(body);
   const { sessionId, stateId } = await assertLease({ ...body, projectId: "" }, membership);
   const projects = validatedProjects(body.projects, membership);
-  const saved = await admin.rpc("save_cfs_project_set", {
+  const restoreProjectIds = body.restoreProjectIds ?? [];
+  if (!Array.isArray(restoreProjectIds) || restoreProjectIds.some(id => typeof id !== 'string' || !projects.some(project => project.id === id))) throw Object.assign(new Error('Restore project IDs are invalid.'), { status: 400 });
+  if (body.restoreRaw === true && (!projects.length || restoreProjectIds.length !== projects.length
+    || projects.some(project => !restoreProjectIds.includes(project.id)))) throw Object.assign(new Error('Raw restoration must contain only the explicit restore targets.'), { status: 400 });
+  if (!body.expectedUpdatedAts || typeof body.expectedUpdatedAts !== 'object' || Array.isArray(body.expectedUpdatedAts)) {
+    throw Object.assign(new Error('Project list saves require update tokens. Reload or upgrade.'), { status: 409 });
+  }
+  const saved = await admin.rpc("merge_cfs_projects", {
     p_state_id: stateId,
     p_user_id: membership.auth_user_id,
     p_session_id: sessionId,
     p_user_name: membership.display_name || membership.email,
-    p_projects: projects,
+    p_projects: projects.map(project => ({ ...project, _cfsWriteProtocol: 2 })),
+    p_expected_updated_ats: body.expectedUpdatedAts,
+    p_restore_project_ids: restoreProjectIds,
   });
-  if (saved.error) throw saved.error;
-  return { ok: true, projects, lastUpdatedBy: { userId: membership.auth_user_id, displayName: membership.display_name || membership.email, updatedAt: new Date().toISOString() }, result: saved.data };
+  if (saved.error) {
+    if (saved.error.message?.includes('CFS_PROJECT_CONFLICT')) throw projectConflictError(null);
+    throwSaveContractError(saved.error);
+  }
+  const result = saved.data as { projects?: unknown } | null;
+  if (!Array.isArray(result?.projects)) throw new Error('Project merge response was incomplete.');
+  return { ok: true, projects: result.projects, lastUpdatedBy: { userId: membership.auth_user_id, displayName: membership.display_name || membership.email, updatedAt: new Date().toISOString() }, result: saved.data };
 }
 
 async function saveProject(body: Record<string, unknown>, membership: Membership) {
+  requireSaveProtocol(body);
   const project = validatedProject(body.project, membership);
   const projectId = optionalProjectId(project.id);
   if (!projectId) throw Object.assign(new Error("Project ID is invalid."), { status: 400 });
@@ -467,6 +496,9 @@ async function saveProject(body: Record<string, unknown>, membership: Membership
   const expectedUpdatedAt = typeof body.expectedUpdatedAt === "string" ? body.expectedUpdatedAt.trim() : "";
   const forceOverwrite = !createOnly && body.forceOverwrite === true;
   const forceOverwriteUpdatedAt = typeof body.forceOverwriteUpdatedAt === "string" ? body.forceOverwriteUpdatedAt.trim() : "";
+  if (expectedUpdatedAt.startsWith('__CFS_') || forceOverwriteUpdatedAt.startsWith('__CFS_')) {
+    throw Object.assign(new Error('Reserved update tokens are not accepted.'), { status: 400 });
+  }
   if (!createOnly && !expectedUpdatedAt && !forceOverwrite) {
     throw Object.assign(new Error("Project save requires an update token. Reload before saving."), { status: 409 });
   }
@@ -483,7 +515,7 @@ async function saveProject(body: Record<string, unknown>, membership: Membership
     p_user_id: membership.auth_user_id,
     p_session_id: sessionId,
     p_user_name: membership.display_name || membership.email,
-    p_project: project,
+    p_project: { ...project, _cfsWriteProtocol: 2 },
     p_expected_updated_at: expectedForRpc,
   });
   if (saved.error) {
@@ -491,11 +523,13 @@ async function saveProject(body: Record<string, unknown>, membership: Membership
     if (message.includes("CFS_PROJECT_CONFLICT")) {
       throw projectConflictError(await readProject(projectId).catch(() => null));
     }
-    throw saved.error;
+    throwSaveContractError(saved.error);
   }
+  const persisted = (saved.data as { project?: unknown } | null)?.project;
+  if (asRecord(persisted)?.id !== projectId) throw new Error('Project save response was incomplete.');
   return {
     ok: true,
-    project,
+    project: persisted,
     lastUpdatedBy: { userId: membership.auth_user_id, displayName: membership.display_name || membership.email, updatedAt: new Date().toISOString() },
     result: saved.data,
   };
@@ -505,14 +539,70 @@ function emptyTrash() {
   return { projects: [], roomTypes: [] };
 }
 
-async function readTrash() {
-  const result = await admin.from("cfs_workspace_trash").select("payload").eq("id", "cfs-trash").maybeSingle<{ payload: unknown }>();
+async function readTrashSnapshot() {
+  const result = await admin.from("cfs_workspace_trash").select("payload,version").eq("id", "cfs-trash").maybeSingle<{ payload: unknown; version: number | string }>();
   if (result.error) throw result.error;
-  return result.data?.payload || emptyTrash();
+  return { trash: result.data?.payload || emptyTrash(), updatedAt: result.data ? String(result.data.version) : "" };
+}
+
+async function renameProject(body: Record<string, unknown>, membership: Membership) {
+  const projectId = normalizeIdentifier(body.projectId, 'Project ID');
+  if (typeof body.name !== 'string' || !body.name.trim() || body.name.trim().length > 240
+    || typeof body.expectedUpdatedAt !== 'string' || !body.expectedUpdatedAt.trim()) {
+    throw Object.assign(new Error('Name and project update token are required.'), { status: 400 });
+  }
+  const { sessionId, stateId } = await assertLease({ ...body, projectId: '' }, membership);
+  const saved = await admin.rpc('rename_cfs_project', {
+    p_state_id: stateId, p_user_id: membership.auth_user_id, p_session_id: sessionId,
+    p_user_name: membership.display_name || membership.email, p_project_id: projectId,
+    p_name: body.name.trim(), p_expected_updated_at: body.expectedUpdatedAt,
+  });
+  if (saved.error) {
+    if (saved.error.message?.includes('CFS_PROJECT_CONFLICT')) throw projectConflictError(null);
+    throwTrashMutationError(saved.error);
+  }
+  return saved.data;
+}
+
+function throwTrashMutationError(error: { message?: string; code?: string; details?: string }): never {
+  const message = [error.message, error.code, error.details].filter(Boolean).join(" ");
+  if (message.includes("CFS_TRASH_TOO_LARGE")) throw Object.assign(new Error("Trash capacity has been reached. No project was deleted."), { status: 413 });
+  if (message.includes("CFS_TRASH_CONFLICT")) throw Object.assign(new Error("Trash was updated. Reload before saving."), { status: 409, code: "TRASH_CONFLICT" });
+  if (message.includes("CFS_LOCK_REQUIRED")) throw Object.assign(new Error("Edit access expired or belongs to another user. Return to viewer mode."), { status: 423 });
+  if (message.includes("CFS_EDITOR_REQUIRED")) throw Object.assign(new Error("Editor access is required."), { status: 403 });
+  if (/CFS_(LOCK_SCOPE_INVALID|PROJECT_INVALID|TRASH_OBJECT_REQUIRED)/.test(message)) throw Object.assign(new Error("The deletion or trash request is invalid."), { status: 400 });
+  throw error;
+}
+
+async function deleteProject(body: Record<string, unknown>, membership: Membership) {
+  const projectId = normalizeIdentifier(body.projectId, "Project ID");
+  const expectedUpdatedAt = typeof body.expectedUpdatedAt === "string" ? body.expectedUpdatedAt : "";
+  if (!expectedUpdatedAt.trim()) throw projectConflictError(await readProject(projectId));
+  const { sessionId, stateId } = await assertLease({ ...body, projectId: "" }, membership);
+  const saved = await admin.rpc("delete_cfs_project_to_trash", {
+    p_state_id: stateId,
+    p_user_id: membership.auth_user_id,
+    p_session_id: sessionId,
+    p_user_name: membership.display_name || membership.email,
+    p_project_id: projectId,
+    p_expected_updated_at: expectedUpdatedAt,
+  });
+  if (saved.error) {
+    const message = [saved.error.message, saved.error.code, saved.error.details].filter(Boolean).join(" ");
+    if (message.includes("CFS_PROJECT_CONFLICT")) throw projectConflictError(await readProject(projectId).catch(() => null));
+    throwTrashMutationError(saved.error);
+  }
+  return saved.data;
 }
 
 function stableJson(value: unknown): string {
   return JSON.stringify(value);
+}
+
+function canonicalRestoreJson(value: unknown): string {
+  const sorted = (item: unknown): unknown => Array.isArray(item) ? item.map(sorted)
+    : item && typeof item === 'object' ? Object.fromEntries(Object.keys(item).sort().map(key => [key, sorted((item as Record<string, unknown>)[key])])) : item;
+  return JSON.stringify(sorted(value));
 }
 
 function trashArray(value: unknown, key: "projects" | "roomTypes"): Record<string, unknown>[] {
@@ -549,11 +639,32 @@ function validateProjectScopedTrashUpdate(current: unknown, next: unknown, proje
 }
 
 async function saveTrash(body: Record<string, unknown>, membership: Membership) {
+  const cleanup = body.restoreCleanup !== undefined;
+  if (cleanup && body.saveProtocol !== 2) throw Object.assign(new Error('Upgrade the app before restore cleanup.'), { status: 409, code: 'SAVE_PROTOCOL_REQUIRED' });
+  if (cleanup && body.projectId) throw Object.assign(new Error('Restore cleanup requires the workspace edit lock.'), { status: 400 });
   const { sessionId, stateId, projectId } = await assertLease(body, membership);
   const trash = body.trash;
   if (!trash || typeof trash !== "object" || Array.isArray(trash)) throw Object.assign(new Error("Trash data is invalid."), { status: 400 });
+  const snapshot = await readTrashSnapshot();
+  if (typeof body.expectedUpdatedAt !== "string" || body.expectedUpdatedAt !== snapshot.updatedAt) {
+    throw Object.assign(new Error("Trash was updated. Reload before saving."), { status: 409, code: "TRASH_CONFLICT", serverUpdatedAt: snapshot.updatedAt });
+  }
+  if (cleanup) {
+    const original = asRecord(asRecord(body.restoreCleanup)?.original);
+    const current = asRecord(snapshot.trash);
+    if (!original || typeof original.id !== 'string' || !original.id || !current || !Array.isArray(current.projects) || !Array.isArray(current.roomTypes)) {
+      throw Object.assign(new Error('Restore cleanup data is invalid.'), { status: 400 });
+    }
+    const matches = current.projects.filter(item => asRecord(item)?.id === original.id);
+    const next = { ...current, projects: current.projects.filter(item => !matches.includes(item)) };
+    if (matches.length !== 1 || canonicalRestoreJson(matches[0]) !== canonicalRestoreJson(original)
+      || canonicalRestoreJson(next) !== canonicalRestoreJson(trash)) throw Object.assign(new Error('Trash original changed. Nothing was removed.'), { status: 409, code: 'TRASH_CONFLICT' });
+    const restoredId = asRecord(original.project)?.id;
+    if (typeof restoredId !== 'string' || !await readProject(restoredId)) throw Object.assign(new Error('The restored project could not be confirmed. Trash is retained.'), { status: 409, code: 'PROJECT_RESTORE_REQUIRED' });
+    // The existing RPC rechecks this lease and the exact snapshot CAS atomically.
+  }
   if (projectId) {
-    const validationError = validateProjectScopedTrashUpdate(await readTrash(), trash, projectId);
+    const validationError = validateProjectScopedTrashUpdate(snapshot.trash, trash, projectId);
     if (validationError) throw Object.assign(new Error(validationError), { status: 400 });
   }
   const saved = await admin.rpc("save_cfs_workspace_trash", {
@@ -562,9 +673,10 @@ async function saveTrash(body: Record<string, unknown>, membership: Membership) 
     p_session_id: sessionId,
     p_user_name: membership.display_name || membership.email,
     p_payload: trash,
+    p_expected_updated_at: body.expectedUpdatedAt,
   });
-  if (saved.error) throw saved.error;
-  return { ok: true, trash, result: saved.data };
+  if (saved.error) throwTrashMutationError(saved.error);
+  return { ok: true, trash, updatedAt: String(saved.data.updatedAt), result: saved.data };
 }
 
 async function memberList(membership: Membership) {
@@ -609,9 +721,12 @@ async function handleAction(action: string, body: Record<string, unknown>, membe
   if (action === "auth.me") return { ok: true, membership: publicMembership(membership) };
   if (action === "status") return status(body, membership);
   if (action === "projects.read") return { ok: true, projects: await readProjects() };
-  if (action === "projects.save") return saveProjects(body, membership);
+  if (action === "projects.save") throw Object.assign(new Error('Legacy project list saves are disabled. Reload or upgrade the app.'), { status: 409, code: 'PROJECT_LIST_UPGRADE_REQUIRED' });
+  if (action === "projects.merge") return saveProjects(body, membership);
+  if (action === "project.rename") return renameProject(body, membership);
   if (action === "project.save") return saveProject(body, membership);
-  if (action === "trash.read") return { ok: true, trash: await readTrash() };
+  if (action === "projects.delete") return deleteProject(body, membership);
+  if (action === "trash.read") return { ok: true, ...await readTrashSnapshot() };
   if (action === "trash.save") return saveTrash(body, membership);
   if (action === "members.list") return memberList(membership);
   if (action === "members.upsert") return memberUpsert(body, membership);

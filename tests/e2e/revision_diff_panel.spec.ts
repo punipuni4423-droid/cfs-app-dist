@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./support/safe-test";
 import { createDefaultLocations, createNewRoomType } from "../../app/lib/constants";
 import { canonicalJson, valuesDiffer } from "../../app/lib/canonicalJson";
 import { ensureRoomScenes } from "../../app/lib/roomScenes";

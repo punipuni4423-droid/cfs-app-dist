@@ -3,16 +3,15 @@
  * overlays. /api/projects is fully mocked by installLocalEditingMocks; the
  * shared data/projects.json file must not be mutated by this spec.
  */
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "./support/safe-test";
 import { writeFile } from "node:fs/promises";
-import { STORAGE_KEY, createDefaultLocations, createEmptyHvacAssignment, createEmptyRoomScene, createEmptySwitchEntry, createNewRoomType } from "../../app/lib/constants";
+import { createDefaultLocations, createEmptyHvacAssignment, createEmptyRoomScene, createEmptySwitchEntry, createNewRoomType } from "../../app/lib/constants";
 import { createNewProject } from "../../app/lib/storage";
 import type { ProjectData, Scene, SwitchEntry } from "../../app/types";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
+import { readNativeDraftProject } from './support/native-project-drafts';
 
 type LocalEditingMockState = Awaited<ReturnType<typeof installLocalEditingMocks>>;
-
-const PROJECT_DRAFT_STORAGE_KEY = "cfs-project-drafts-v2";
 
 let mockState: LocalEditingMockState;
 
@@ -139,35 +138,11 @@ function seedProject(project: ProjectData): void {
 }
 
 async function storedSwitch(page: Page, projectId: string, switchId: string): Promise<SwitchEntry | undefined> {
-  return page.evaluate(({ draftKey, projectId, storageKey, switchId }) => {
-    for (const key of [draftKey, storageKey]) {
-      try {
-        const projects = JSON.parse(localStorage.getItem(key) || "[]") as ProjectData[];
-        const project = projects.find((candidate) => candidate.id === projectId);
-        const found = project?.roomTypes?.[0]?.switches?.find((sw) => sw.id === switchId);
-        if (found) return found;
-      } catch {
-        // Try the next storage key.
-      }
-    }
-    return undefined;
-  }, { draftKey: PROJECT_DRAFT_STORAGE_KEY, projectId, storageKey: STORAGE_KEY, switchId });
+  return (await readNativeDraftProject(page, projectId))?.roomTypes?.[0]?.switches?.find(sw => sw.id === switchId);
 }
 
 async function storedScene(page: Page, projectId: string, sceneId: string): Promise<Scene | undefined> {
-  return page.evaluate(({ draftKey, projectId, sceneId, storageKey }) => {
-    for (const key of [draftKey, storageKey]) {
-      try {
-        const projects = JSON.parse(localStorage.getItem(key) || "[]") as ProjectData[];
-        const project = projects.find((candidate) => candidate.id === projectId);
-        const found = project?.roomTypes?.[0]?.scenes?.find((scene) => scene.id === sceneId);
-        if (found) return found;
-      } catch {
-        // Try the next storage key.
-      }
-    }
-    return undefined;
-  }, { draftKey: PROJECT_DRAFT_STORAGE_KEY, projectId, sceneId, storageKey: STORAGE_KEY });
+  return (await readNativeDraftProject(page, projectId))?.roomTypes?.[0]?.scenes?.find(scene => scene.id === sceneId);
 }
 
 async function openProjectCfs(page: Page, projectName: string, activateEdit = true): Promise<void> {
@@ -213,8 +188,8 @@ async function closeOverlay(page: Page): Promise<void> {
 }
 
 async function forceViewOnlyCollaboration(page: Page): Promise<void> {
-  await page.unroute("**/api/collaboration/status**").catch(() => undefined);
-  await page.route("**/api/collaboration/status**", async (route) => {
+  await page.context().unroute("**/api/collaboration/status**").catch(() => undefined);
+  await page.context().route("**/api/collaboration/status**", async (route) => {
     const requestUrl = new URL(route.request().url());
     await route.fulfill({
       status: 200,
@@ -369,7 +344,8 @@ test("T99 linked overrides stay highlighted in CFS and both Excel scopes", async
       if (cell.text === "55%" && (!cell.isMerged || cell.master.address === cell.address)) fills.push(cell.fill);
     }));
     expect(fills, scope).toHaveLength(3);
-    for (const fill of fills) expect(fill, scope).toEqual({ type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF08A" } });
+    // T-111: the approved export highlight now matches the on-screen yellow.
+    for (const fill of fills) expect(fill, scope).toEqual({ type: "pattern", pattern: "solid", fgColor: { argb: "FFFDE047" } });
   }
 });
 

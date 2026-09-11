@@ -1,0 +1,54 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const assert = require('node:assert/strict');
+const app = path.resolve(__dirname, '..');
+const scratch = path.resolve(process.argv[2] || '');
+if (!process.argv[2] || fs.existsSync(scratch)) throw Error('Pass a new scratch directory');
+fs.mkdirSync(scratch, { recursive: true });
+const ts = require('typescript');
+require.extensions['.ts'] = (mod, file) => mod._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText, file);
+const results = [];
+(async () => {
+  global.fetch = async () => { throw Error('Network forbidden in synthetic tests'); };
+  const canonical = path.join(scratch, 'app');
+  const standalone = path.join(canonical, '.next', 'standalone');
+  fs.mkdirSync(standalone, { recursive: true });
+  process.chdir(standalone);
+  process.env.CFS_APP_DIR = canonical;
+  process.env.CFS_COLLABORATION_ENABLED = 'true';
+  const { serverDataRoot } = require(path.join(app, 'app/lib/serverDataRoot.ts'));
+  assert.equal(serverDataRoot(), path.join(canonical, 'data'));
+  const { localProjectStore: store } = require(path.join(app, 'app/lib/localProjectStore.ts'));
+  const collab = require(path.join(app, 'app/lib/collaborationServer.ts'));
+  const projects = [{ id: 'fixture', name: '合成保存', unknown: { raw: '原文\n保持' } }];
+  const trash = { projects: [], roomTypes: [], updatedAt: 'test' };
+  await store.locked(() => store.commit(projects, trash));
+  await collab.registerCollaborationUser({ userId: 'fixture-user', sessionId: 'fixture-session', displayName: '検査用' });
+  assert.deepEqual(await store.locked(() => store.readProjects()), projects);
+  for (const name of ['projects.json', 'trash/trash.json', 'collaboration.json']) assert(fs.existsSync(path.join(canonical, 'data', name)));
+  assert(!fs.existsSync(path.join(standalone, 'data')));
+  results.push('standalone cwd uses canonical root for project/trash/collaboration');
+  const before = fs.readFileSync(path.join(canonical, 'data/projects.json'));
+  // Simulate build replacement without deleting anything: switch cwd to a new
+  // build directory and reload the store, as a new server process does.
+  const nextBuild = path.join(canonical, '.next-rebuilt', 'standalone');
+  fs.mkdirSync(nextBuild, { recursive: true }); process.chdir(nextBuild);
+  delete require.cache[require.resolve(path.join(app, 'app/lib/localProjectStore.ts'))];
+  const reopened = require(path.join(app, 'app/lib/localProjectStore.ts')).localProjectStore;
+  assert.deepEqual(await reopened.locked(() => reopened.readProjects()), projects);
+  assert.deepEqual(fs.readFileSync(path.join(canonical, 'data/projects.json')), before);
+  results.push('rebuild directory switch preserves raw save and reopen');
+  delete process.env.CFS_APP_DIR;
+  assert.equal(serverDataRoot(), path.join(nextBuild, 'data'));
+  process.env.CFS_APP_DIR = 'relative-app';
+  assert.throws(serverDataRoot, /absolute/);
+  results.push('development cwd fallback and invalid relative root rejection');
+  // Durable transaction recovery is unchanged by the root resolution.
+  process.env.CFS_APP_DIR = canonical;
+  const record = { version: 1, projects: [{ ...projects[0], name: 'journal recovery' }], trash };
+  fs.writeFileSync(path.join(canonical, 'data/project-trash.transaction.json'), JSON.stringify(record));
+  assert.deepEqual(await reopened.locked(() => reopened.readProjects()), record.projects);
+  assert(!fs.existsSync(path.join(canonical, 'data/project-trash.transaction.json')));
+  results.push('pending transaction recovers both stores in canonical root');
+  console.log(JSON.stringify({ passed: results.length, results }));
+})().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => fs.writeFileSync(path.join(scratch, 'results.json'), JSON.stringify({ results, passed: results.length, failed: process.exitCode || 0 }, null, 2)));

@@ -8,8 +8,9 @@ import type {
   CollaborationUser,
 } from "../types";
 import { migrateProjectsPayload } from "./storage";
+import { serverDataRoot } from "./serverDataRoot";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_DIR = serverDataRoot();
 const COLLABORATION_FILE = path.join(DATA_DIR, "collaboration.json");
 const COLLABORATION_LOCK_DIR = `${COLLABORATION_FILE}.lock`;
 const COLLABORATION_LOCK_OWNER_FILE = path.join(COLLABORATION_LOCK_DIR, "owner.json");
@@ -392,8 +393,8 @@ function statusFromStore(store: CollaborationStore, identity: Partial<Collaborat
 async function projectLastUpdatedAt(projectId: string): Promise<string | null> {
   if (!projectId) return null;
   try {
-    const raw = await readFile(path.join(DATA_DIR, "projects.json"), "utf8");
-    const projects = migrateProjectsPayload(JSON.parse(raw));
+    const { localProjectStore } = await import('./localProjectStore');
+    const projects = migrateProjectsPayload(await localProjectStore.locked(localProjectStore.readProjects));
     return projects.find((project) => project.id === projectId)?.updatedAt ?? null;
   } catch {
     return null;
@@ -592,7 +593,9 @@ export async function requireCollaborationEditLock(request: Request): Promise<Co
   if (!identity.userId || !identity.sessionId) {
     return { ok: false, editor: null, status: 423, error: "View mode is active. Start editing before saving." };
   }
-  const status = await collaborationStatus(identity);
+  // Authorization needs only the lease. Reading projectLastUpdatedAt here
+  // would re-enter the project store lock during commit-time revalidation.
+  const status = statusFromStore(await readStore(), identity);
   if (!status.ownsLock || !status.lock) {
     const owner = status.lock?.userName ? `${status.lock.userName} is editing. ` : "The edit lock is no longer active. ";
     return { ok: false, editor: null, status: 423, error: `${owner}Return to view mode before saving.` };

@@ -717,6 +717,12 @@ export default function DeviceAssignView({
   function setAdditionalCircuit(id: string, index: number, value: string): void {
     if (!canEdit) return;
     const trimmed = value.trim();
+    const assignment = assignments.find((entry) => entry.id === id);
+    if (!assignment) return;
+    const currentValue = index < 0 ? "" : assignment.additionalCircuitNumbers?.[index] ?? "";
+    if (trimmed && !additionalCircuitOptions(assignment, currentValue).some(
+      (option) => (typeof option === "string" ? option : option.value) === trimmed,
+    )) return;
     onChange(
       assignments.map((a) => {
         if (a.id !== id) return a;
@@ -1630,6 +1636,8 @@ export default function DeviceAssignView({
       circuitNumber: RESERVED_VALUE,
     }));
     onChange([...assignments, ...expandedRows]);
+    // New devices start Reserved; reveal them so the next assignment is possible.
+    setHideReserved(false);
     setShowDeviceModal(false);
   }
 
@@ -1796,7 +1804,9 @@ export default function DeviceAssignView({
             {tabVisible.length === 0 ? (
               <tr>
                 <td colSpan={colCount} className="screen-empty">
-                  No devices are registered yet. Add a device below.
+                  {assignments.length === 0
+                    ? "No devices are registered yet. Add a device below."
+                    : "No devices match the current filters. Show Reserved or switch the device tab."}
                 </td>
               </tr>
             ) : (

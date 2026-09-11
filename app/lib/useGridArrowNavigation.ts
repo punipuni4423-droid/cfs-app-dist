@@ -182,6 +182,12 @@ function focusSiblingControlInCell(
 }
 
 function navigationDirection(event: KeyboardEvent, target: GridNavigationTarget): Direction | null {
+  // Multiline editors own native cursor/selection/page movement. Only an
+  // explicit Ctrl+arrow chord requests grid navigation from a textarea.
+  if (target instanceof HTMLTextAreaElement && !(
+    event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey &&
+    ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)
+  )) return null;
   if (event.key === "Home") return "left";
   if (event.key === "End") return "right";
   if (event.key === "PageUp") return "up";

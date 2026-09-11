@@ -1,3 +1,4 @@
+import { baseURL, isolatedSpecs, testStorageState } from './tests/playwright-safety';
 /**
  * 監査#2 (Area/Location 管理) 専用 Playwright 設定。
  * 本番 playwright.config.ts は変更しない。
@@ -12,7 +13,8 @@ import * as path from "path";
 const ARTIFACT_DIR = path.join(os.tmpdir(), "cfs-audit02-artifacts");
 
 export default defineConfig({
-  testDir: "./tests/e2e",
+  testDir: './tests/e2e',
+  testIgnore: isolatedSpecs,
   testMatch: "**/_audit_02_locations.spec.ts",
   timeout: 60000,
   expect: { timeout: 10000 },
@@ -22,7 +24,9 @@ export default defineConfig({
   outputDir: ARTIFACT_DIR,
   reporter: [["line"]],
   use: {
-    baseURL: "http://localhost:3014",
+    serviceWorkers: 'block',
+    storageState: testStorageState(),
+    baseURL,
     trace: "off",
     screenshot: "only-on-failure",
     video: "off",

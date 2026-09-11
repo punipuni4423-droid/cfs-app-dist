@@ -181,7 +181,7 @@ call :write_auth_redirect_target
 call :start_auth_redirect_helper
 call :set_status "CFS is ready at http://localhost:%PORT%"
 if "%OPEN_BROWSER%"=="0" exit /b 0
-start "" "http://localhost:%PORT%"
+for /f "delims=" %%U in ('node.exe "%APP_ROOT%\scripts\cfs-access.mjs" "http://localhost:%PORT%/"') do start "" "%%U"
 exit /b 0
 
 :prefer_bundled_node

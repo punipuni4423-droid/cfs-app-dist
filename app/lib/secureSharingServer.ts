@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { finiteFetch } from './projectSaveProtocol';
 
 export type SecureSharingMode = "local" | "supabase";
 
@@ -82,7 +83,7 @@ export async function callSecureSharingFunctionJson(
 
   let response: Response;
   try {
-    response = await fetch(`${config.url}/functions/v1/${encodeURIComponent(config.functionName)}`, {
+    response = await finiteFetch(`${config.url}/functions/v1/${encodeURIComponent(config.functionName)}`, {
       method: "POST",
       cache: "no-store",
       headers: {
@@ -91,13 +92,21 @@ export async function callSecureSharingFunctionJson(
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ action, ...payload }),
-    });
+    }, 25_000);
   } catch {
-    return { status: 503, body: { error: "Could not reach the secure CFS sharing service." } };
+    return { status: 504, body: { error: "Could not confirm the secure CFS sharing response within the deadline.", code: 'SAVE_RESULT_UNKNOWN' } };
   }
 
-  const body = (await response.json().catch(() => ({}))) as SecureFunctionPayload;
-  return { status: response.status, body };
+  const body: unknown = await response.json().catch(() => null);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { status: response.ok ? 502 : response.status, body: { error: 'The secure CFS sharing response was invalid.', code: 'SAVE_RESULT_UNKNOWN' } };
+  }
+  const record = body as SecureFunctionPayload;
+  if (response.ok && ['projects.read', 'project.save', 'projects.merge'].includes(action)
+    && (record.ok !== true || (action === 'projects.read' && !Array.isArray(record.projects)))) {
+    return { status: 502, body: { error: 'The secure CFS sharing response was incomplete.', code: 'SAVE_RESULT_UNKNOWN' } };
+  }
+  return { status: response.status, body: record };
 }
 
 export async function callSecureSharingFunction(

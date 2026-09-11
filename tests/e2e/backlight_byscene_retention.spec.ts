@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./support/safe-test";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
 // Regression: Palladiom "By Scene" un-setting itself during consecutive edits
@@ -6,7 +6,6 @@ import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 // switches / reloads (2026-08-21 reports). Runs against an isolated
 // local-mode server; the code paths under test are shared with supabase mode.
 
-const PLAYWRIGHT_BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3014";
 const BY_SCENE = "__byScene";
 
 async function apiPutProjects(page: Page, projects: unknown[]): Promise<void> {
@@ -76,6 +75,7 @@ function assignmentSelect(page: Page) {
 
 test.describe("Backlight By-Scene retention", () => {
   test.beforeEach(async ({ page }) => {
+    await page.context().route('**/api/**', (route) => route.fulfill({ json: {} }));
     await installLocalEditingMocks(page);
   });
   test.setTimeout(180000);
@@ -145,6 +145,9 @@ test.describe("Backlight By-Scene retention", () => {
       { timeout: 20000 },
     );
     const switchSubTab = page.locator('[role="tab"]').filter({ hasText: /^Backlight$/ }).first();
+    // Wait for restored navigation; an immediate isVisible during hydration
+    // can choose the project-card path even when the room is being restored.
+    await expect(switchSubTab.or(page.locator("button.screen-card").first()).first()).toBeVisible({ timeout: 20000 });
     if (!(await switchSubTab.isVisible().catch(() => false))) {
       await page.locator("button.screen-card").first().click();
       await page.locator('[role="tab"]').filter({ hasText: /Room Type/ }).first().click();

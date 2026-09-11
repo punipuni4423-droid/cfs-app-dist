@@ -15,7 +15,7 @@
  * そのため UI でプロジェクト+ルームタイプを作成後、永続化された project を localStorage 経由で
  * シードし (実スキーマを使用)、reload して CFS サブタブを検証する。
  */
-import { test, expect, type Locator, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from './support/safe-test';
 import ExcelJS from 'exceljs';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -23,6 +23,7 @@ import { STORAGE_KEY } from '../../app/lib/constants';
 import type { ProjectData, ProjectRemark } from '../../app/types';
 import { appendRemarksSheet } from '../../app/lib/remarksExcelExport';
 import { installLocalEditingMocks } from './support/secure-sharing-mock';
+import { readNativeDraftProjects } from './support/native-project-drafts';
 
 const SHOT_DIR = process.env.CFS_AUDIT08_OUTPUT_DIR ?? path.join('test-results', 'audit-08');
 const PROJECT_NAME = 'AUDIT-08-Cfs';
@@ -38,6 +39,7 @@ const EXPORT_REMARKS: ProjectRemark[] = [
 ];
 
 test.beforeEach(async ({ page }) => {
+  await page.context().route('**/api/**', (route) => route.fulfill({ json: {} }));
   await installLocalEditingMocks(page);
   // Kill the draft-wins race: a stale browser draft written by the still-open
   // project page (1.2s debounced autosave) would beat the seeded server state
@@ -110,6 +112,13 @@ async function gotoRootRobust(page: Page): Promise<void> {
       const backToList = page.getByRole('button', { name: /Back to Project List/i }).first();
       if (await backToList.isVisible({ timeout: 1000 }).catch(() => false)) {
         await backToList.click();
+        // The reloaded synthetic seed may be normalized into an unsaved
+        // draft. Keep it through the mocked save; do not discard the seed.
+        const finish = page.getByRole('dialog', { name: 'Finish editing with draft changes?' });
+        if (await finish.isVisible()) {
+          await finish.getByRole('button', { name: 'Save Current & Finish', exact: true }).click();
+          await expect(finish).toBeHidden();
+        }
       }
       await expect(projectListReady).toBeVisible({ timeout: 15000 });
       return;
@@ -186,48 +195,12 @@ async function selectRoomTypeCard(page: Page, roomName: string): Promise<void> {
 }
 
 /**
- * 永続化 (1200ms デバウンス保存) を待つ。指定プロジェクト名のルームタイプが
- * localStorage に現れるまでポーリングする。
+ * 指定プロジェクトの未保存RoomTypeがnative IndexedDBへ退避されるまで待つ。
  */
 async function waitForRoomPersisted(page: Page, projectName: string, roomName: string): Promise<void> {
   await expect
     .poll(
-      async () =>
-        page.evaluate(
-          async ({ storageKey, pn, rn }) => {
-            const parseProjects = (raw: string | null): Array<{
-              name: string;
-              roomTypes: Array<{ name: string }>;
-            }> => {
-              if (!raw) return [];
-              try {
-                const parsed = JSON.parse(raw);
-                return Array.isArray(parsed) ? parsed : [];
-              } catch {
-                return [];
-              }
-            };
-            const storageKeys = new Set<string>([storageKey]);
-            for (let i = 0; i < localStorage.length; i += 1) {
-              const key = localStorage.key(i);
-              if (key?.startsWith('cfs-project-drafts')) storageKeys.add(key);
-            }
-            const snapshots = Array.from(storageKeys, (key) => parseProjects(localStorage.getItem(key)));
-            try {
-              const response = await fetch('/api/projects');
-              const payload = await response.json();
-              if (Array.isArray(payload.projects)) snapshots.push(payload.projects);
-            } catch {
-              // Route mocks are optional for this check; localStorage drafts are enough.
-            }
-            return snapshots.some((projects) => {
-              const project = projects.find((p) => p.name === pn);
-              if (!project) return false;
-              return project.roomTypes.some((r) => r.name === rn);
-            });
-          },
-          { storageKey: STORAGE_KEY, pn: projectName, rn: roomName },
-        ),
+      async () => (await readNativeDraftProjects(page)).some(project => project.name === projectName && project.roomTypes.some(room => room.name === roomName)),
       { timeout: 8000, intervals: [200, 300, 500] },
     )
     .toBeTruthy();
@@ -238,8 +211,9 @@ async function waitForRoomPersisted(page: Page, projectName: string, roomName: s
  * 実スキーマでシードして書き戻す。CFS マトリクスが生成されるだけのデータを用意する。
  */
 async function seedCfsData(page: Page): Promise<{ areaIds: string[] }> {
+  const nativeProjects = await readNativeDraftProjects(page);
   const result = await page.evaluate(
-    async ({ storageKey, pn, rn }) => {
+    async ({ storageKey, pn, rn, nativeProjects }) => {
     type ProjectsArray = Array<{
       id: string;
       name: string;
@@ -248,23 +222,7 @@ async function seedCfsData(page: Page): Promise<{ areaIds: string[] }> {
       roomTypes: Array<Record<string, unknown>>;
     }>;
     const empty: ProjectsArray = [];
-    const parseProjects = (raw: string | null): ProjectsArray => {
-      if (!raw) return empty;
-      try {
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed as ProjectsArray : empty;
-      } catch {
-        return empty;
-      }
-    };
-    const storageKeys = new Set<string>([storageKey]);
-    for (let i = 0; i < localStorage.length; i += 1) {
-      const key = localStorage.key(i);
-      if (key?.startsWith('cfs-project-drafts')) storageKeys.add(key);
-    }
-    let projects = Array.from(storageKeys, (key) => parseProjects(localStorage.getItem(key)))
-      .find((items) => items.some((p) => p.name === pn && p.roomTypes.some((r) => (r as { name?: string }).name === rn)))
-      ?? empty;
+    let projects = nativeProjects as unknown as ProjectsArray;
     if (projects.length === 0) {
       try {
         const response = await fetch('/api/projects');
@@ -462,7 +420,7 @@ async function seedCfsData(page: Page): Promise<{ areaIds: string[] }> {
     localStorage.setItem(storageKey, JSON.stringify(projects));
     return { ok: true, reason: '', areaIds, projects };
     },
-    { storageKey: STORAGE_KEY, pn: PROJECT_NAME, rn: ROOM_NAME },
+    { storageKey: STORAGE_KEY, pn: PROJECT_NAME, rn: ROOM_NAME, nativeProjects },
   );
 
   if (!result.ok) {
@@ -680,7 +638,7 @@ async function resetCfsPrefs(page: Page): Promise<void> {
  */
 async function setupAndOpenCfs(
   page: Page,
-  options: { includeSecondRoom?: boolean; includeEmptyRoom?: boolean; remarks?: ProjectRemark[]; remarkNameCollision?: boolean } = {},
+  options: { includeSecondRoom?: boolean; includeEmptyRoom?: boolean; remarks?: ProjectRemark[]; remarkNameCollision?: boolean; inspectionMarks?: boolean } = {},
 ): Promise<void> {
   // createProject 後は既にプロジェクト画面内 (openProject 不要)
   await createProject(page, PROJECT_NAME);
@@ -702,6 +660,26 @@ async function setupAndOpenCfs(
   }
   await waitForRoomPersisted(page, PROJECT_NAME, ROOM_NAME);
   await seedCfsData(page);
+  if (options.inspectionMarks) {
+    await page.evaluate(async ({ storageKey, projectName }) => {
+      const projects = JSON.parse(localStorage.getItem(storageKey) ?? '[]') as ProjectData[];
+      const project = projects.find((item) => item.name === projectName)!;
+      const room = project.roomTypes[0];
+      // The legacy seed's override comment had no Scene reference. Explicitly
+      // connect its 30% value to the 80% Area Scene for this comparison fixture.
+      const overrideSwitch = room.switches.find((sw) => sw.buttonSetting.circuitSettings.some((setting) => setting.percentage === '30'))!;
+      overrideSwitch.buttonSetting.sceneId = room.scenes[0].id;
+      overrideSwitch.buttonSetting.sceneIds = [room.scenes[0].id];
+      const sources = [...room.scenes.map((scene) => ({ sourceId: scene.id, sourceType: 'areaScene' as const })),
+        ...room.switches.map((sw) => ({ sourceId: sw.id, sourceType: 'switch' as const }))];
+      room.inspectionMarks = sources.flatMap((source) => project.circuits.map((circuit) => ({
+        ...source, id: `${source.sourceId}-${circuit.id}`, targetId: circuit.id, scope: 'override' as const,
+        label: 'Test mark', previousValue: '', value: '', markedAt: '2026-09-09T00:00:00Z',
+      })));
+      localStorage.setItem(storageKey, JSON.stringify(projects));
+      await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projects }) });
+    }, { storageKey: STORAGE_KEY, projectName: PROJECT_NAME });
+  }
   if (options.includeSecondRoom) {
     await seedAdditionalRoomType(page, SECOND_ROOM_NAME);
   }
@@ -1141,9 +1119,9 @@ test.describe('AUDIT-08 CFS 統合ビュー', () => {
     expect(await page.evaluate(async () => (await fetch('/api/projects')).json())).toEqual(before);
   });
 
-  test('G4. Remarks naming collision and sub-window export preserve project notes', async ({ page, context }) => {
-    // Popup requests must also remain isolated. Main-page routes take precedence.
-    await context.route('**/api/**', (route) => route.fulfill({ status: 403, contentType: 'application/json', body: '{}' }));
+  test('G4. Remarks naming collision and sub-window export preserve project notes', async ({ page }) => {
+    // The shared fixture now isolates popup requests and uses the same explicit
+    // context mocks as the main page; a later blanket 403 would shadow those mocks.
     await setupAndOpenCfs(page, { includeSecondRoom: true, remarks: EXPORT_REMARKS, remarkNameCollision: true });
     const main = await downloadExcel(page, 'All Rooms', 'collision');
     expect(main.worksheets.map((sheet) => sheet.name)).toEqual([ROOM_NAME, 'rEmArKs', 'Remarks (2)']);
@@ -1212,6 +1190,53 @@ test.describe('AUDIT-08 CFS 統合ビュー', () => {
     const standalone = new ExcelJS.Workbook();
     await standalone.xlsx.readFile(filePath);
     expect({ ...standalone.worksheets[0].model, id: 0 }).toEqual({ ...expected.model, id: 0 });
+  });
+
+  test('G7. Screen cells match current and project Excel models including highlight exclusions', async ({ page }) => {
+    await setupAndOpenCfs(page, { includeSecondRoom: true, inspectionMarks: true });
+    await expect(page.locator('td.cfs-inspection-marked-cell').first()).toBeVisible();
+    const screenCells = await page.locator('table.cfs-matrix-table tbody').evaluate((body) => {
+      const occupied = new Set<string>();
+      const cells: { row: number; col: number; text: string; background: string; classes: string }[] = [];
+      Array.from(body.querySelectorAll(':scope > tr')).forEach((row, rowIndex) => {
+        let column = 0;
+        Array.from(row.querySelectorAll<HTMLTableCellElement>(':scope > td')).forEach((cell) => {
+          while (occupied.has(`${rowIndex}:${column}`)) column += 1;
+          cells.push({ row: rowIndex + 5, col: column + 1, text: cell.innerText, background: getComputedStyle(cell).backgroundColor, classes: cell.className });
+          for (let r = 0; r < cell.rowSpan; r += 1) for (let c = 0; c < cell.colSpan; c += 1) occupied.add(`${rowIndex + r}:${column + c}`);
+          column += cell.colSpan;
+        });
+      });
+      return cells;
+    });
+    fs.mkdirSync(SHOT_DIR, { recursive: true });
+    fs.writeFileSync(path.join(SHOT_DIR, 'screen-cell-model.json'), JSON.stringify(screenCells, null, 2));
+    await shot(page, 'screen-model-comparison');
+    await page.setViewportSize({ width: 2400, height: 1100 });
+    await page.locator('td.cfs-inspection-marked-cell.cfs-individual-override-cell').first().scrollIntoViewIfNeeded();
+    await shot(page, 'screen-inspection-override-comparison');
+    const current = await downloadExcel(page, 'This Room Type', 'model-current');
+    // Allows the same assertions to probe an archived pre-fix workbook without
+    // restoring application code or touching a live server's source files.
+    if (process.env.CFS_COMPARE_BEFORE_BOOK) await current.xlsx.readFile(process.env.CFS_COMPARE_BEFORE_BOOK);
+    const project = await downloadExcel(page, 'All Rooms', 'model-project');
+    const normalize = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim();
+    for (const cell of screenCells) {
+      const visible = current.worksheets[0].getCell(cell.row, cell.col);
+      const exported = project.getWorksheet(ROOM_NAME)!.getCell(cell.row, cell.col);
+      expect.soft(normalize(visible.value), `screen/current ${visible.address}`).toBe(normalize(cell.text));
+      expect.soft(exported.value, `current/project ${visible.address}`).toEqual(visible.value);
+      expect.soft(exported.fill, `current/project fill ${visible.address}`).toEqual(visible.fill);
+      const rgb = cell.background.match(/^rgb\((\d+), (\d+), (\d+)\)$/);
+      if (rgb && cell.background !== 'rgb(255, 255, 255)') {
+        const argb = `FF${rgb.slice(1).map((value) => Number(value).toString(16).padStart(2, '0')).join('')}`.toUpperCase();
+        expect.soft(visible.fill.type === 'pattern' ? visible.fill.fgColor?.argb : undefined, `screen fill ${visible.address}`).toBe(argb);
+      }
+      if (/(?:^|\s)cfs-(?:no-col|base-device|base-deviceNum|base-dimmingType)(?:\s|$)/.test(cell.classes)) {
+        expect.soft(visible.fill.type === 'pattern' ? visible.fill.fgColor?.argb : undefined).toBeUndefined();
+      }
+    }
+    expect(screenCells.length).toBeGreaterThan(30);
   });
 
   test('H. ハイライトトグル (Individual Override / FFE / Energy Saving) が機能する', async ({ page }) => {

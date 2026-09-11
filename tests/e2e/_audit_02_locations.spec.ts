@@ -10,7 +10,7 @@
  *
  * アプリ本体は一切変更しない (read-only audit)。
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./support/safe-test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import * as os from "node:os";

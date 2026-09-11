@@ -1,49 +1,79 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./support/safe-test";
+import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
 // Closing the window while editing with draft changes (2026-08-24): the
 // beforeunload handler blocks the close with the browser prompt, and when the
 // user stays, the finish dialog (save new revision / save current / discard)
-// opens. Uses the real local-mode collaboration endpoints (no mocks).
+// opens. Business data and collaboration are mocked in this browser context.
 
-async function apiPutProjects(page: Page, projects: unknown[]): Promise<void> {
-  if (page.url() === "about:blank") {
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-  }
-  await page.evaluate(async ({ nextProjects }) => {
-    await fetch("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projects: nextProjects }),
-    });
-  }, { nextProjects: projects });
+const closeTestUser = {
+  id: "close-test-editor", displayName: "Close Test", email: "close-test@example.test",
+  role: "admin", createdAt: null, lastSeenAt: null,
+};
+
+async function installCloseEditingMocks(page: Page): Promise<void> {
+  await installLocalEditingMocks(page);
+  const ownedScopes = new Set<string>();
+  const status = (projectId = "", sessionId = "close-test-session") => {
+    const editing = ownedScopes.has(projectId);
+    const now = new Date().toISOString();
+    const lock = editing ? {
+      scopeId: projectId || "global", projectId, sessionId,
+      userId: closeTestUser.id, userName: closeTestUser.displayName,
+      acquiredAt: now, heartbeatAt: now, expiresAt: new Date(Date.now() + 90_000).toISOString(),
+    } : null;
+    return {
+      enabled: true, mode: editing ? "edit" : "view", ownsLock: editing,
+      scopeId: projectId || "global", projectId, lock, locks: lock ? [lock] : [],
+      membership: { ...closeTestUser, active: true, updatedAt: null },
+      lastUpdatedBy: null, leaseSeconds: 90, heartbeatMs: 20_000, idleMs: 900_000,
+    };
+  };
+  await page.context().route("**/api/collaboration/status**", (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    return route.fulfill({ json: status(params.get("projectId") ?? "", params.get("sessionId") ?? "") });
+  });
+  await page.context().route("**/api/collaboration/lock/acquire", (route) => {
+    const payload = route.request().postDataJSON() as { projectId?: string; sessionId?: string };
+    ownedScopes.add(payload.projectId ?? "");
+    const next = status(payload.projectId, payload.sessionId);
+    return route.fulfill({ json: { acquired: true, lock: next.lock, status: next } });
+  });
+  await page.context().route("**/api/collaboration/lock/heartbeat", (route) => {
+    const payload = route.request().postDataJSON() as { projectId?: string; sessionId?: string };
+    const next = status(payload.projectId, payload.sessionId);
+    return route.fulfill({ json: { acquired: next.ownsLock, lock: next.lock, status: next } });
+  });
+  await page.context().route("**/api/collaboration/lock/release", (route) => {
+    const payload = route.request().postDataJSON() as { projectId?: string; sessionId?: string };
+    ownedScopes.delete(payload.projectId ?? "");
+    return route.fulfill({ json: { ok: true, released: true, status: status(payload.projectId, payload.sessionId) } });
+  });
 }
 
 test.describe("Edit-mode window close", () => {
   test.setTimeout(180000);
 
   test("beforeunload keeps the page and opens the finish dialog when drafts exist", async ({ page }) => {
-    await page.goto("about:blank");
-    await page.waitForTimeout(1800);
-    await apiPutProjects(page, []);
+    await installCloseEditingMocks(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.evaluate(() => { try { localStorage.clear(); } catch { /* ignore */ } });
+    await page.evaluate((user) => {
+      localStorage.clear();
+      sessionStorage.clear();
+      localStorage.setItem("cfs-collaboration-user-v1", JSON.stringify(user));
+      sessionStorage.setItem("cfs-collaboration-session-v1", "close-test-session");
+    }, closeTestUser);
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForFunction(
       () => !document.body.textContent?.includes("Loading projects"),
       { timeout: 20000 },
     );
 
-    // Register a local user and start editing (real collaboration endpoints).
+    // Start a mocked local editing session with the browser-only seed user.
     const startEditing = page.getByRole("button", { name: "Start editing" }).first();
     await expect(startEditing).toBeVisible({ timeout: 15000 });
     await startEditing.click();
-    const nameInput = page.locator('input[placeholder="e.g. Okada"]');
-    if (await nameInput.isVisible().catch(() => false)) {
-      await nameInput.fill("CloseTest");
-      await page.locator('input[type="email"]').fill("close-test@example.com");
-      await page.locator("button").filter({ hasText: /^Register$/ }).first().click();
-      await page.waitForTimeout(400);
-    }
+    await expect(page.getByRole("button", { name: "Finish editing", exact: true })).toBeVisible();
 
     const projInput = page.locator('input[placeholder="New project name"]').first();
     await expect(projInput).toBeVisible({ timeout: 15000 });

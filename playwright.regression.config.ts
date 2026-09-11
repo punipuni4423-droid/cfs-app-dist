@@ -1,3 +1,4 @@
+import { baseURL, isolatedSpecs, testStorageState, testPort, testHost } from './tests/playwright-safety';
 import { defineConfig, devices, type PlaywrightTestConfig } from "@playwright/test";
 import * as path from "path";
 
@@ -9,13 +10,22 @@ const artifactRoot =
   process.env.CFS_PLAYWRIGHT_OUTPUT_DIR ??
   path.join(process.cwd(), "artifacts", "playwright", `${runId}-regression`);
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3014";
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+if (!/^\.next-[A-Za-z0-9_-]+$/.test(process.env.NEXT_DIST_DIR ?? '')) throw new Error('CFS_TEST_SAFETY: isolated NEXT_DIST_DIR is required.');
 
 const regressionProjects: PlaywrightTestConfig["projects"] = [
   {
+    name: 'edit-mode-links',
+    testMatch: ['**/cfs_setting_link_*.spec.ts', '**/cfs_setting_overlay_entry.spec.ts', '**/switch_setting_link.spec.ts', '**/cfs_low_high_inline_edit.spec.ts', '**/device_assign_low_high_end.spec.ts', '**/device_assign_zone_multi_circuit.spec.ts', '**/cfs_zone_columns.spec.ts'],
+    use: { ...devices['Desktop Chrome'] },
+  },
+  {
+    name: 'remarks',
+    testMatch: ['**/remarks_tab.spec.ts', '**/remarks_width.spec.ts'],
+    use: { ...devices['Desktop Chrome'] },
+  },
+  {
     name: "protected-behavior",
-    testMatch: "**/protected-behavior.spec.ts",
+    testMatch: ["**/protected-behavior.spec.ts", "**/project_save_inflight.spec.ts", "**/project_delete_atomic.spec.ts", "**/project_list_safe.spec.ts", "**/p2_ui_export.spec.ts", "**/critical-auth-scope.spec.ts", "**/critical-save-reliability.spec.ts", "**/storage-quota.spec.ts", "**/project_restore_reliability.spec.ts"],
     use: { ...devices["Desktop Chrome"] },
   },
   {
@@ -46,7 +56,8 @@ const regressionProjects: PlaywrightTestConfig["projects"] = [
 ];
 
 export default defineConfig({
-  testDir: "./tests/e2e",
+  testDir: './tests/e2e',
+  testIgnore: isolatedSpecs,
   timeout: 120000,
   expect: { timeout: 15000 },
   fullyParallel: false,
@@ -59,6 +70,8 @@ export default defineConfig({
     ["json", { outputFile: path.join(artifactRoot, "results.json") }],
   ],
   use: {
+    serviceWorkers: 'block',
+    storageState: testStorageState(),
     baseURL,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
@@ -66,9 +79,9 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
-    command: `${npmCommand} run dev -- -p 3014`,
+    command: `node node_modules/next/dist/bin/next dev -p ${testPort} -H ${testHost}`,
     url: baseURL,
-    reuseExistingServer: true,
+    reuseExistingServer: process.env.CFS_TEST_REUSE_SERVER === '1',
     timeout: 120000,
   },
   projects: regressionProjects,

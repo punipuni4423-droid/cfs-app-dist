@@ -18,7 +18,7 @@
  *       現行 UI は英語。baseURL は playwright.config.ts の http://localhost:3014。
  * スクショ: test-results/audit-09/<step>.png
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./support/safe-test";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
 const SHOT_DIR = "test-results/audit-09";

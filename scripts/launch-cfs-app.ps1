@@ -129,6 +129,14 @@ function Get-ReadyUrlFromStatus {
 
 function Open-CfsBrowser {
   param([string]$Url)
+  $previousAuthAppDir = $env:CFS_APP_DIR
+  try {
+    $env:CFS_APP_DIR = $appRoot
+    $Url = & node.exe (Join-Path $appRoot 'scripts\cfs-access.mjs') $Url
+    if ($LASTEXITCODE -ne 0 -or -not $Url) { throw 'CFS authentication link could not be created.' }
+  } finally {
+    if ($null -eq $previousAuthAppDir) { Remove-Item Env:CFS_APP_DIR -ErrorAction SilentlyContinue } else { $env:CFS_APP_DIR = $previousAuthAppDir }
+  }
   $browserPath = Get-CfsBrowserExecutable
   if ($browserPath) {
     $arguments = @(

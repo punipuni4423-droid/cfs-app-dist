@@ -1,3 +1,4 @@
+import { baseURL, isolatedSpecs, testStorageState } from './tests/playwright-safety';
 import { defineConfig, devices } from '@playwright/test';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -8,6 +9,7 @@ const OUT = path.join(os.tmpdir(), 'audit03-pw-output');
 
 export default defineConfig({
   testDir: './tests/e2e',
+  testIgnore: isolatedSpecs,
   testMatch: '_audit_03_fixtures.spec.ts',
   outputDir: OUT,
   timeout: 60000,
@@ -16,7 +18,9 @@ export default defineConfig({
   retries: 0,
   reporter: [['line']],
   use: {
-    baseURL: 'http://localhost:3014',
+    serviceWorkers: 'block',
+    storageState: testStorageState(),
+    baseURL,
     trace: 'off',
     screenshot: 'off',
     video: 'off',

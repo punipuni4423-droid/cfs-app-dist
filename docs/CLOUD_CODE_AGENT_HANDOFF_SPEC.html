@@ -254,7 +254,7 @@
             </tr>
             <tr>
               <td>保存</td>
-              <td>プロジェクト本体は <code>/api/projects</code> 経由で <code>data/projects.json</code> に保存。Trash は <code>/api/trash</code> 経由で <code>data/trash/trash.json</code>。</td>
+              <td>プロジェクト本体は <code>/api/projects</code> 経由で <code>data/projects.json</code> に保存。Trash は <code>/api/trash</code> 経由で <code>data/trash/trash.json</code>。プロジェクト削除は <code>/api/projects/delete</code> の単一処理で退避と削除を確定。ローカルは共通ロックと復旧記録、共有は単一DBトランザクションで保護する。</td>
               <td>ブラウザ localStorage はフォールバック/設定/表示設定にも使う。古い docs の「localStorage のみ」は現在の正ではない。</td>
             </tr>
             <tr>
@@ -618,7 +618,7 @@ npm run build</code></pre>
             <tr>
               <td><code>/api/projects</code></td>
               <td>POST</td>
-              <td>payload の <code>projects</code> を検証/migration し、atomic-ish に tmp から rename 保存。</td>
+              <td>単体保存は既存CASを使用。一覧保存は <code>expectedUpdatedAts</code> を必須とし送信IDのみマージする（省略ID保持）。改名は専用 <code>POST /api/projects/rename</code>、削除はT-115専用API。旧一覧RPCは禁止。共有はT-115/T-116 SQL→Edge→appの順に適用し、未整合時の保存失敗を旧RPC fallbackで回避しない。</td>
               <td>最大 10MB。invalid JSON は 400。</td>
             </tr>
             <tr>
@@ -633,7 +633,7 @@ npm run build</code></pre>
         <ul>
           <li>起動時は DB/API から projects/trash を取得する。</li>
           <li>10 秒 timeout または API 失敗時は localStorage backup を読む。</li>
-          <li>projects は 1200ms debounce で API 保存し、<code>Saving...</code>, <code>Saved at</code>, <code>Save failed</code> を表示する。</li>
+          <li>編集中のDraftは300ms debounceで端末のIndexedDBへProject・利用者・タブ別に退避する。Draftは共有DBへ自動uploadしない。Current / New Rev / 放置終了の新Rev保存は、応答と保存先本文を照合してから成功と表示する。放置保存のコメントは「自動保存」。</li>
           <li>trash は 300ms debounce で保存する。</li>
           <li>Import/Export は JSON backup 形式にも対応する。</li>
         </ul>

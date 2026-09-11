@@ -15,7 +15,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import ExcelJS from "exceljs";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./support/safe-test";
 import { createDefaultLocations, createEmptySwitchEntry, createNewRoomType } from "../../app/lib/constants";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
@@ -59,6 +59,7 @@ type LocalEditingMockState = Awaited<ReturnType<typeof installLocalEditingMocks>
 let mockState: LocalEditingMockState;
 
 test.beforeEach(async ({ page }) => {
+  await page.context().route('**/api/**', (route) => route.fulfill({ json: {} }));
   mockState = await installLocalEditingMocks(page);
 });
 
@@ -150,6 +151,13 @@ async function openProjectCfs(page: Page, projectName: string): Promise<void> {
   const back = page.getByRole("button", { name: /Back to Project List/i }).first();
   if (await back.isVisible().catch(() => false)) {
     await back.click();
+    // Preserve the synthetic project and its persisted view preferences;
+    // explicitly finish the normalized draft instead of bypassing T114.
+    const finish = page.getByRole("dialog", { name: "Finish editing with draft changes?" });
+    if (await finish.isVisible()) {
+      await finish.getByRole("button", { name: "Save Current & Finish", exact: true }).click();
+      await expect(finish).toBeHidden();
+    }
   }
   const card = page.locator("button.screen-card").filter({ hasText: projectName }).first();
   await expect(card).toBeVisible({ timeout: 10000 });

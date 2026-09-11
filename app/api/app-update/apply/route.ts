@@ -1,3 +1,4 @@
+import { requireApiAccess } from "../../../lib/apiAuth";
 import { spawn } from "node:child_process";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -55,6 +56,8 @@ async function writeLaunchFailure(message: string): Promise<void> {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const denied = await requireApiAccess(request, true);
+  if (denied) return denied;
   if (!isAllowedWriteRequest(request)) {
     return NextResponse.json({ error: "update request origin is not allowed" }, { status: 403 });
   }
@@ -95,7 +98,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     "-Port",
     port,
     "-HostName",
-    "0.0.0.0",
+    process.env.CFS_LOCALHOST_ONLY === "1" ? "127.0.0.1" : "0.0.0.0",
   ];
   const startCommand = [
     "$ErrorActionPreference = 'Stop';",

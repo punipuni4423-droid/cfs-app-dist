@@ -1,5 +1,6 @@
 import type { RoomScene } from "../types";
 import { createAppId } from './id';
+import { isMigrationReviewPending } from './migrationSafety';
 
 const DEFAULT_TEMPLATES: Array<Pick<RoomScene, "phase" | "sceneType" | "detail" | "triggerCondition">> = [
   { phase: "Check In", sceneType: "Welcome Scene", detail: "", triggerCondition: "Day" },
@@ -99,6 +100,7 @@ export function ensureRoomScenes(
   roomScenes: RoomScene[],
   createId?: () => string,
 ): RoomScene[] {
+  if (roomScenes.length === 0 && isMigrationReviewPending()) return roomScenes;
   const deduped = dedupeRoomSceneIds(roomScenes, createId);
   const normalized = deduped.map(ensureRoomSceneKind);
   const kindsChanged = normalized.some((scene, index) => scene !== deduped[index]);

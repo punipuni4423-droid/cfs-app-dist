@@ -12,15 +12,17 @@
  *
  * データ保護: installLocalEditingMocks で /api/projects を全モック。
  */
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./support/safe-test";
 import { createDefaultLocations, createNewRoomType } from "../../app/lib/constants";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
+import { readNativeDraftProject } from './support/native-project-drafts';
 
 type LocalEditingMockState = Awaited<ReturnType<typeof installLocalEditingMocks>>;
 
 let mockState: LocalEditingMockState;
 
 test.beforeEach(async ({ page }) => {
+  await page.context().route("**/api/**", (route) => route.fulfill({ json: {} }));
   mockState = await installLocalEditingMocks(page);
 });
 
@@ -106,10 +108,14 @@ function makeProject(projectId: string, projectName: string) {
 }
 
 async function openProjectDeviceAssign(page: Page, projectName: string): Promise<void> {
-  // リロード直後は sessionStorage 復元でプロジェクト詳細に入ることがあるため、
-  // 常に一覧へ戻ってから開く (cfs_view_prefs.spec.ts と同じ決定的ナビゲーション)。
+  // Reload may already restore this detail view. Avoid leaving it and opening the unrelated finish-editing dialog.
   const backOrCard = page.locator('button:has-text("Back to Project List"), button.screen-card').first();
   await expect(backOrCard).toBeVisible({ timeout: 20000 });
+  const existingDeviceTab = page.getByRole('tab', { name: 'Device Assign', exact: true });
+  if (await existingDeviceTab.isVisible()) {
+    await existingDeviceTab.click();
+    return;
+  }
   const back = page.getByRole("button", { name: /Back to Project List/i }).first();
   if (await back.isVisible().catch(() => false)) {
     await back.click();
@@ -175,17 +181,9 @@ test.describe("T-32 Device Assign Low/High End 列", () => {
     // --- 行上書き: Zn1 の Low End を 25 に ---
     await zn1Low.fill("25");
     await expect(zn1Low).toHaveValue("25");
-    // ローカルモードの自動保存はドラフト (cfs-project-drafts-v2) へ 1200ms
-    // デバウンスで書かれる。保存後のドラフト内容を直接検証する。
+    // 未保存編集はIndexedDBへ退避される。完了transactionの実内容を直接検証する。
     const readDraftAssignments = async (): Promise<Array<Record<string, unknown>>> =>
-      page.evaluate(() => {
-        const raw = localStorage.getItem("cfs-project-drafts-v2");
-        if (!raw) return [];
-        const projects = JSON.parse(raw) as Array<{
-          roomTypes?: Array<{ deviceAssignments?: Array<Record<string, unknown>> }>;
-        }>;
-        return projects[0]?.roomTypes?.[0]?.deviceAssignments ?? [];
-      });
+      (await readNativeDraftProject(page, 'lh-proj'))?.roomTypes?.[0]?.deviceAssignments as unknown as Array<Record<string, unknown>> ?? [];
     await expect
       .poll(async () => (await readDraftAssignments()).find((a) => a.zoneAddress === "Zn1")?.lowEnd, {
         timeout: 8000,
@@ -200,13 +198,19 @@ test.describe("T-32 Device Assign Low/High End 列", () => {
     const savedZn3 = savedAssignments.find((a) => a.zoneAddress === "Zn3");
     expect(savedZn3?.lowEnd).toBe("77");
 
-    // 上書きはリロード後も残る (更新の新しいドラフトが復元される)
+    // Reloadはserver原本を表示し、端末の未共有編集は明示操作で復帰する。
+    page.once('dialog', dialog => dialog.accept());
     await page.reload({ waitUntil: "domcontentloaded" });
     await openProjectDeviceAssign(page, "LH-PROJ");
     const zn1AfterReload = zoneRow(page, "Zn1");
+    await expect(zn1AfterReload.locator('input[aria-label="Low End"]')).toHaveValue("5");
+    await expect(zn1AfterReload.locator('input[aria-label="High End"]')).toHaveValue("90");
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: '退避を編集へ戻す', exact: true }).click();
     await expect(zn1AfterReload.locator('input[aria-label="Low End"]')).toHaveValue("25");
     // High End は上書きしていないのでマスター初期値のまま
     await expect(zn1AfterReload.locator('input[aria-label="High End"]')).toHaveValue("90");
+    await expect.poll(async () => (await readDraftAssignments()).find(a => a.zoneAddress === 'Zn3')?.lowEnd).toBe('77');
 
     // --- 空にすると上書き解除 = マスター初期値 5 に戻る (空文字は保存しない) ---
     await zn1AfterReload.locator('input[aria-label="Low End"]').fill("");

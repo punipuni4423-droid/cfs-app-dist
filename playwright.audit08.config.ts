@@ -1,3 +1,4 @@
+import { baseURL, isolatedSpecs, testStorageState } from './tests/playwright-safety';
 /**
  * 監査#8 (CFS統合ビュー) 専用 Playwright 設定。
  * 本番 playwright.config.ts は変更しない。
@@ -12,7 +13,8 @@ import * as path from "path";
 const ARTIFACT_DIR = path.join(os.tmpdir(), "cfs-audit08-artifacts");
 
 export default defineConfig({
-  testDir: "./tests/e2e",
+  testDir: './tests/e2e',
+  testIgnore: isolatedSpecs,
   testMatch: "**/_audit_08_cfs.spec.ts",
   timeout: 150000,
   expect: { timeout: 15000 },
@@ -22,7 +24,9 @@ export default defineConfig({
   outputDir: ARTIFACT_DIR,
   reporter: [["line"]],
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3014",
+    serviceWorkers: 'block',
+    storageState: testStorageState(),
+    baseURL,
     trace: "off",
     screenshot: "only-on-failure",
     video: "off",

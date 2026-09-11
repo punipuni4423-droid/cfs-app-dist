@@ -3,7 +3,7 @@
  * 対象: http://localhost:3001 (PLAYWRIGHT_BASE_URL で上書き可)
  * Storage: cfs-projects-v14 (プロジェクト), cfs-app-settings-v1 (デバイスマスター)
  */
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from './support/safe-test';
 import { installLocalEditingMocks } from './support/secure-sharing-mock';
 
 const PROJECT_NAME = `E2E-Test-${Date.now()}`;

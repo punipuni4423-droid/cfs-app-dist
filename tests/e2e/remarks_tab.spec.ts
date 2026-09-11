@@ -1,8 +1,8 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "./support/safe-test";
 import { writeFile } from "node:fs/promises";
 import ExcelJS from "exceljs";
 
-import { createNewProject, migrateProjectsPayload } from "../../app/lib/storage";
+import { createNewProject, migrateProjectsPayload, migrateProjectsWithReport } from "../../app/lib/storage";
 import type { ProjectRemark } from "../../app/types";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
@@ -50,11 +50,12 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("Remarks tab", () => {
   test.beforeEach(async ({ page }) => {
+    await page.context().route('**/api/**', (route) => route.fulfill({ json: {} }));
     mockState = await installLocalEditingMocks(page);
     await openFreshList(page);
   });
 
-  test("storage migration preserves optional valid remarks and rejects malformed remarks", () => {
+  test("storage migration preserves optional valid remarks and reports malformed remarks without discarding the project", () => {
     const baseProject = createNewProject("Remarks Storage");
 
     const withoutRemarks = migrateProjectsPayload([baseProject]);
@@ -73,15 +74,19 @@ test.describe("Remarks tab", () => {
     expect(withRemarks).toHaveLength(1);
     expect(withRemarks[0].remarks).toEqual([validRemark]);
 
-    expect(migrateProjectsPayload([{ ...baseProject, remarks: "bad-shape" }])).toHaveLength(0);
-    expect(
-      migrateProjectsPayload([
+    const malformedCollection = migrateProjectsWithReport([{ ...baseProject, remarks: "bad-shape" }]);
+    expect(malformedCollection.projects).toHaveLength(1);
+    expect(malformedCollection.projects[0].remarks).toEqual([]);
+    expect(malformedCollection.report.repaired).toBe(1);
+    const malformedElement = migrateProjectsWithReport([
         {
           ...baseProject,
-          remarks: [{ ...validRemark, rows: [["Door", 1]] }],
+          remarks: [validRemark, { ...validRemark, id: 'invalid', rows: [["Door", 1]] }],
         },
-      ]),
-    ).toHaveLength(0);
+      ]);
+    expect(malformedElement.projects).toHaveLength(1);
+    expect(malformedElement.projects[0].remarks).toEqual([validRemark]);
+    expect(malformedElement.report.excluded).toBe(1);
   });
 
   test("parent tabs include Remarks after Room Type and navigation restores safely", async ({ page }) => {

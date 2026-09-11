@@ -30,7 +30,7 @@ $previousHostname = $env:HOSTNAME
 try {
   $env:CFS_APP_DIR = $root
   $env:PORT = [string]$Port
-  $env:HOSTNAME = "0.0.0.0"
+  $env:HOSTNAME = if ($env:CFS_LOCALHOST_ONLY -eq '1') { '127.0.0.1' } else { '0.0.0.0' }
 
   if ($Mode -eq "Standalone") {
     if (-not $ServerPath) {
@@ -49,7 +49,7 @@ try {
       -PassThru
   } else {
     $process = Start-Process -FilePath "npm.cmd" `
-      -ArgumentList @("run", "start", "--", "-p", [string]$Port, "-H", "0.0.0.0") `
+      -ArgumentList @("run", "start", "--", "-p", [string]$Port, "-H", $env:HOSTNAME) `
       -WorkingDirectory $root `
       -WindowStyle Hidden `
       -RedirectStandardOutput $StdoutPath `

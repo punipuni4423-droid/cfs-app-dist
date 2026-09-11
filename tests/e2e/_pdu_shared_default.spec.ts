@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./support/safe-test";
 
 test("uses the shared PDU default for a new browser profile", async ({ page }) => {
   await page.goto("/settings/devices");
