@@ -187,11 +187,12 @@ try {
     Remove-Item Function:Get-Process
     Check (-not (Test-Path (Join-Path $app 'artifacts'))) 'Snapshot ran despite access failure'
   }
-  Run 'updater preserves docs-only bypass and refuses protected output and junction deletion' {
+  Run 'updater requires verified build and refuses protected output and junction deletion' {
+    . (Join-Path $PSScriptRoot 'cfs-update-maintenance.ps1')
     $source = Get-Content (Join-Path $PSScriptRoot 'update-cfs-app.ps1') -Raw
     $tokens = $null; $parseErrors = $null
     $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$parseErrors)
-    foreach ($name in @('Get-NextDistPath', 'Clear-NextBuildOutput')) {
+    foreach ($name in @('Get-NextDistPath', 'Assert-CfsNoLegacyData', 'Clear-NextBuildOutput')) {
       $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
       Invoke-Expression $definition.Extent.Text
     }
@@ -199,7 +200,7 @@ try {
     $app = Fixture 'output-guard'
     $previousDist = $env:NEXT_DIST_DIR
     try {
-      foreach ($output in @('data', 'data\nested', 'artifacts', 'runtime', '.cfs-runtime', '..\outside')) {
+      foreach ($output in @('data', 'data\nested', 'artifacts', 'runtime', '.cfs-runtime', '.cfs-updater', '.git', '.git\nested', '..\outside')) {
         $env:NEXT_DIST_DIR = $output
         Refuses { Clear-NextBuildOutput $app } 'Refusing'
       }
@@ -209,7 +210,8 @@ try {
       Refuses { Clear-NextBuildOutput $app } 'Reparse'
       Check (Test-Path -LiteralPath $target) 'Output junction target deleted'
     } finally { $env:NEXT_DIST_DIR = $previousDist }
-    Check ($source.IndexOf('Docs-only update applied.') -lt $source.IndexOf('Stop-CfsDataWriters -AppRoot')) 'Docs-only stop regression'
+    Check (-not $source.Contains('Docs-only update applied.')) 'Docs-only bypass must not mask a failed build'
+    Check ($source.IndexOf('Wait-CfsUpdatedServer -Commit $afterSha') -lt $source.IndexOf('Write-UpdateStatus -State "completed"')) 'Completion precedes verified health'
     Check (-not ($source -match 'Stop-AppListeners -TargetPort')) 'Unverified post-backup port kill remains'
     Check ($source.IndexOf('Backup-CfsDataTrees -AppRoot') -lt $source.IndexOf('Invoke-NpmDependencyInstall -WorkingDirectory $appPath')) 'Snapshot is after dependency mutation'
   }

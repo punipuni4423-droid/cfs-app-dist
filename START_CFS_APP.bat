@@ -4,7 +4,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 rem Direct execution hands off to the silent launcher. The worker mode below is
 rem invoked by LAUNCH_CFS_APP.cmd / LAUNCH_CFS_APP.vbs and keeps long-running
 rem commands out of the launcher window.
-if /I not "%~1"=="--worker" (
+if /I not "%~1"=="--worker" if /I not "%~1"=="--locked-worker" (
   if exist "%~dp0LAUNCH_CFS_APP.cmd" (
     start "" "%~dp0LAUNCH_CFS_APP.cmd"
   ) else if exist "%~dp0LAUNCH_CFS_APP.vbs" (
@@ -12,6 +12,13 @@ if /I not "%~1"=="--worker" (
   )
   exit /b 0
 )
+
+if /I "%~1"=="--worker" (
+  "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0scripts\cfs-update-maintenance.ps1" -AppRoot "%~dp0." -RunStartup
+  exit /b !ERRORLEVEL!
+)
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0scripts\cfs-update-maintenance.ps1" -AppRoot "%~dp0." -VerifyStartupParent
+if errorlevel 1 exit /b 1
 
 set "APP_ROOT=%~dp0"
 if "%APP_ROOT:~-1%"=="\" set "APP_ROOT=%APP_ROOT:~0,-1%"
@@ -99,6 +106,11 @@ if exist "%UPDATED_STANDALONE_SERVER%" (
 )
 if not exist "%UPDATED_STANDALONE_SERVER%" (
   if exist "%BUNDLED_RUNTIME_SERVER%" (
+    powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%APP_ROOT%\scripts\cfs-update-maintenance.ps1" -AppRoot "%APP_ROOT%" -CheckBundledRuntime
+    if errorlevel 1 (
+      call :set_status "The bundled runtime does not match this installation after an update. Use UPDATE_CFS_APP.cmd to repair the build."
+      exit /b 1
+    )
     set "STANDALONE_SERVER=%BUNDLED_RUNTIME_SERVER%"
     call :set_status "Using bundled CFS runtime."
     goto :runtime_ready

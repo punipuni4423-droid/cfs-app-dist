@@ -2,7 +2,14 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$AppDir,
   [int]$Port = 3014,
-  [string]$HostName = "0.0.0.0"
+  [string]$HostName = "0.0.0.0",
+  [ValidatePattern('^$|^[a-fA-F0-9]{40}$')][string]$ExpectedHead = '',
+  [ValidatePattern('^$|^[a-fA-F0-9]{40}$')][string]$TargetCommit = '',
+  [IO.FileStream]$MaintenanceLock,
+  [string]$AttemptId = '',
+  [string]$StartedAt = '',
+  [switch]$RepairBuild,
+  [switch]$ConsoleProgress
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,6 +23,7 @@ $OutputEncoding = [Console]::OutputEncoding
 
 $appPath = (Resolve-Path -LiteralPath $AppDir).Path
 . (Join-Path $PSScriptRoot 'cfs-local-data-preservation.ps1')
+. (Join-Path $PSScriptRoot 'cfs-update-maintenance.ps1')
 $null = Assert-CfsPlainPath -Path $appPath
 $artifactDir = Join-Path $appPath "artifacts\self-update"
 $dataBackupDir = Join-Path $appPath "artifacts\data-recovery"
@@ -47,6 +55,9 @@ function Write-UpdateStatus {
   }
   if ($Progress -ge 0) { $payload["progress"] = $Progress }
   if ($script:StartedAt) { $payload["startedAt"] = $script:StartedAt }
+  if ($AttemptId) { $payload['attemptId'] = $AttemptId }
+  if ($TargetCommit) { $payload['targetCommit'] = $TargetCommit }
+  if ($ExpectedHead) { $payload['expectedHead'] = $ExpectedHead }
   if ($State -eq "completed" -or $State -eq "failed") {
     $payload["finishedAt"] = (Get-Date).ToUniversalTime().ToString("o")
   }
@@ -64,6 +75,7 @@ function Write-UpdateStatus {
         } else {
           [IO.File]::Move($temporaryStatusPath, $statusPath)
         }
+        if ($ConsoleProgress) { Write-Host ("[{0}%] {1}" -f $Progress, $Message) }
         return
       } catch {
         $failure = $_.Exception
@@ -183,60 +195,52 @@ function Import-PublicSupabaseEnv {
   }
 }
 
-function Start-CfsAppServer {
-  # Starts the app on $Port. Prefers the freshly built .next standalone output;
-  # falls back to the shipped runtime\server.js (packaged installs keep it even
-  # after a failed rebuild) so the browser can always reconnect and read the
-  # update status - including a failure.
-  Import-PublicSupabaseEnv
-  $outLog = Join-Path $appPath ("start-" + $Port + ".out.log")
-  $errLog = Join-Path $appPath ("start-" + $Port + ".err.log")
-  $standaloneServer = Join-Path $appPath ".next\standalone\server.js"
-  $bundledRuntimeServer = Join-Path $appPath "runtime\server.js"
-  $serverEntry = $null
-  if (Test-Path -LiteralPath $standaloneServer) {
-    $serverEntry = $standaloneServer
-    Write-Log "Using Next standalone runtime for restart."
-  } elseif (Test-NpmDependenciesReady -WorkingDirectory $appPath) {
-    # Prefer `npm start` (serves the freshly built .next) over the shipped
-    # runtime\server.js, which is frozen at package build time and would keep
-    # serving the old version after a successful update.
-    $serverEntry = $null
-  } elseif (Test-Path -LiteralPath $bundledRuntimeServer) {
-    # Last resort (e.g. failed dependency install): bring the packaged runtime
-    # back so the app is reachable and the failure is visible.
-    $serverEntry = $bundledRuntimeServer
-    Write-Log "Using bundled runtime\server.js for restart."
-  }
-  if ($serverEntry) {
-    $bundledNodeHome = $null
-    $runtimeDir = Join-Path $appPath ".cfs-runtime"
-    if (Test-Path -LiteralPath $runtimeDir) {
-      $bundledNodeExe = Get-ChildItem -LiteralPath $runtimeDir -Filter "node.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-      if ($bundledNodeExe) {
-        $bundledNodeHome = $bundledNodeExe.Directory.FullName
-      }
+function Test-CfsVerifiedBuild {
+  param([string]$Commit)
+  try {
+    $dist = Get-NextDistPath $appPath
+    $rootInfo = Get-Content -LiteralPath (Join-Path $appPath '.cfs-build-info.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $distInfo = Get-Content -LiteralPath (Join-Path $dist 'cfs-build-info.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($rootInfo.gitSha -ne $Commit -or $distInfo.gitSha -ne $Commit -or $rootInfo.builtAt -ne $distInfo.builtAt) { return $false }
+    if ($script:BuildStartedAt -and ([DateTime]::Parse($rootInfo.builtAt).ToUniversalTime() -lt $script:BuildStartedAt.AddSeconds(-1))) { return $false }
+    foreach ($relative in @('standalone/server.js','BUILD_ID')) {
+      if ((Get-Item -LiteralPath (Join-Path $dist $relative)).Length -le 0) { return $false }
     }
-    $pathPrefix = if ($bundledNodeHome) { "set `"PATH=$bundledNodeHome;%PATH%`" && " } else { "" }
-    $startCommand = $pathPrefix + "set `"PORT=$Port`" && set `"HOSTNAME=$HostName`" && set `"NODE_ENV=production`" && set `"CFS_APP_DIR=$appPath`" && node.exe `"$serverEntry`""
-    Start-Process -FilePath $env:ComSpec `
-      -ArgumentList @("/d", "/s", "/c", $startCommand) `
-      -WorkingDirectory $appPath `
-      -RedirectStandardOutput $outLog `
-      -RedirectStandardError $errLog `
-      -WindowStyle Hidden | Out-Null
-    return
+    return (Test-Path -LiteralPath (Join-Path $dist 'standalone/.next/static') -PathType Container)
+  } catch { return $false }
+}
+
+function Start-CfsAppServer {
+  param([switch]$RequireFreshBuild)
+  Import-PublicSupabaseEnv
+  $entry = $null
+  if (Test-CfsVerifiedBuild $TargetCommit) {
+    $entry = Join-Path (Get-NextDistPath $appPath) 'standalone/server.js'
   }
-  Write-Log "Using NODE_ENV=production for Next start."
+  if (-not $entry) { throw 'No verified updated build is available. The older bundled runtime was preserved but will not be started automatically. Use UPDATE_CFS_APP.cmd after the cause is fixed.' }
+  $node = Initialize-CfsUpdateNode $appPath
+  $env:PORT = [string]$Port
+  $env:HOSTNAME = $HostName
   $env:CFS_APP_DIR = $appPath
-  Invoke-WithProductionNodeEnv {
-    Start-Process -FilePath "npm.cmd" `
-      -ArgumentList @("run", "start", "--", "-p", [string]$Port, "-H", $HostName) `
-      -WorkingDirectory $appPath `
-      -RedirectStandardOutput $outLog `
-      -RedirectStandardError $errLog `
-      -WindowStyle Hidden | Out-Null
+  $env:NODE_ENV = 'production'
+  $script:RestartedProcess = Start-Process -FilePath $node -ArgumentList ('"' + $entry + '"') -WorkingDirectory $appPath -RedirectStandardOutput (Join-Path $appPath ("start-" + $Port + ".out.log")) -RedirectStandardError (Join-Path $appPath ("start-" + $Port + ".err.log")) -WindowStyle Hidden -PassThru
+}
+
+function Wait-CfsUpdatedServer {
+  param([string]$Commit)
+  $deadline = [DateTime]::UtcNow.AddSeconds(180)
+  $probe = Join-Path $PSScriptRoot 'test-cfs-instance.ps1'
+  $powerShell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+  while ([DateTime]::UtcNow -lt $deadline) {
+    if (-not $script:RestartedProcess -or $script:RestartedProcess.HasExited) { throw 'The updated server exited before readiness was verified.' }
+    & $powerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $probe -AppRoot $appPath -Port $Port
+    if ($LASTEXITCODE -eq 0 -and (Test-CfsVerifiedBuild $Commit)) {
+      $listeners = @(Get-CfsPortListeners -Port $Port)
+      if ($listeners.Count -gt 0 -and @($listeners | Where-Object { $_.OwningProcess -ne $script:RestartedProcess.Id }).Count -eq 0) { return }
+    }
+    Start-Sleep -Seconds 1
   }
+  throw 'The updated build did not become healthy. Check update/server logs and use UPDATE_CFS_APP.cmd after the cause is fixed.'
 }
 
 function Clear-NextRuntimeEnvironmentForBuild {
@@ -325,7 +329,7 @@ function Get-NextDistPath {
   if (-not $distPath.StartsWith($expectedPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Refusing to clear Next build output outside the app folder: $distPath"
   }
-  foreach ($protected in @('data', 'artifacts', 'runtime', '.cfs-runtime')) {
+  foreach ($protected in @('data', 'artifacts', 'runtime', '.cfs-runtime', '.cfs-updater', '.git')) {
     $protectedPath = Join-Path $rootFullPath $protected
     if ($distPath.Equals($protectedPath, [StringComparison]::OrdinalIgnoreCase) -or
         $distPath.StartsWith($protectedPath + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
@@ -340,6 +344,7 @@ function Clear-NextBuildOutput {
     [string]$RootPath
   )
   $distPath = Get-NextDistPath -RootPath $RootPath
+  Assert-CfsNoLegacyData -RootPath $RootPath
   if (Test-Path -LiteralPath $distPath) {
     Assert-CfsPlainTree -Directory $distPath
     Remove-Item -LiteralPath $distPath -Recurse -Force
@@ -349,16 +354,30 @@ function Clear-NextBuildOutput {
   }
 }
 
+function Assert-CfsNoLegacyData {
+  param([string]$RootPath)
+  $legacyPaths = @((Join-Path (Get-NextDistPath -RootPath $RootPath) 'standalone\data'), (Join-Path $RootPath '.next\standalone\data'), (Join-Path $RootPath 'runtime\data'))
+  foreach ($legacyPath in $legacyPaths) {
+    $null = Assert-CfsUpdatePlainPath $legacyPath
+    if (Test-Path -LiteralPath $legacyPath) {
+      if (-not (Test-Path -LiteralPath $legacyPath -PathType Container) -or @(Get-ChildItem -LiteralPath $legacyPath -Force -ErrorAction Stop).Count -gt 0) {
+        throw 'Legacy or multiple local data stores were found. No build output will be cleared. Preserve these folders and follow docs/LOCAL_DATA_UPDATE_GUIDE_JA.md before updating.'
+      }
+    }
+  }
+}
+
 function Sync-StandaloneStaticAssets {
   param(
     [string]$RootPath
   )
-  $standaloneServer = Join-Path $RootPath ".next\standalone\server.js"
-  $staticSource = Join-Path $RootPath ".next\static"
+  $distPath = Get-NextDistPath -RootPath $RootPath
+  $standaloneServer = Join-Path $distPath "standalone\server.js"
+  $staticSource = Join-Path $distPath "static"
   if (-not (Test-Path -LiteralPath $standaloneServer) -or -not (Test-Path -LiteralPath $staticSource)) {
     return
   }
-  $standaloneNextDir = Join-Path $RootPath ".next\standalone\.next"
+  $standaloneNextDir = Join-Path $distPath "standalone\.next"
   $staticTarget = Join-Path $standaloneNextDir "static"
   New-Item -ItemType Directory -Force -Path $standaloneNextDir | Out-Null
   if (Test-Path -LiteralPath $staticTarget) {
@@ -368,12 +387,25 @@ function Sync-StandaloneStaticAssets {
   Write-Log "Copied static assets for Next standalone runtime."
 }
 
-$script:StartedAt = (Get-Date).ToUniversalTime().ToString("o")
+$ownedMaintenanceLock = $false
+if (-not $MaintenanceLock) {
+  $MaintenanceLock = Enter-CfsUpdateMaintenance $appPath
+  $ownedMaintenanceLock = $true
+}
+Assert-CfsUpdateMaintenanceHandle $appPath $MaintenanceLock
+$script:BuildStartedAt = $null
+$script:RestartedProcess = $null
+$script:StoppedAppWriters = $false
+try {
+Assert-CfsNoLegacyUpdateWorker $appPath
+if (-not $StartedAt) { $StartedAt = (Get-Date).ToUniversalTime().ToString("o") }
+$script:StartedAt = $StartedAt
 Write-UpdateStatus -State "running" -Step "start" -Message "Preparing self update." -Progress 5
 Write-Log "CFS self update started. AppDir=$appPath Port=$Port HostName=$HostName"
 Clear-NextRuntimeEnvironmentForBuild
 
 try {
+  Assert-CfsNoLegacyData -RootPath $appPath
   Write-UpdateStatus -State "running" -Step "git-check" -Message "Checking Git repository." -Progress 10
   $gitExe = Resolve-GitExecutable -RootPath $appPath
   $env:CFS_GIT_EXE = $gitExe
@@ -383,6 +415,9 @@ try {
     throw "Git repository was not found."
   }
   $repoRoot = ([string]$repoRoot).Trim()
+  if (-not [string]::Equals([IO.Path]::GetFullPath($repoRoot), [IO.Path]::GetFullPath($appPath), [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Git resolved a different repository root. No update will be applied.'
+  }
   $trackedPackage = (& $gitExe -C $appPath ls-files --error-unmatch -- "package.json" 2>$null)
   if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$trackedPackage)) {
     throw "CFS app folder is not tracked by Git."
@@ -403,45 +438,32 @@ try {
 
   $dirty = @(& $gitExe -C $repoRoot status --porcelain --untracked-files=no)
   if (@($dirty).Count -gt 0) {
-    # An update interrupted by a full disk leaves tracked files truncated to
-    # zero bytes. That signature is safe to heal automatically by restoring
-    # the files from the current commit.
-    $allZeroByte = $true
-    foreach ($line in @($dirty)) {
-      $relPath = ([string]$line).Substring(3).Trim('"')
-      if ($relPath -match "\s->\s") { $relPath = ($relPath -split "\s->\s")[-1].Trim('"') }
-      $fullPath = Join-Path $repoRoot $relPath
-      if (-not (Test-Path -LiteralPath $fullPath)) { continue }
-      if ((Get-Item -LiteralPath $fullPath).Length -gt 0) { $allZeroByte = $false; break }
-    }
-    if ($allZeroByte) {
-      Write-Log "Restoring zero-byte tracked files left by an interrupted update."
-      Invoke-LoggedCommand -FilePath $gitExe -Arguments @("-C", $repoRoot, "checkout", "--force", "--", ".") -WorkingDirectory $repoRoot
-      $dirty = @(& $gitExe -C $repoRoot status --porcelain --untracked-files=no)
-    }
-  }
-  if (@($dirty).Count -gt 0) {
     throw "Local tracked files have changes. Commit or discard them before updating."
   }
   $beforeSha = ([string](& $gitExe -C $repoRoot rev-parse HEAD)).Trim()
+  if ($ExpectedHead -and $beforeSha -ne $ExpectedHead) { throw 'The installed commit changed before the worker started.' }
 
   Write-UpdateStatus -State "running" -Step "git-fetch" -Message "Fetching updates." -Progress 25 -BackupPath $backupPath
-  Invoke-LoggedCommand -FilePath $gitExe -Arguments @("-C", $repoRoot, "fetch", "--prune") -WorkingDirectory $repoRoot
+  if (-not $TargetCommit) {
+    Invoke-LoggedCommand -FilePath $gitExe -Arguments @("-C", $repoRoot, "fetch", "--prune") -WorkingDirectory $repoRoot
+    $TargetCommit = ([string](& $gitExe -C $repoRoot rev-parse '@{u}')).Trim()
+  }
+  if ($TargetCommit -notmatch '^[a-fA-F0-9]{40}$') { throw 'A fixed update commit is required.' }
 
-  $countsText = (& $gitExe -C $repoRoot rev-list --left-right --count "HEAD...@{u}" 2>&1)
+  $countsText = (& $gitExe -C $repoRoot rev-list --left-right --count "HEAD...$TargetCommit" 2>&1)
   if ($LASTEXITCODE -ne 0) {
     throw "Could not compare local and upstream Git history."
   }
   $countParts = ([string]$countsText).Trim() -split "\s+"
   $ahead = if ($countParts.Count -ge 1) { [int]$countParts[0] } else { 0 }
   $behind = if ($countParts.Count -ge 2) { [int]$countParts[1] } else { 0 }
-  if ($ahead -gt 0 -and $behind -gt 0) {
-    throw "Local and upstream Git history have diverged. Manual Git review is required before automatic update."
+  if ($ahead -gt 0) {
+    throw "The installed history is ahead of or diverged from the selected update. Review it before updating."
   }
   # Fast-forward may precede the stopped-writer snapshot only while both trees
   # exclude local business data. Refuse a remote that starts tracking that tree.
-  foreach ($revision in @('HEAD', '@{u}')) {
-    $trackedData = @(& $gitExe -C $repoRoot ls-tree -r --name-only $revision -- data)
+  foreach ($revision in @('HEAD', $TargetCommit)) {
+    $trackedData = @(& $gitExe -C $repoRoot ls-tree -r --name-only $revision -- data .cfs-updater)
     if ($LASTEXITCODE -ne 0 -or $trackedData.Count -gt 0) {
       throw 'Local data must remain untracked in both installed and incoming versions.'
     }
@@ -452,7 +474,7 @@ try {
     # An interrupted update can leave files the incoming commits ADD sitting
     # untracked in the working tree, which aborts the fast-forward update. Move such
     # files aside (kept under artifacts\self-update) instead of failing.
-    $incomingAdded = @(& $gitExe -C $repoRoot diff --name-only --diff-filter=A "HEAD..@{u}" 2>$null)
+    $incomingAdded = @(& $gitExe -C $repoRoot diff --name-only --diff-filter=A "HEAD..$TargetCommit" 2>$null)
     if (@($incomingAdded).Count -gt 0) {
       $untrackedFiles = @(& $gitExe -C $repoRoot ls-files --others --exclude-standard)
       $conflicting = @($incomingAdded | Where-Object { $untrackedFiles -contains $_ })
@@ -471,49 +493,31 @@ try {
         }
       }
     }
-    Invoke-LoggedCommand -FilePath $gitExe -Arguments @("-C", $repoRoot, "merge", "--ff-only", "@{u}") -WorkingDirectory $repoRoot
+    if (([string](& $gitExe -C $repoRoot rev-parse HEAD)).Trim() -ne $beforeSha -or @(& $gitExe -C $repoRoot status --porcelain --untracked-files=no).Count -gt 0) { throw 'Installed files changed before fast-forward.' }
+    Invoke-LoggedCommand -FilePath $gitExe -Arguments @("-C", $repoRoot, "merge", "--ff-only", $TargetCommit) -WorkingDirectory $repoRoot
   } else {
     Write-Log "No upstream commits to pull."
   }
   $afterSha = ([string](& $gitExe -C $repoRoot rev-parse HEAD)).Trim()
+  if ($afterSha -ne $TargetCommit) { throw 'The applied commit is not the selected update.' }
   $dependencyChanges = @()
   if ($beforeSha -ne $afterSha) {
     $dependencyChanges = @(& $gitExe -C $repoRoot diff --name-only $beforeSha $afterSha -- package.json package-lock.json npm-shrinkwrap.json)
   }
   $dependenciesChanged = @($dependencyChanges | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0
 
-  # Fast path: when every pulled change is documentation-only, the existing
-  # build stays valid. Skip install/build/restart and just stamp the new SHA
-  # into the shipped build info so the status check reports "current".
-  if ($beforeSha -ne $afterSha -and -not $dependenciesChanged) {
-    # Wrap the whole pipeline in @(): a single-item pipeline result is a scalar
-    # whose .Count access fails under StrictMode.
-    $changedFiles = @(@(& $gitExe -C $repoRoot diff --name-only $beforeSha $afterSha) |
-      Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
-    $docsOnlyPattern = '^(docs/|Manual/)|^[^/]+\.md$'
-    $nonDocChanges = @($changedFiles | Where-Object { [string]$_ -notmatch $docsOnlyPattern })
-    if (@($changedFiles).Count -gt 0 -and @($nonDocChanges).Count -eq 0) {
-      Write-Log ("Docs-only update ({0} file(s)); skipping install, build, and restart." -f $changedFiles.Count)
-      foreach ($buildInfoRelative in @(".cfs-build-info.json", "runtime\.cfs-build-info.json")) {
-        $buildInfoPath = Join-Path $appPath $buildInfoRelative
-        if (Test-Path -LiteralPath $buildInfoPath) {
-          $buildInfo = Get-Content -LiteralPath $buildInfoPath -Raw | ConvertFrom-Json
-          $buildInfo.gitSha = $afterSha
-          $buildInfo | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $buildInfoPath -Encoding UTF8
-        }
-      }
-      Write-UpdateStatus -State "completed" -Step "done" -Message "Docs-only update applied. No rebuild was needed." -Progress 100 -BackupPath $backupPath
-      Write-Log "CFS self update completed (docs-only fast path)."
-      exit 0
-    }
-  }
+  # Every update must prove the selected build and its running process. A
+  # documentation-only change must not mask an earlier failed build.
   $dependenciesReady = Test-NpmDependenciesReady -WorkingDirectory $appPath
+  $script:CfsUpdateNode = Initialize-CfsUpdateNode $appPath
+  $env:PATH = [IO.Path]::GetDirectoryName($gitExe) + ';' + $env:PATH
   $needsNpmInstall = $dependenciesChanged -or -not $dependenciesReady
 
   # The docs-only path above must remain restart-free. Code updates stop every
   # identifiable app writer before snapshotting the complete transaction store.
   Write-UpdateStatus -State "running" -Step "backup-data" -Message "Stopping app and verifying local data backup." -Progress 50
   Stop-CfsDataWriters -AppRoot $appPath -Port $Port
+  $script:StoppedAppWriters = $true
   $backupPath = Backup-CfsDataTrees -AppRoot $appPath -Trees @{ canonical = (Join-Path $appPath 'data') }
   Assert-CfsWritersStopped -AppRoot $appPath -Port $Port
   Write-Log "Verified complete local data backup: $backupPath"
@@ -535,16 +539,19 @@ try {
   Start-Sleep -Seconds 1
   Assert-CfsWritersStopped -AppRoot $appPath -Port $Port
   Clear-NextBuildOutput -RootPath $appPath
+  $script:BuildStartedAt = [DateTime]::UtcNow
   Write-Log "Using NODE_ENV=production for Next build."
   Invoke-WithProductionNodeEnv {
     Invoke-LoggedCommand -FilePath "npm.cmd" -Arguments @("run", "build") -WorkingDirectory $appPath
   }
   Sync-StandaloneStaticAssets -RootPath $appPath
+  if (-not (Test-CfsVerifiedBuild $TargetCommit)) { throw 'The build command did not produce a complete build for the selected commit.' }
 
   Write-UpdateStatus -State "running" -Step "restart" -Message "Restarting app." -Progress 94 -BackupPath $backupPath
   Assert-CfsWritersStopped -AppRoot $appPath -Port $Port
   Start-Sleep -Seconds 1
-  Start-CfsAppServer
+  Start-CfsAppServer -RequireFreshBuild
+  Wait-CfsUpdatedServer -Commit $TargetCommit
 
   Write-UpdateStatus -State "completed" -Step "done" -Message "Update completed. Reload the browser." -Progress 100 -BackupPath $backupPath
   Write-Log "CFS self update completed."
@@ -561,7 +568,7 @@ try {
   # this failure instead of sitting on "reconnecting" forever.
   try {
     $stillListening = @(Get-CfsPortListeners -Port $Port)
-    if (-not $stillListening) {
+    if ($script:StoppedAppWriters -and -not $stillListening) {
       Write-Log "Restarting app after failed update so the UI can reconnect."
       Start-CfsAppServer
     }
@@ -569,4 +576,7 @@ try {
     Write-Log ("Could not restart app after failure: " + $_.Exception.Message)
   }
   exit 1
+}
+} finally {
+  if ($ownedMaintenanceLock -and $MaintenanceLock) { $MaintenanceLock.Dispose() }
 }

@@ -16,7 +16,7 @@ function child(executable, body) {
   const done = new Promise((resolve) => process.once('exit', resolve));
   return { process, done };
 }
-const load = `$ErrorActionPreference='Stop'; Set-StrictMode -Version Latest; $tokens=$null; $errors=$null; $ast=[Management.Automation.Language.Parser]::ParseFile(${quote(source)},[ref]$tokens,[ref]$errors); $f=$ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-UpdateStatus'},$true)[0]; Invoke-Expression $f.Extent.Text; $logPath='synthetic'; $script:StartedAt='2026-01-01T00:00:00Z';`;
+const load = `$ErrorActionPreference='Stop'; Set-StrictMode -Version Latest; $tokens=$null; $errors=$null; $ast=[Management.Automation.Language.Parser]::ParseFile(${quote(source)},[ref]$tokens,[ref]$errors); $f=$ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-UpdateStatus'},$true)[0]; Invoke-Expression $f.Extent.Text; $logPath='synthetic';$script:StoppedAppWriters=$true; $AttemptId='';$TargetCommit='';$ExpectedHead='';$ConsoleProgress=$false; $script:StartedAt='2026-01-01T00:00:00Z';`;
 async function run(executable, name) {
   const folder = path.join(root, name + " 日本語 space's");
   fs.mkdirSync(folder);
@@ -74,7 +74,7 @@ async function run(executable, name) {
   for (const listenerExists of [false, true]) {
     const marker = path.join(folder, `restart-${listenerExists}.txt`);
     const diagnostic = path.join(folder, `recovery-${listenerExists}.log`);
-    const recoveryBody = load + `$statusPath=${quote(status)}; $backupPath=''; $Port=43999; function Write-Log([string]$Message){[IO.File]::AppendAllText(${quote(diagnostic)},$Message+[Environment]::NewLine)}; function Get-CfsPortListeners{param($Port) ${listenerExists ? '123' : ''}}; function Start-CfsAppServer{[IO.File]::WriteAllText(${quote(marker)},'recovery reached')}; $outerTry=@($ast.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.TryStatementAst]})[-1]; $catchText=$outerTry.CatchClauses[0].Body.Extent.Text; $lock=[IO.File]::Open($statusPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read); Invoke-Expression ("try { throw 'synthetic original failure' } catch " + $catchText)`;
+    const recoveryBody = load + `$statusPath=${quote(status)}; $backupPath=''; $Port=43999; function Write-Log([string]$Message){[IO.File]::AppendAllText(${quote(diagnostic)},$Message+[Environment]::NewLine)}; function Get-CfsPortListeners{param($Port) ${listenerExists ? '123' : ''}}; function Start-CfsAppServer{[IO.File]::WriteAllText(${quote(marker)},'recovery reached')}; $outerTry=$ast.Find({param($n)$n -is [Management.Automation.Language.TryStatementAst] -and $n.CatchClauses.Count -gt 0 -and $n.CatchClauses[0].Body.Extent.Text.Contains('$updateFailureMessage =')},$true); $catchText=$outerTry.CatchClauses[0].Body.Extent.Text; $lock=[IO.File]::Open($statusPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read); Invoke-Expression ("try { throw 'synthetic original failure' } catch " + $catchText)`;
     const recovery = child(executable, recoveryBody);
     assert.equal(await recovery.done, 1, 'Original failure must remain exit 1.');
     assert.equal(fs.existsSync(marker), !listenerExists, 'Recovery must run only when no listener remains.');

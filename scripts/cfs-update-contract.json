@@ -1,0 +1,10 @@
+{
+  "protocolVersion": 1,
+  "entrypoint": "scripts/update-cfs-app.ps1",
+  "files": [
+    "scripts/update-cfs-app.ps1",
+    "scripts/cfs-local-data-preservation.ps1",
+    "scripts/cfs-update-maintenance.ps1",
+    "scripts/test-cfs-instance.ps1"
+  ]
+}

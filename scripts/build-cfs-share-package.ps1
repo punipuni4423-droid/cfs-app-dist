@@ -112,6 +112,9 @@ $shareScripts = @(
   "start-cfs-background-server.ps1",
   "test-cfs-instance.ps1",
   "update-cfs-app.ps1",
+  "cfs-update-bootstrap.ps1",
+  "cfs-update-maintenance.ps1",
+  "cfs-update-contract.json",
   "cfs-local-data-preservation.ps1",
   "migrate-cfs-legacy-local-data.ps1",
   "write-cfs-build-info.mjs"
@@ -129,9 +132,11 @@ $files = @(
   "LAUNCH_CFS_APP.cmd",
   "LAUNCH_CFS_APP.vbs",
   "START_CFS_APP.bat",
+  "UPDATE_CFS_APP.cmd",
   "START_CFS_APP_CONSOLE.bat",
   "PDU_SHARED_DEFAULTS_JA.md",
   "SHARE_README_JA.md",
+  "GIT_RECOVERY_GUIDE_JA.md",
   "tsconfig.json"
 )
 
