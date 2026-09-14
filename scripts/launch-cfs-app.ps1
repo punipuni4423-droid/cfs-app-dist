@@ -146,7 +146,7 @@ function Resolve-CfsLauncherNode {
       }
     } catch { }
   }
-  throw 'CFS の Node.js が見つからないか起動できません。ZIP をすべて展開し、.cfs-runtime フォルダを含めて起動してください。'
+  throw 'CFS Node.js could not be found or started. Extract the entire ZIP, including the .cfs-runtime folder, before launching.'
 }
 
 function Open-CfsBrowser {
@@ -208,11 +208,11 @@ Add-Type -AssemblyName System.Drawing
 
 $script:startupDir = Resolve-StartupDirectory
 if (-not $script:startupDir) {
-  $failMessage = "CFS App を起動できませんでした。`r`n" +
-    "起動ログを書き込めるフォルダが見つかりません。`r`n`r`n" +
-    "試行した場所:`r`n" +
+  $failMessage = "CFS App could not start.`r`n" +
+    "No writable folder for startup logs was found.`r`n`r`n" +
+    "Locations tried:`r`n" +
     (($script:startupCandidates | ForEach-Object { "  " + $_ }) -join "`r`n") + "`r`n`r`n" +
-    "アプリのフォルダを書き込み可能な場所(例: C:\Users\<ユーザー名>\tools\CFS App)へ移動してから、もう一度起動してください。"
+    "Move the app folder to a writable location (for example: C:\Users\<username>\tools\CFS App), then launch it again."
   [System.Windows.Forms.MessageBox]::Show(
     $failMessage,
     "CFS App",
@@ -320,7 +320,7 @@ $timer.Add_Tick({
     # Use a fixed message: exception text can contain the local access grant.
     $timer.Stop()
     $script:exitCode = 1
-    $failureMessage = 'CFS の画面を開けませんでした。ZIP をすべて展開し、.cfs-runtime フォルダがあることを確認してから再起動してください。解決しない場合は起動ログを配布担当者へ渡してください。'
+    $failureMessage = 'The CFS screen could not be opened. Extract the entire ZIP and confirm that the .cfs-runtime folder exists, then restart. If the problem persists, send the startup logs to your app distributor.'
     Write-LauncherStatus $failureMessage
     [System.Windows.Forms.MessageBox]::Show(
       "$failureMessage`r`n`r`n$($script:startupDir)",

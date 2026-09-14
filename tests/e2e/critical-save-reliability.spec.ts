@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './support/safe-test';
+import { openSaveRecovery } from './support/save-recovery-ui';
 import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
@@ -69,14 +70,14 @@ test('normalization wire preserves invalid array and scalar diagnostics and reje
     expect(input.roomTypes[0].switches[7]).toBeUndefined(); expect(input.roomTypes[0].switches[8]).toBeNull();
     expect(Number.isNaN(input.roomTypes[0].switches[9])).toBe(true); expect(10 in input.roomTypes[0].switches).toBe(false);
     const cyclic = wireSwitchProject(); (cyclic as any).unknownCycle = cyclic;
-    expect(() => normalizeProjectSave(cyclic)).toThrow(/循環参照/);
+    expect(() => normalizeProjectSave(cyclic)).toThrow(/circular references/);
     for (const invalid of [new Date(0), new Map([['key', 'value']]), new Set(['value'])]) {
       const unknown = wireSwitchProject(); (unknown as any).unknownObject = invalid;
-      expect(() => normalizeProjectSave(unknown)).toThrow(/JSON形式ではない/);
+      expect(() => normalizeProjectSave(unknown)).toThrow(/non-JSON/);
       expect((unknown as any).unknownObject).toBe(invalid);
       const history = appendCommonRevision(wireSwitchProject(), 'Synthetic', 'history');
       (history.commonRevisions![0].snapshot as any).settings = invalid;
-      expect(() => normalizeProjectSave(history)).toThrow(/JSON形式ではない/);
+      expect(() => normalizeProjectSave(history)).toThrow(/non-JSON/);
       expect(history.commonRevisions![0].snapshot.settings).toBe(invalid);
     }
     const ownKeys = appendCommonRevision(wireSwitchProject(), 'Synthetic', 'own keys');
@@ -229,7 +230,7 @@ test('HTTP 200 invalid receipt never becomes Saved and blocks a second blind ope
   const current = page.getByRole('button', { name: 'Save current project without a new revision' });
   await current.click();
   await expect(page.getByText(/SAVE_RESPONSE_INVALID/)).toBeVisible();
-  await expect(page.getByRole('button', { name: '保存状態を確認', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Check Save Status', exact: true })).toBeVisible();
   await current.click();
   expect(posts).toBe(1);
   await expect(page.getByLabel('Title for remark 1', { exact: true })).toHaveValue('unsaved');
@@ -292,7 +293,7 @@ for (const outcome of ['success', 'failure'] as const) test(`idle common-only ${
       await expect.poll(() => releases).toBe(1);
       const saved = state.projects[0] as unknown as typeof project;
       expect(saved.roomTypes).toHaveLength(0);
-      expect(saved.commonRevisions?.at(-1)?.note).toBe('自動保存');
+      expect(saved.commonRevisions?.at(-1)?.note).toBe('Automatic save');
       expect(saved.commonRevisions?.at(-1)?.snapshot.remarks?.[0].body).toBe('unsaved-common-only');
     } else {
       await expect(page.getByRole('dialog', { name: 'Finish editing with draft changes?' })).toBeVisible();
@@ -339,7 +340,8 @@ test('409 Reload preserves the edited durable draft across reload instead of sav
   }));
   expect(raw).toContain('local-before-conflict');
   expect(raw).not.toContain('other-editor');
-  await expect(page.getByRole('button', { name: '退避を原文で出力', exact: true })).toBeVisible();
+  await openSaveRecovery(page);
+  await expect(page.getByRole('button', { name: 'Export Original Draft', exact: true })).toBeVisible();
 });
 
 test('confirmed force save with lost response retains the same operation and force CAS token for explicit retry', async ({ page }, testInfo) => {
@@ -366,9 +368,9 @@ test('confirmed force save with lost response retains the same operation and for
   });
   page.on('dialog', dialog => dialog.type() === 'prompt' ? dialog.accept('O') : dialog.accept());
   await page.getByRole('button', { name: 'Save current project without a new revision' }).click();
-  await expect(page.getByRole('button', { name: '同じ保存を再送', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '同じ保存を再送', exact: true }).click();
-  await expect(page.getByRole('button', { name: '同じ保存を再送', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Retry This Save', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Retry This Save', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Retry This Save', exact: true })).toHaveCount(0);
   expect(attempts).toHaveLength(3);
   expect(attempts[2].forceOverwriteUpdatedAt).toBe('2031-01-01T00:00:00.000Z');
   expect(attempts[2].forceOverwrite).toBe(true);

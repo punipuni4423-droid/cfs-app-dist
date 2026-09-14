@@ -1,6 +1,7 @@
 import type { CircuitEntry, DeviceAssignment, Scene, SceneCircuitSetting } from "../types";
 import { RESERVED_VALUE } from "./constants";
 import { circuitGroupKey, circuitGroupMembers } from "./circuitGroups";
+import { ccoLightingCircuit, isCcoLighting, isContactPort } from "./ccoLighting";
 
 // T-59: a fixed lighting zone may carry up to 5 circuits (1 primary + 4
 // additional, DeviceAssignment.additionalCircuitNumbers). These helpers merge
@@ -99,10 +100,12 @@ export function buildZoneCircuitMerges(
   let byPrimaryHeadId: Map<string, ZoneCircuitMerge> | null = null;
   let extraHeadIds: Set<string> | null = null;
   for (const assignment of deviceAssignments) {
+    if (isContactPort(assignment) && !isCcoLighting(assignment)) continue;
     const additionalNumbers = additionalCircuitNumbersOf(assignment);
     if (additionalNumbers.length === 0) continue;
     const primaryMatch = findCircuitByNumber(circuits, assignment.circuitNumber);
     if (!primaryMatch || primaryMatch.dimmingType === "DALI") continue;
+    if (isCcoLighting(assignment) && !ccoLightingCircuit(circuits, assignment.circuitNumber)) continue;
     const primaryHead = groupHeadOf(circuits, primaryMatch);
     const seenGroupKeys = new Set([circuitGroupKey(primaryHead)]);
     const extraHeads: CircuitEntry[] = [];
@@ -110,6 +113,7 @@ export function buildZoneCircuitMerges(
     for (const value of additionalNumbers) {
       const match = findCircuitByNumber(circuits, value);
       if (!match || match.dimmingType === "DALI") continue;
+      if (isCcoLighting(assignment) && !ccoLightingCircuit(circuits, value)) continue;
       const key = circuitGroupKey(match);
       if (seenGroupKeys.has(key)) continue;
       seenGroupKeys.add(key);

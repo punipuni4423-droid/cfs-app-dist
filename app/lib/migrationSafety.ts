@@ -72,5 +72,5 @@ export function collectionLosses(before: unknown, after: unknown, path = 'projec
 }
 
 export function migrationMessage(report: MigrationReport): string {
-  return `読込時に ${report.repaired + report.excluded} 件を修復/除外しました（修復 ${report.repaired} 件、除外 ${report.excluded} 件）。自動保存を停止しています。内容を確認してから保存してください。`;
+  return `Loading repaired or excluded ${report.repaired + report.excluded} items (${report.repaired} repaired, ${report.excluded} excluded). Automatic saving is paused. Review the changes before saving.`;
 }

@@ -125,10 +125,10 @@ export default class CfsErrorBoundary extends Component<CfsErrorBoundaryProps, C
         <div className="cfs-error-kicker">CFS Error</div>
         <div className="cfs-error-head">
           <div>
-            <h2>CFSタブでエラーが発生しました</h2>
+            <h2>An error occurred in the CFS tab</h2>
             <p>
-              CFSだけで検知しています。他のタブはそのまま確認できます。
-              下の情報を見れば、どのCFS経路で落ちたかを追いやすくなります。
+              This error was detected in CFS only. You can continue reviewing the other tabs.
+              The details below can help identify the CFS path where the error occurred.
             </p>
           </div>
           <span className="cfs-error-id">{this.state.errorId}</span>
@@ -154,7 +154,7 @@ export default class CfsErrorBoundary extends Component<CfsErrorBoundaryProps, C
         </dl>
 
         <details className="cfs-error-details">
-          <summary>Codex確認用の詳細を表示</summary>
+          <summary>Show Diagnostic Details for Codex</summary>
           <pre>{details}</pre>
         </details>
 

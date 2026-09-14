@@ -306,6 +306,7 @@ function zoneKind(row: CfsZoneRow): LutronZoneSpec["kind"] {
   if (row.isHvac) return "hvac";
   if (row.isBacklight) return "backlight";
   if (row.circuits.length === 0 && !row.assignmentValue) return "reserved";
+  if (row.ccoLighting && row.circuits.length > 0) return "lighting";
   if (isCciAddress(row.address) || isCcoAddress(row.address) || row.inputKind) return "input";
   return "lighting";
 }
@@ -455,11 +456,13 @@ function toZoneSpec(
     areaAddresses: row.circuits.map((item) => item.areaAddress).filter(Boolean),
     programmingNames,
     detail:
-      row.assignmentDetail ||
+      (row.ccoLighting ? row.circuits.map(rowCircuitDetailText).filter(Boolean).join(" / ") : "") || row.assignmentDetail ||
       row.assignmentValue ||
       row.circuits.map(rowCircuitDetailText).filter(Boolean).join(" / "),
     assignmentIds: row.assignmentIds ?? [row.id],
-    circuitIds: row.circuits.map((item) => item.id),
+    circuitIds: row.ccoLighting
+      ? [...new Set([...row.circuits, ...(row.targetAliasCircuits ?? [])].map((item) => item.id))]
+      : row.circuits.map((item) => item.id),
   };
 }
 

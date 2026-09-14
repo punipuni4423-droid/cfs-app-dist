@@ -133,7 +133,7 @@ function shrinkageResponse(before: unknown, rawIncoming: unknown[], source: Reco
   console.warn('CFS MigrationReport: save blocked', report);
   return NextResponse.json({
     code: 'MIGRATION_CONFIRMATION_REQUIRED',
-    error: 'データ件数が減少する保存を停止しました。修復・除外または削除の内容を確認してください。',
+    error: 'A save that reduces data counts was blocked. Review the repairs, exclusions, or deletions.',
     migrationReport: report,
     migrationConfirmation: confirmation,
   }, { status: 409 });
@@ -213,7 +213,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     ? (payload as Record<string, unknown>)
     : {};
   const rawProject = source.project;
-  if (source.saveProtocol !== SAVE_PROTOCOL_VERSION) return NextResponse.json({ error: '保存形式を更新してください。', code: 'SAVE_PROTOCOL_REQUIRED' }, { status: 409 });
+  if (source.saveProtocol !== SAVE_PROTOCOL_VERSION) return NextResponse.json({ error: 'Update the save format.', code: 'SAVE_PROTOCOL_REQUIRED' }, { status: 409 });
   // Legacy direct table upserts cannot enforce the SQL save contract.
   if (!isSecureSharingEnabled() && isSupabaseConfigured()) return NextResponse.json({ error: 'Safe project saves require local storage or secure sharing.', code: 'SAVE_PROTOCOL_REQUIRED' }, { status: 503 });
   if (rawProject !== undefined) {
@@ -223,8 +223,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     let project = projects[0];
-    if (project.commonRevisions !== undefined && !validCommonHistory(project.commonRevisions)) return NextResponse.json({ error: '共通履歴が不正です。元データを確認してください。', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 });
-    if (!validSaveMetadata(project)) return NextResponse.json({ error: '保存操作が不正です。' }, { status: 400 });
+    if (project.commonRevisions !== undefined && !validCommonHistory(project.commonRevisions)) return NextResponse.json({ error: 'Common history is invalid. Check the original data.', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 });
+    if (!validSaveMetadata(project)) return NextResponse.json({ error: 'The save operation is invalid.' }, { status: 400 });
     const scopedProjectId = requestProjectId(request);
     if (scopedProjectId && scopedProjectId !== project.id) {
       return NextResponse.json({ error: "project id does not match the edit lock scope" }, { status: 400 });
@@ -237,7 +237,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       ? source.forceOverwriteUpdatedAt.trim()
       : "";
     if (expectedUpdatedAt.startsWith('__CFS_') || forceOverwriteUpdatedAt.startsWith('__CFS_')) {
-      return NextResponse.json({ error: '予約済みの更新tokenは使用できません。' }, { status: 400 });
+      return NextResponse.json({ error: 'Reserved update tokens cannot be used.' }, { status: 400 });
     }
     if (isSecureSharingEnabled()) {
       const snapshot = await callSecureSharingFunctionJson(request, "projects.read");
@@ -296,16 +296,16 @@ export async function POST(request: Request): Promise<NextResponse> {
       const existing = currentProjects.find((candidate) => candidate.id === project.id);
       if (currentProjects.filter(candidate => candidate.id === project.id).length > 1) { conflict = true; return; }
       if (existing?.commonRevisions !== undefined && !validCommonHistory(existing.commonRevisions)) {
-        migrationBlocked = NextResponse.json({ error: '保存済みの共通履歴が不正です。原本を確認してください。', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 }); return;
+        migrationBlocked = NextResponse.json({ error: 'Saved common history is invalid. Check the original data.', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 }); return;
       }
       if (existing && await matchesSaveIntent(project, existing)) { project = existing; nextProjects = currentProjects; return; }
       if (existing && project.lastSaveOperation && existing.lastSaveOperation?.id === project.lastSaveOperation.id) {
-        migrationBlocked = NextResponse.json({ error: '同じ保存操作の内容が一致しません。保存状態を確認してください。', code: 'SAVE_OPERATION_CONFLICT' }, { status: 409 }); return;
+        migrationBlocked = NextResponse.json({ error: 'The contents for the same save operation do not match. Check Save Status.', code: 'SAVE_OPERATION_CONFLICT' }, { status: 409 }); return;
       }
       if (!createOnly && !existing) { conflict = true; nextProjects = currentProjects; return; }
       if (createOnly && (await trashedProjects()).some(item => item.id === project.id)) { conflict = true; return; }
       if (!commonHistoryPreserved(existing, project)) {
-        migrationBlocked = NextResponse.json({ error: '既存の共通履歴を削除・変更できません。', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 }); return;
+        migrationBlocked = NextResponse.json({ error: 'Existing common history cannot be deleted or changed.', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 }); return;
       }
       if (existing && createOnly) {
         conflict = true;
@@ -374,11 +374,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       || typeof project.name !== 'string' || !project.name.trim() || !Array.isArray(project.roomTypes)
       || project.roomTypes.some((room: unknown) => !room || typeof room !== 'object' || Array.isArray(room))
       || !(source.restoreProjectIds as unknown[]).includes(project.id)))) {
-    return NextResponse.json({ error: '原文復元は明示した復元対象のみ保存できます。' }, { status: 400 });
+    return NextResponse.json({ error: 'An original-data restore can save only the explicitly selected restore targets.' }, { status: 400 });
   }
   const projects = restoreRaw ? rawProjects as ProjectData[] : migrateProjectsPayload(rawProjects);
-  if (projects.some(project => project.commonRevisions !== undefined && !validCommonHistory(project.commonRevisions))) return NextResponse.json({ error: '共通履歴が不正です。', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 });
-  if (projects.some(project => !validSaveMetadata(project))) return NextResponse.json({ error: '保存操作が不正です。' }, { status: 400 });
+  if (projects.some(project => project.commonRevisions !== undefined && !validCommonHistory(project.commonRevisions))) return NextResponse.json({ error: 'Common history is invalid.', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 });
+  if (projects.some(project => !validSaveMetadata(project))) return NextResponse.json({ error: 'The save operation is invalid.' }, { status: 400 });
   if (projects.length !== rawProjects.length) {
     return NextResponse.json({ error: "projects contains invalid project data" }, { status: 400 });
   }
@@ -392,7 +392,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const expectedUpdatedAts = expected as Record<string, string | null>;
   const submittedIds = new Set(projects.map(project => project.id));
   const restoreProjectIds = source.restoreProjectIds ?? [];
-  if (!Array.isArray(restoreProjectIds) || restoreProjectIds.some(id => typeof id !== 'string' || !submittedIds.has(id))) return NextResponse.json({ error: '復元対象が不正です。' }, { status: 400 });
+  if (!Array.isArray(restoreProjectIds) || restoreProjectIds.some(id => typeof id !== 'string' || !submittedIds.has(id))) return NextResponse.json({ error: 'The restore target is invalid.' }, { status: 400 });
   const restoreIds = new Set(restoreProjectIds as string[]);
   const targetedRaw = (raw: unknown[]) => raw.filter(candidate => candidate && typeof candidate === 'object' && submittedIds.has((candidate as { id: string }).id));
 
@@ -418,15 +418,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     const receipts = new Map<string, ProjectData>();
     for (const project of projects) {
       const matches = current.filter(candidate => candidate && typeof candidate === 'object' && (candidate as { id?: unknown }).id === project.id) as ProjectData[];
-      if (matches[0]?.commonRevisions !== undefined && !validCommonHistory(matches[0].commonRevisions)) return NextResponse.json({ error: '保存済みの共通履歴が不正です。', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 });
+      if (matches[0]?.commonRevisions !== undefined && !validCommonHistory(matches[0].commonRevisions)) return NextResponse.json({ error: 'Saved common history is invalid.', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 });
       if (matches.length === 1 && await matchesSaveIntent(project, matches[0])) { receipts.set(project.id, matches[0]); continue; }
-      if (matches[0] && project.lastSaveOperation && matches[0].lastSaveOperation?.id === project.lastSaveOperation.id) return NextResponse.json({ error: '同じ保存操作の内容が一致しません。', code: 'SAVE_OPERATION_CONFLICT' }, { status: 409 });
-      if (!commonHistoryPreserved(matches[0], project)) return NextResponse.json({ error: '既存の共通履歴を削除・変更できません。', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 });
+      if (matches[0] && project.lastSaveOperation && matches[0].lastSaveOperation?.id === project.lastSaveOperation.id) return NextResponse.json({ error: 'The contents for the same save operation do not match.', code: 'SAVE_OPERATION_CONFLICT' }, { status: 409 });
+      if (!commonHistoryPreserved(matches[0], project)) return NextResponse.json({ error: 'Existing common history cannot be deleted or changed.', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 });
       if (matches.length > 1 || (matches.length ? matches[0].updatedAt !== expectedUpdatedAts[project.id] : expectedUpdatedAts[project.id] !== null)) return projectConflictResponse(matches[0]);
       const originals = trashProjects.filter(item => item.id === project.id);
       if (restoreIds.has(project.id)) {
-        if (matches.length || !originals.some(item => Array.isArray(item.roomTypes) && restoreContent(item) === restoreContent(project))) return NextResponse.json({ error: 'Trashの原本と復元内容が一致しません。', code: 'PROJECT_RESTORE_REQUIRED' }, { status: 409 });
-      } else if (!matches.length && originals.length) return NextResponse.json({ error: 'Trashから明示的に復元してください。', code: 'PROJECT_RESTORE_REQUIRED' }, { status: 409 });
+        if (matches.length || !originals.some(item => Array.isArray(item.roomTypes) && restoreContent(item) === restoreContent(project))) return NextResponse.json({ error: 'The restore contents do not match the original Trash item.', code: 'PROJECT_RESTORE_REQUIRED' }, { status: 409 });
+      } else if (!matches.length && originals.length) return NextResponse.json({ error: 'Explicitly restore the project from Trash.', code: 'PROJECT_RESTORE_REQUIRED' }, { status: 409 });
     }
     const rejected = restoreRaw ? undefined : shrinkageResponse(targetedRaw(current), rawProjects, source);
     if (rejected) return rejected;

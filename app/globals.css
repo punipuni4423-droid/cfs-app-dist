@@ -10021,3 +10021,74 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
     justify-content: flex-end;
   }
 }
+
+/* Project save/recovery disclosures reuse the existing toolbar and icons. */
+.project-screen-shell .project-recovery-icon,
+.project-screen-shell .project-recovery-icon:hover,
+.project-screen-shell .project-recovery-icon:focus-visible {
+  flex: 0 0 32px;
+  width: 32px;
+  min-width: 32px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+.project-screen-shell .project-recovery-icon:focus-visible,
+.save-recovery-panel button:focus-visible,
+.save-reliability-notice button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.project-screen-shell .project-top-action-groups,
+.project-screen-shell .history-controls,
+.project-screen-shell .revision-top-controls {
+  flex-wrap: wrap;
+}
+
+.project-screen-shell .history-controls,
+.project-screen-shell .revision-top-controls {
+  overflow: visible;
+}
+
+.project-screen-shell .revision-save-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.save-reliability-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.65rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 12px;
+  background: var(--color-surface);
+  overflow-wrap: anywhere;
+}
+
+.save-reliability-notice.is-warning { border-color: #bc810c; }
+.save-reliability-notice.is-error { border-color: #b94343; }
+.save-reliability-messages { flex: 1 1 28rem; min-width: 0; }
+.save-reliability-notice p { margin: 0; }
+.save-reliability-actions { margin: 0; gap: 0.4rem; }
+.save-reliability-actions:empty { display: none; }
+.save-reliability-notice .btn { white-space: normal; }
+
+body.cfs-top-ui-collapsed .save-reliability-notice {
+  position: sticky;
+  top: 0.4rem;
+  z-index: 8000;
+  padding-right: 3.4rem;
+}
+
+.save-recovery-panel { margin-bottom: 0.75rem; overflow-wrap: anywhere; }
+.save-recovery-panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; }
+.save-recovery-panel-heading h2 { margin: 0; font-size: 1rem; }
+.save-recovery-panel-heading h2:focus { outline: none; }
+.recovery-record { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--color-border); }
+.recovery-record > span:first-child { flex: 1 1 24rem; min-width: 0; }

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./support/safe-test";
+import { openSaveRecovery } from './support/save-recovery-ui';
 import type { ProjectData } from "../../app/types";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 
@@ -310,7 +311,8 @@ for (const outcome of ["success", "failure"] as const) {
       await page.reload({ waitUntil: "load" });
       await expect(title(page)).toHaveValue('Before request');
       page.once('dialog', dialog => dialog.accept());
-      await page.getByRole('button', { name: '退避を編集へ戻す', exact: true }).click();
+      await openSaveRecovery(page);
+      await page.getByRole('button', { name: 'Restore Draft to Editing', exact: true }).click();
       await expect(title(page)).toHaveValue(`Latest ${outcome} draft title`);
       await expect(body(page)).toHaveValue(`Latest ${outcome} draft body`);
       expect((state.projects[0] as unknown as ProjectData).remarks?.[0]?.body).toBe("Original body");

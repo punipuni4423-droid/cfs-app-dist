@@ -26,7 +26,7 @@ export function commonRevisions(project: ProjectData): ProjectCommonRevision[] {
   return Array.isArray(project.commonRevisions) ? project.commonRevisions.filter(validCommonRevision) : [];
 }
 export function appendCommonRevision(project: ProjectData, note: string, savedBy: string): ProjectData {
-  if (project.commonRevisions !== undefined && !validCommonHistory(project.commonRevisions)) throw new Error('共通履歴が不正です。元データを保持して確認してください。');
+  if (project.commonRevisions !== undefined && !validCommonHistory(project.commonRevisions)) throw new Error('Common history is invalid. Keep the original data for review.');
   const history = commonRevisions(project);
   const snapshot = commonSnapshot(project);
   if (history.length && !valuesDiffer(history.at(-1)!.snapshot, snapshot)) return project;
@@ -39,11 +39,11 @@ export function commonRestoreProblem(project: ProjectData, snapshot: ProjectComm
   const targetFixtureNames = new Set(snapshot.fixtures.map(fixture => fixture.fixture));
   const removedFixtures = new Set(project.fixtures.filter(fixture => !targetFixtureNames.has(fixture.fixture)).map(fixture => fixture.fixture));
   if (project.circuits.some(circuit => (circuit.area && !areas.has(circuit.area)) || removedFixtures.has(circuit.fixture))) {
-    return '現在の回路が参照するArea/Fixtureが復旧先にありません。JSONを出力して参照を確認してください。';
+    return 'The restore snapshot is missing an Area or Fixture referenced by a current circuit. Export JSON and check the references.';
   }
   if (project.roomTypes.some(room => room.deviceAssignments.some(assignment => assignment.area && !areas.has(assignment.area)))) {
-    return '現在の機器割付が参照するAreaが復旧先にありません。';
+    return 'The restore snapshot is missing an Area referenced by a current device assignment.';
   }
-  if (project.roomTypes.some(room => room.scenes.some(scene => !areas.has(scene.areaId)) || room.roomScenes.some(scene => scene.areaSceneSelections.some(selection => !areas.has(selection.areaId))))) return '現在のSceneが参照するAreaが復旧先にありません。';
+  if (project.roomTypes.some(room => room.scenes.some(scene => !areas.has(scene.areaId)) || room.roomScenes.some(scene => scene.areaSceneSelections.some(selection => !areas.has(selection.areaId))))) return 'The restore snapshot is missing an Area referenced by a current Scene.';
   return '';
 }

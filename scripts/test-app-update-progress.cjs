@@ -33,7 +33,7 @@ function loadTsModule(file) {
   assert.equal(isAppUpdateStatus({ error: 'unauthorized' }), false);
   assert.equal(isAppUpdateStatus({ ...status(), lastRun: { progress: NaN } }), false);
   assert.equal(isAppUpdateStatus({ ...status(), message: {} }), false);
-  assert.match(remainingUpdateEstimate('unknown', 600, {}, true, false), /算出待ち/);
+  assert.match(remainingUpdateEstimate('unknown', 600, {}, true, false), /pending/);
   assert.equal(remainingUpdateEstimate('build', 50, {}, true, true), '');
   await new Promise((resolve, reject) => webpackModule.webpack({
     mode: 'development', entry: path.join(scratch, 'entry.js'), devtool: false,
@@ -92,10 +92,10 @@ function loadTsModule(file) {
     }
     await scene('unknown 2 percent elapsed and diagnostics', { active: true, elapsed: 65000, status: status('available', { state: 'running', startedAt: new Date(Date.now() - 64000).toISOString() }) }, async page => {
       await page.waitForSelector('[role="alertdialog"]');
-      assert.match(await page.locator('.app-update-progress-elapsed').first().innerText(), /経過時間: 1:/);
+      assert.match(await page.locator('.app-update-progress-elapsed').first().innerText(), /Elapsed: 1:/);
       assert.equal(await page.locator('[role="progressbar"]').getAttribute('aria-valuenow'), '2');
-      assert.match(await page.locator('[role="alertdialog"]').innerText(), /算出待ち/);
-      assert.match(await page.locator('[role="alertdialog"]').innerText(), /再更新や上書き展開/);
+      assert.match(await page.locator('[role="alertdialog"]').innerText(), /pending/);
+      assert.match(await page.locator('[role="alertdialog"]').innerText(), /Do not run another update or overwrite the installation/);
       await page.screenshot({ path: path.join(scratch, 'unknown-2-percent.png') });
     });
     await scene('queued keeps real percent; 401 preserves checkpoint', { active: true, status: status('available', { state: 'running', currentStep: 'queued', progress: 1, startedAt: new Date(Date.now() + 500).toISOString() }) }, async page => {
@@ -103,21 +103,21 @@ function loadTsModule(file) {
       await page.evaluate(() => { window.fixture.code = 401; window.fixture.status = { error: 'unauthorized' }; });
       await page.clock.runFor(2500);
       assert.equal(await page.locator('[role="progressbar"]').getAttribute('aria-valuenow'), '1');
-      assert.match(await page.locator('[role="alertdialog"]').innerText(), /認証が必要/);
-      assert.match(await page.locator('[role="alertdialog"]').innerText(), /通信回復待ち/);
+      assert.match(await page.locator('[role="alertdialog"]').innerText(), /Authentication is required/);
+      assert.match(await page.locator('[role="alertdialog"]').innerText(), /waiting for the connection to recover/);
       await page.screenshot({ path: path.join(scratch, 'auth-reconnect.png') });
     });
     await scene('malformed successful payload is not accepted', { active: true, status: { error: 'not a status' } }, async page => {
       await page.waitForSelector('[role="progressbar"]');
       assert.equal(await page.locator('[role="progressbar"]').getAttribute('aria-valuenow'), '2');
-      assert.match(await page.locator('[role="alertdialog"]').innerText(), /通信回復待ち/);
+      assert.match(await page.locator('[role="alertdialog"]').innerText(), /waiting for the connection to recover/);
     });
     await scene('build ETA labelled and progress stays real', { status: status('available', { state: 'running', currentStep: 'build', progress: 78, startedAt: new Date(Date.now() - 1000).toISOString() }) }, async page => {
       await page.waitForSelector('[role="progressbar"]');
-      assert.match(await page.locator('[role="alertdialog"]').innerText(), /完了までの目安: 残り約\d+〜\d+分/);
+      assert.match(await page.locator('[role="alertdialog"]').innerText(), /Estimated time remaining: about \d+–\d+ min/);
       await page.clock.runFor(450000);
       assert.equal(await page.locator('[role="progressbar"]').getAttribute('aria-valuenow'), '78');
-      assert.match(await page.locator('[role="alertdialog"]').innerText(), /通常より長く/);
+      assert.match(await page.locator('[role="alertdialog"]').innerText(), /taking longer than usual/);
       await page.screenshot({ path: path.join(scratch, 'build-estimate-overrun.png') });
     });
     await scene('GET timeout releases polling guard', { active: true, status: status('available'), mode: 'hang' }, async page => {
@@ -135,7 +135,7 @@ function loadTsModule(file) {
       await page.clock.runFor(5000);
       assert.equal(await page.evaluate(() => window.fixture.posts), 1);
       assert.equal(await page.evaluate(() => sessionStorage.getItem('cfs-self-update-active')), '1');
-      assert.match(await page.locator('[role="alertdialog"]').innerText(), /前回の更新結果/);
+      assert.match(await page.locator('[role="alertdialog"]').innerText(), /previous update result/);
       assert.equal(await page.locator('.app-update-button').isDisabled(), true);
     });
     await scene('POST server error remains guarded', { status: status('available'), postServerError: true }, async page => {
@@ -164,7 +164,7 @@ function loadTsModule(file) {
     await scene('real helper launch failure is accepted as this run', { active: true, activeStartedAt: Date.parse(startedAt) - 100, status: status('available', fault) }, async page => {
       await page.getByRole('heading', { name: 'Update failed' }).waitFor();
       assert.equal(await page.getByRole('button', { name: 'Close', exact: true }).count(), 1);
-      assert.doesNotMatch(await page.locator('[role="alertdialog"]').innerText(), /完了までの目安/);
+      assert.doesNotMatch(await page.locator('[role="alertdialog"]').innerText(), /Estimated time remaining/);
       await page.screenshot({ path: path.join(scratch, 'worker-launch-failed.png') });
     });
     const colors = {};

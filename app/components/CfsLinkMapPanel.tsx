@@ -281,7 +281,7 @@ const LINK_RULE_CATALOG: LinkRuleCatalogItem[] = [
     source: "Circuit",
     target: "Device Assign",
     label: "Designer# / DALI",
-    detail: "CircuitのDesigner#をDevice AssignのCircuit # / Inputと照合します。DALIはDetailまたはAddressで個別灯へ結びます。",
+    detail: "Matches Circuit Designer# to Device Assign Circuit # / Input. DALI uses Detail or Address to link individual fixtures.",
     status: "partial",
     fromGroups: ["Circuit"],
     toGroups: ["Device Assign"],
@@ -292,7 +292,7 @@ const LINK_RULE_CATALOG: LinkRuleCatalogItem[] = [
     source: "Device Assign",
     target: "CFS Matrix",
     label: "CFS row",
-    detail: "Device Assignの表示対象行からCFSのベース行を作ります。非照明CCI/CCOは追加改善対象です。",
+    detail: "Builds CFS base rows from visible Device Assign rows. Non-lighting CCI/CCO remains an area for improvement.",
     status: "partial",
     fromGroups: ["Device Assign"],
     toGroups: ["CFS"],
@@ -303,7 +303,7 @@ const LINK_RULE_CATALOG: LinkRuleCatalogItem[] = [
     source: "Area Scene",
     target: "Circuit / HVAC / CCO",
     label: "Area Scene setting",
-    detail: "Area Sceneの値をCircuit ID、HVAC、CCOなどの対象へ結びます。",
+    detail: "Links Area Scene values to Circuit ID, HVAC, CCO, and other targets.",
     status: "implemented",
     fromGroups: ["Area Scene"],
     labels: ["Area Scene setting"],
@@ -313,7 +313,7 @@ const LINK_RULE_CATALOG: LinkRuleCatalogItem[] = [
     source: "Area Scene",
     target: "Scene",
     label: "Area Scene selection",
-    detail: "Sceneタブの列がAreaごとにArea Sceneを選び、CFSセルではその値を参照します。",
+    detail: "Scene tab columns select an Area Scene for each Area, and CFS cells reference those values.",
     status: "implemented",
     fromGroups: ["Area Scene"],
     toGroups: ["Scene"],
@@ -324,7 +324,7 @@ const LINK_RULE_CATALOG: LinkRuleCatalogItem[] = [
     source: "Scene",
     target: "Circuit / HVAC",
     label: "Scene direct setting",
-    detail: "Sceneタブで直接入力した値はArea Sceneより優先され、CFSのScene列へ表示されます。",
+    detail: "Values entered directly in the Scene tab take priority over Area Scene and appear in CFS Scene columns.",
     status: "implemented",
     fromGroups: ["Scene"],
     labels: ["Scene direct setting"],
@@ -334,7 +334,7 @@ const LINK_RULE_CATALOG: LinkRuleCatalogItem[] = [
     source: "Switch / Command",
     target: "Area Scene",
     label: "Switch scene recall",
-    detail: "SwitchまたはCommandがSceneを呼び出す場合、選択されたArea Sceneを経由してCFSへ値が入ります。",
+    detail: "When Switch or Command recalls a Scene, values reach CFS through the selected Area Scene.",
     status: "implemented",
     fromGroups: ["Switch", "Command", "Backlight", "HVAC"],
     toGroups: ["Area Scene"],
@@ -345,7 +345,7 @@ const LINK_RULE_CATALOG: LinkRuleCatalogItem[] = [
     source: "Switch / Command",
     target: "Circuit / HVAC / CCO",
     label: "Switch value",
-    detail: "Switch、Contact、PIR、Commandの直接値をCFSの機能列へ表示します。非照明CCO表示は追加改善対象です。",
+    detail: "Displays direct Switch, Contact, PIR, and Command values in CFS function columns. Non-lighting CCO display remains an area for improvement.",
     status: "partial",
     labels: ["Switch value"],
   },
@@ -354,7 +354,7 @@ const LINK_RULE_CATALOG: LinkRuleCatalogItem[] = [
     source: "CFS InspectionMode",
     target: "Scene / Area Scene / Switch",
     label: "InspectionMode draft finish",
-    detail: "CFS上で作成したドラフト値を、終了時にLinkedならArea Sceneへ、UnlinkならScene/Switchの直接値へ反映します。",
+    detail: "On finish, applies CFS draft values to Area Scene when Linked, or to direct Scene/Switch values when Unlink.",
     status: "partial",
     fromGroups: ["Inspection"],
     labels: ["InspectionMode draft finish"],
@@ -364,7 +364,7 @@ const LINK_RULE_CATALOG: LinkRuleCatalogItem[] = [
     source: "Backlight Logic",
     target: "Palladiom target / CFS",
     label: "Backlight target",
-    detail: "Backlight条件と対象Palladiom groupをCFSのBacklight Logic行へ反映します。現状は完全ノードとCFS renderの補強が必要です。",
+    detail: "Applies Backlight conditions and target Palladiom groups to CFS Backlight Logic rows. Complete nodes and CFS rendering still need improvement.",
     status: "partial",
     labels: ["Backlight target"],
   },
@@ -373,7 +373,7 @@ const LINK_RULE_CATALOG: LinkRuleCatalogItem[] = [
     source: "Device Assign CCI",
     target: "Switch Contact",
     label: "CCI physical input sync",
-    detail: "Device Assignで登録したCCI物理入力とSwitch/Contact行の割当を同期します。現Link Mapでは未表示です。",
+    detail: "Synchronizes CCI physical inputs registered in Device Assign with Switch/Contact row assignments. Not yet shown in Link Map.",
     status: "missing",
   },
   {
@@ -381,7 +381,7 @@ const LINK_RULE_CATALOG: LinkRuleCatalogItem[] = [
     source: "QSM",
     target: "PIR instance",
     label: "QSM / PIR assignment",
-    detail: "PIR instanceがどのQSMへ所属しているかを監査します。CFS列には出ませんが、連動監査として必要です。",
+    detail: "Audits which QSM each PIR instance belongs to. Not shown in CFS columns, but required for linkage checks.",
     status: "missing",
   },
   {
@@ -389,7 +389,7 @@ const LINK_RULE_CATALOG: LinkRuleCatalogItem[] = [
     source: "Area / Location / DeviceMaster",
     target: "Area Address / Programming Name",
     label: "Programming naming",
-    detail: "Area code、Area Address、DeviceMaster programmingCodeからCFSのProgramming Nameを作ります。現Link Map診断には未反映です。",
+    detail: "Builds CFS Programming Name from Area code, Area Address, and DeviceMaster programmingCode. Not yet included in Link Map diagnostics.",
     status: "missing",
   },
   {
@@ -397,7 +397,7 @@ const LINK_RULE_CATALOG: LinkRuleCatalogItem[] = [
     source: "Project data / Export",
     target: "CFS deliverables",
     label: "Import / Export safety",
-    detail: "プロジェクト保存、旧データ移行、Excel export、Link Map snapshot差分をアップデート確認に使います。現状は運用で補っています。",
+    detail: "Uses project saves, legacy data migration, Excel exports, and Link Map snapshot differences to verify updates. Currently supplemented by operational checks.",
     status: "external",
   },
 ];
@@ -617,53 +617,53 @@ function issueRepairHint(issue: CfsLinkIssue): string {
 }
 
 function edgeExplanationText(edge: CfsLinkEdge): string {
-  if (edge.label === "Designer#") return "CircuitのDesigner#とDevice AssignのCircuit # / Inputが一致するリンクです。";
-  if (edge.label === "Designer# + DALI detail/address") return "DALIのDesigner#にDetailまたはAddressを加えて個別灯へ絞り込むリンクです。";
-  if (edge.label === "CFS row") return "Device Assignの行がCFSのベース行として表示されるリンクです。";
-  if (edge.label === "Area Scene setting") return "Area Sceneの値が対象Circuit/HVAC/CCOへ紐づくリンクです。";
-  if (edge.label === "Area Scene selection") return "Scene列がAreaごとのArea Sceneを参照するリンクです。";
-  if (edge.label === "Scene direct setting") return "Sceneタブで直接入力された値がCFSへ出るリンクです。";
-  if (edge.label === "Switch scene recall") return "Switch/CommandがArea Sceneを呼び出してCFSへ値を出すリンクです。";
-  if (edge.label === "Switch value") return "Switch/Command/PIR/Contactの直接値が対象へ紐づくリンクです。";
-  if (edge.label === "Backlight target") return "Backlight Logicの発生元と対象Palladiom groupを結ぶリンクです。";
-  if (edge.label === "Backlight Logic row") return "有効なBacklight条件がCFSのBacklight Logic行へ表示されるリンクです。";
-  if (edge.label === "InspectionMode draft finish") return "CFS InspectionModeで作成したドラフトを、終了時にArea Scene / Override / Switch設定へ反映するリンクです。";
-  if (edge.label === "CFS value") return "対象値がCFSの機能セルへ表示されるリンクです。";
-  return `${edge.fromGroup}から${edge.toGroup}へ${edge.kind}として登録されたリンクです。`;
+  if (edge.label === "Designer#") return "Links matching Circuit Designer# and Device Assign Circuit # / Input.";
+  if (edge.label === "Designer# + DALI detail/address") return "Links an individual DALI fixture using Designer# together with Detail or Address.";
+  if (edge.label === "CFS row") return "Links a Device Assign row to its displayed CFS base row.";
+  if (edge.label === "Area Scene setting") return "Links Area Scene values to the target Circuit/HVAC/CCO.";
+  if (edge.label === "Area Scene selection") return "Links a Scene column to the Area Scene selected for each Area.";
+  if (edge.label === "Scene direct setting") return "Links values entered directly in the Scene tab to CFS.";
+  if (edge.label === "Switch scene recall") return "Links a Switch/Command Area Scene recall to values displayed in CFS.";
+  if (edge.label === "Switch value") return "Links direct Switch/Command/PIR/Contact values to targets.";
+  if (edge.label === "Backlight target") return "Links the Backlight Logic source to its target Palladiom group.";
+  if (edge.label === "Backlight Logic row") return "Links valid Backlight conditions to the displayed CFS Backlight Logic row.";
+  if (edge.label === "InspectionMode draft finish") return "Links CFS InspectionMode drafts to Area Scene / Override / Switch settings on finish.";
+  if (edge.label === "CFS value") return "Links target values to displayed CFS function cells.";
+  return `${edge.fromGroup} to ${edge.toGroup}: registered as a ${edge.kind} link.`;
 }
 
 function issueRepairHintText(issue: CfsLinkIssue): string {
   if (issue.code === "stale_hvac_target") {
-    return "HVAC行の再作成やID変更後に古いHVAC IDが残っている可能性があります。Repair Previewで置換内容を確認してください。";
+    return "An old HVAC ID may remain after recreating an HVAC row or changing its ID. Review replacements in Repair Preview.";
   }
   if (issue.code === "missing_target") {
-    return "参照先のCircuit/HVAC/CCOが現在の設定対象カタログにありません。参照元タブで対象を選び直してください。";
+    return "The referenced Circuit/HVAC/CCO is not in the current setting target catalog. Select the target again in the source tab.";
   }
   if (issue.code === "missing_area_scene" || issue.code === "missing_switch_scene") {
-    return "参照元のScene選択を開き、現在存在するArea Sceneを選択してください。";
+    return "Open the source Scene selection and select an existing Area Scene.";
   }
   if (issue.code === "missing_backlight_target") {
-    return "Backlight対象のPalladiom By Sceneグループが存在しません。Backlightタブで対象を選び直してください。";
+    return "The target Palladiom By Scene group does not exist. Select the target again in the Backlight tab.";
   }
   if (issue.code === "backlight_target_not_by_scene") {
-    return "対象グループは存在しますがBy Scene対象ではありません。CFS Backlight Logicへ出す場合はBacklightタブで対象側をBy Sceneにしてください。";
+    return "The target group exists but is not a By Scene target. Set the target to By Scene in the Backlight tab to show it in CFS Backlight Logic.";
   }
   if (issue.code === "missing_backlight_condition") {
-    return "Backlight対象はありますが条件が空です。Active/Inactive条件を設定するとCFS Backlight Logic行が生成されます。";
+    return "The Backlight target exists, but its conditions are empty. Set Active/Inactive conditions to generate a CFS Backlight Logic row.";
   }
   if (issue.code === "missing_backlight_cfs_row") {
-    return "対象と条件は有効ですがCFS行が生成されていません。Backlight行生成ロジックの確認対象です。";
+    return "The target and conditions are valid, but no CFS row was generated. Review the Backlight row generation logic.";
   }
   if (issue.code === "duplicate_switch_column") {
-    return "同じCFS列として見えるSwitch/Contactが複数あります。意図した重複か確認してください。";
+    return "Multiple Switch/Contact entries appear as the same CFS column. Check whether these duplicates are intentional.";
   }
   if (issue.code === "dali_ambiguous") {
-    return "DALIのDetailまたはAddressで個別灯を一意に判断できない可能性があります。";
+    return "DALI Detail or Address may not uniquely identify an individual fixture.";
   }
   if (issue.code === "designer_missing") {
-    return "Device AssignのCircuit/InputとCircuitタブのDesigner#が一致しているか確認してください。";
+    return "Check that Device Assign Circuit/Input matches Designer# in the Circuit tab.";
   }
-  return "内容を確認し、意図しない連動であれば参照元の設定を現在存在する対象へ更新してください。";
+  return "Review the link. If unintended, update the source settings to reference an existing target.";
 }
 
 const legacyMojibakeTextHelpers = [edgeExplanation, issueRepairHint];
@@ -982,16 +982,16 @@ export default function CfsLinkMapPanel({
               <div className="cfs-link-swimlane-intro">
                 <div>
                   <span>Dependency overview</span>
-                  <h3>タブ連動の流れ</h3>
+                  <h3>Cross-Tab Link Flow</h3>
                   <p>
-                    固定レーンで、どのタブ群がCFSへ値を渡しているかを確認できます。
-                    詳細な1件ごとの接続はCurrent Links、仕様上の全ルールはAll Rulesで確認します。
+                    Fixed lanes show which tab groups supply values to CFS.
+                    Use Current Links for individual connections and All Rules for the full rule catalog.
                   </p>
                 </div>
                 <div className="cfs-link-swimlane-legend" aria-label="Link map legend">
-                  <span><i className="cfs-link-legend-dot cfs-link-legend-ok" />正常</span>
-                  <span><i className="cfs-link-legend-dot cfs-link-legend-warning" />確認</span>
-                  <span><i className="cfs-link-legend-dot cfs-link-legend-error" />修正必要</span>
+                  <span><i className="cfs-link-legend-dot cfs-link-legend-ok" />OK</span>
+                  <span><i className="cfs-link-legend-dot cfs-link-legend-warning" />Review</span>
+                  <span><i className="cfs-link-legend-dot cfs-link-legend-error" />Needs Repair</span>
                 </div>
               </div>
               <div className="cfs-link-swimlane-intro" hidden>
@@ -1059,9 +1059,9 @@ export default function CfsLinkMapPanel({
                 <div className="cfs-link-route-board-head">
                   <div>
                     <span>Route summary</span>
-                    <h3>連動ルート別の状態</h3>
+                    <h3>Status by Link Route</h3>
                   </div>
-                  <p>カードをクリックすると、実データのリンク表またはルール一覧へ移動します。</p>
+                  <p>Select a card to open its actual-data links or rule list.</p>
                 </div>
                 <div className="cfs-link-route-grid">
                   {ruleRows.map(({ rule, count, risk, status }) => (
@@ -1403,7 +1403,7 @@ export default function CfsLinkMapPanel({
             <div className="cfs-link-detail-toolbar">
               <div>
                 <strong>Warnings and repair notes</strong>
-                <span>回収が必要か、どの参照元を確認するかを表示します。</span>
+                <span>Shows whether repair is needed and which source to check.</span>
               </div>
               {repairableStaleHvacCount > 0 && onRepairStaleHvacLinks ? (
                 <button type="button" className="btn btn-primary" onClick={onRepairStaleHvacLinks}>

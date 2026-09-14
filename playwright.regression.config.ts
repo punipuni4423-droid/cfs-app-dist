@@ -25,7 +25,7 @@ const regressionProjects: PlaywrightTestConfig["projects"] = [
   },
   {
     name: "protected-behavior",
-    testMatch: ["**/protected-behavior.spec.ts", "**/project_save_inflight.spec.ts", "**/project_delete_atomic.spec.ts", "**/project_list_safe.spec.ts", "**/p2_ui_export.spec.ts", "**/critical-auth-scope.spec.ts", "**/critical-save-reliability.spec.ts", "**/storage-quota.spec.ts", "**/project_restore_reliability.spec.ts"],
+    testMatch: ["**/protected-behavior.spec.ts", "**/project_save_inflight.spec.ts", "**/project_delete_atomic.spec.ts", "**/project_list_safe.spec.ts", "**/p2_ui_export.spec.ts", "**/critical-auth-scope.spec.ts", "**/critical-save-reliability.spec.ts", "**/storage-quota.spec.ts", "**/project_restore_reliability.spec.ts", "**/header-recovery.spec.ts", "**/import-save-recovery.spec.ts"],
     use: { ...devices["Desktop Chrome"] },
   },
   {

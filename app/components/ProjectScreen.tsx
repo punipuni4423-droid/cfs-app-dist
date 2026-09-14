@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { appendCommonRevision, commonRevisions, commonSnapshot, commonRestoreProblem } from '../lib/projectCommonHistory';
 import { checkpointProject, draftScope } from '../lib/projectDraftStore';
 import { usePendingCfsAction, type PendingCfsGuard } from "../lib/usePendingCfsAction";
@@ -76,14 +76,15 @@ import BacklightView from "./BacklightView";
 import PduView from "./PduView";
 import LutronSpecView from "./LutronSpecView";
 import CollaborationBar from "./CollaborationBar";
-import { ActionIcon } from "./ActionIconButton";
+import ActionIconButton, { ActionIcon } from "./ActionIconButton";
+import SaveRecoveryPanel, { SaveRecoveryNotice, useDisclosurePanel, type SaveRecoveryUi } from './SaveRecoveryPanel';
 import { createAppId } from '../lib/id';
 import type { CollaborationController } from "../lib/useCollaboration";
 
 const ROOM_TYPE_MANAGE_ID = "__manage__";
 const HISTORY_LIMIT = 50;
 const PROJECT_NAV_STORAGE_PREFIX = "cfs-project-navigation-v1:";
-const IDLE_AUTO_SAVE_REVISION_NOTE = "自動保存";
+const IDLE_AUTO_SAVE_REVISION_NOTE = "Automatic save";
 
 const VALID_PROJECT_TABS: readonly ProjectTab[] = ["area", "fixture", "rooms", "remarks"];
 const VALID_ROOM_SUB_TABS: readonly RoomsSubTab[] = [
@@ -290,7 +291,8 @@ function revisionDateInputToIso(value: string, fallback: string): string {
 }
 
 interface ProjectScreenProps {
-  reliabilityNotice?: ReactNode;
+  reliabilityUi: SaveRecoveryUi;
+  errorAppliesToView: boolean;
   project: ProjectData;
   saveReceipt: ProjectSaveReceipt | null;
   hasUnsavedDatabaseChanges: boolean;
@@ -318,7 +320,8 @@ interface ProjectScreenProps {
 
 export default function ProjectScreen({
   project,
-  reliabilityNotice,
+  reliabilityUi,
+  errorAppliesToView,
   saveReceipt,
   hasUnsavedDatabaseChanges,
   hasUnsavedCommonChanges = false,
@@ -335,7 +338,8 @@ export default function ProjectScreen({
   onReadOnlyAction,
 }: ProjectScreenProps) {
   useGridArrowNavigation();
-  const [showCommonHistory, setShowCommonHistory] = useState(false);
+  const recoveryPanel = useDisclosurePanel(reliabilityUi.scopeKey, 'save-recovery-panel');
+  const commonHistoryPanel = useDisclosurePanel(reliabilityUi.scopeKey, 'common-history-panel');
   const pendingCfsGuardRef = useRef<PendingCfsGuard | null>(null);
   const recoveryContextRef = useRef({ project, canEdit });
   recoveryContextRef.current = { project, canEdit };
@@ -1323,7 +1327,7 @@ export default function ProjectScreen({
       // Confirm before updateProject: Cancel must not create an Undo entry.
       // CSV replacement also uses this path; resolve aliases rather than new row IDs.
       if (affectedZones.length && !window.confirm(
-        `DALIに変更すると、次のゾーンの追加回路割当を解除します。変更しますか？\n\n${affectedZones.join("\n")}`,
+        `Changing to DALI will clear additional circuit assignments for the following zones. Continue?\n\n${affectedZones.join("\n")}`,
       )) return;
       if (!affectedZones.length) {
         updateProject(buildCandidate);
@@ -2633,36 +2637,37 @@ export default function ProjectScreen({
   const someBatchRevisionsSelected = batchRevisionSelectedCount > 0;
   const saveInProgress =
     saveStatus === "savingDraft" || saveStatus === "savingProject" || saveStatus === "savingRevision";
+  const displaySaveStatus = saveStatus === 'error' && !errorAppliesToView ? 'idle' : saveStatus;
   const draftStatusTime =
-    lastSavedAt && (saveStatus === "draftSaved" || saveStatus === "projectSaved" || saveStatus === "revisionSaved")
+    lastSavedAt && (displaySaveStatus === "draftSaved" || displaySaveStatus === "projectSaved" || displaySaveStatus === "revisionSaved")
       ? lastSavedAt
       : "";
   const draftStatusDetail =
-    saveStatus === "savingDraft"
+    displaySaveStatus === "savingDraft"
       ? "Saving local draft"
-      : saveStatus === "draftSaved"
+      : displaySaveStatus === "draftSaved"
         ? lastSavedAt
           ? `Local draft saved at ${lastSavedAt}`
           : "Local draft saved"
-        : saveStatus === "savingProject"
+        : displaySaveStatus === "savingProject"
           ? "Saving current project"
-          : saveStatus === "projectSaved"
+          : displaySaveStatus === "projectSaved"
             ? lastSavedAt
               ? `Current project saved at ${lastSavedAt}`
               : "Current project saved"
-            : saveStatus === "savingRevision"
+            : displaySaveStatus === "savingRevision"
               ? "Saving revision"
-              : saveStatus === "revisionSaved"
+              : displaySaveStatus === "revisionSaved"
                 ? lastSavedAt
                   ? `Revision saved at ${lastSavedAt}`
                   : "Revision saved"
-                : saveStatus === "error"
+                : displaySaveStatus === "error"
                   ? "Save failed"
                   : draftStatusTime
                     ? `Draft saved at ${draftStatusTime}`
                     : "Draft";
-  const draftStatusLabel = saveStatus === "error" ? "Error" : saveInProgress ? "Saving" : hasUnsavedDatabaseChanges ? "Draft" : "Saved";
-  const draftStatusTitle = saveStatus === 'error' || saveInProgress ? draftStatusDetail
+  const draftStatusLabel = displaySaveStatus === "error" ? "Error" : saveInProgress ? "Saving" : hasUnsavedDatabaseChanges ? "Draft" : "Saved";
+  const draftStatusTitle = displaySaveStatus === 'error' || saveInProgress ? draftStatusDetail
     : hasUnsavedDatabaseChanges ? 'Unshared draft changes' : draftStatusTime ? `Current project saved at ${draftStatusTime}` : 'Current project matches the saved data';
   const draftStatusAria =
     draftStatusTime ? `${draftStatusLabel} ${draftStatusTime}. ${draftStatusTitle}` : draftStatusTitle;
@@ -2676,19 +2681,17 @@ export default function ProjectScreen({
 
   return (
     <main className={`app-shell project-screen-shell${canEdit ? "" : " is-view-only"}`}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <div style={{ flex: '1 1 480px' }}>{reliabilityNotice}</div>
-        <button className="btn btn-secondary" onClick={() => setShowCommonHistory(value => !value)}>共通項目の履歴</button>
-      </div>
-      {showCommonHistory && <section className="card card-padded" aria-label="共通項目の履歴">
-        <p>Project名・設定・Remarks・Area・Fixtureの履歴です。部屋のRevとは独立しています。</p>
+      <SaveRecoveryNotice ui={reliabilityUi} onOpen={recoveryPanel.show} collapsed={isTopUiCollapsed} />
+      {recoveryPanel.open && <SaveRecoveryPanel id="save-recovery-panel" title="Save and Recovery" onClose={recoveryPanel.close}>{reliabilityUi.panel}</SaveRecoveryPanel>}
+      {commonHistoryPanel.open && <SaveRecoveryPanel id="common-history-panel" title="Common History" onClose={commonHistoryPanel.close}>
+        <p>History of the Project name, settings, Remarks, Areas, and Fixtures. Independent of room revisions.</p>
         {commonRevisions(project).map(revision => <div key={revision.id} style={{ marginBottom: 8 }}>
           <span>{revision.revision} / {revision.savedAt} / {revision.savedBy} / {revision.note} </span>
-          <details><summary>復旧する内容をプレビュー</summary><pre style={{ whiteSpace: 'pre-wrap', maxHeight: 260, overflow: 'auto' }}>{JSON.stringify({ 現在: commonSnapshot(project), 復旧先: revision.snapshot }, null, 2)}</pre></details>
+          <details><summary>Preview Restore Contents</summary><pre style={{ whiteSpace: 'pre-wrap', maxHeight: 260, overflow: 'auto' }}>{JSON.stringify({ Current: commonSnapshot(project), Restore: revision.snapshot }, null, 2)}</pre></details>
           <button className="btn btn-secondary" disabled={!canEdit} onClick={() => {
             const problem = commonRestoreProblem(project, revision.snapshot);
             if (problem) { window.alert(problem); return; }
-            const details = `共通項目 ${revision.revision} を編集へ戻します。\nProject: ${revision.snapshot.name}\nArea: ${revision.snapshot.locations.length} / Fixture: ${revision.snapshot.fixtures.length} / Remarks: ${revision.snapshot.remarks?.length ?? 0}\n部屋の値と履歴は変更しません。共有保存は別操作です。`;
+            const details = `Restore common revision ${revision.revision} to editing.\nProject: ${revision.snapshot.name}\nArea: ${revision.snapshot.locations.length} / Fixture: ${revision.snapshot.fixtures.length} / Remarks: ${revision.snapshot.remarks?.length ?? 0}\nRoom values and history will remain unchanged. Saving to shared data is a separate action.`;
             if (!window.confirm(details)) return;
             void (async () => {
               const owner = draftScope();
@@ -2698,15 +2701,15 @@ export default function ProjectScreen({
               const problem = commonRestoreProblem(current.project, revision.snapshot);
               if (problem) { window.alert(problem); return; }
               const original = canonicalJson(current.project);
-              if (!await checkpointProject(current.project, null, undefined, owner)) { window.alert('復旧前の内容を退避できませんでした。JSONをバックアップしてから再試行してください。'); return; }
-              if (owner !== draftScope() || !recoveryContextRef.current.canEdit || original !== canonicalJson(recoveryContextRef.current.project)) { window.alert('退避中に編集対象か内容が変わりました。改めて復旧内容を確認してください。'); return; }
+              if (!await checkpointProject(current.project, null, undefined, owner)) { window.alert('The contents before restore could not be stored locally. Export a JSON backup, then retry.'); return; }
+              if (owner !== draftScope() || !recoveryContextRef.current.canEdit || original !== canonicalJson(recoveryContextRef.current.project)) { window.alert('The editing target or contents changed while storing the draft. Review the restore contents again.'); return; }
               updateProject(latest => ({ ...latest, name: revision.snapshot.name,
                 settings: structuredClone(revision.snapshot.settings), remarks: structuredClone(revision.snapshot.remarks),
                 locations: structuredClone(revision.snapshot.locations), fixtures: structuredClone(revision.snapshot.fixtures) }));
             })();
-          }}>内容を確認して復旧</button>
+          }}>Review and Restore</button>
         </div>)}
-      </section>}
+      </SaveRecoveryPanel>}
       {isTopUiCollapsed ? (
         <button
           type="button"
@@ -2952,7 +2955,6 @@ export default function ProjectScreen({
                     {activeRoomType.name || "Room Type"} Revision {activeRoomType.revision || "1.00"}
                   </span>
                 ) : null}
-                {activeRoomType ? (
                   <span
                     className="muted-pill revision-save-status"
                     aria-live="polite"
@@ -2962,7 +2964,6 @@ export default function ProjectScreen({
                     <span className="revision-save-status-label">{draftStatusLabel}</span>
                     {draftStatusTime ? <span className="revision-save-status-time">{draftStatusTime}</span> : null}
                   </span>
-                ) : null}
                 <button
                   type="button"
                   className="history-button history-icon-button save-current-button"
@@ -3015,6 +3016,12 @@ export default function ProjectScreen({
                   <ActionIcon name="highlight" />
                 </button>
               </div>
+              {reliabilityUi.backup && <ActionIconButton icon="export" label="Download Backup" className="history-button history-icon-button project-recovery-icon" data-testid="project-backup-download" onClick={reliabilityUi.backup} />}
+              <ActionIconButton icon="history" label="Common History" className="history-button history-icon-button project-recovery-icon" data-testid="common-history-toggle"
+                aria-expanded={commonHistoryPanel.open} aria-controls="common-history-panel" onClick={event => commonHistoryPanel.toggle(event.currentTarget)} />
+              <ActionIconButton icon="restore" label="Save and Recovery" title={`Save and Recovery (${reliabilityUi.recoveryCount} local drafts)`}
+                className="history-button history-icon-button project-recovery-icon" data-testid="save-recovery-toggle"
+                aria-expanded={recoveryPanel.open} aria-controls="save-recovery-panel" onClick={event => recoveryPanel.toggle(event.currentTarget)} />
               <button
                 type="button"
                 className="history-button history-icon-button top-ui-collapse-button"

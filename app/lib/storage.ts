@@ -79,7 +79,7 @@ function safeSetItem(
     console.error('Failed to save CFS data to localStorage.', error);
     if (notifyOnError && typeof window !== 'undefined') {
       window.alert(
-        '端末への保存に失敗しました。以前の退避は削除していません。画面を閉じずにJSONをバックアップしてください。',
+        'Local storage failed. Previous drafts have not been deleted. Keep this screen open and export a JSON backup.',
       );
     }
     return false;
@@ -1012,11 +1012,11 @@ export function migrateProjectsPayload(payload: unknown): ProjectData[] {
  * invalid arrays/scalars for the existing migration diagnostics unchanged. */
 function projectWireObjectShape<T>(value: T, ancestors = new Set<object>()): T {
   if (!value || typeof value !== 'object') return value;
-  if (ancestors.has(value)) throw new SaveProtocolError('SAVE_PROJECT_INVALID', '保存対象に循環参照があります。元データを保持して確認してください。');
+  if (ancestors.has(value)) throw new SaveProtocolError('SAVE_PROJECT_INVALID', 'The save contains circular references. Keep the original data for review.');
   const array = Array.isArray(value);
   const prototype = Object.getPrototypeOf(value);
   if (!array && prototype !== Object.prototype && prototype !== null) {
-    throw new SaveProtocolError('SAVE_PROJECT_INVALID', '保存対象にJSON形式ではないオブジェクトがあります。元データを保持して確認してください。');
+    throw new SaveProtocolError('SAVE_PROJECT_INVALID', 'The save contains a non-JSON object. Keep the original data for review.');
   }
   ancestors.add(value);
   try {
@@ -1033,15 +1033,15 @@ export function normalizeProjectSave(project: ProjectData): ProjectData {
   const { projects, report } = migrateProjectsWithReport([projectWireObjectShape(project)]);
   const normalized = projectWireObjectShape(projects[0]);
   if (projects.length !== 1 || normalized.id !== project.id) {
-    throw new SaveProtocolError('SAVE_PROJECT_INVALID', '保存対象の構造またはIDを確認できません。元データを保持して確認してください。');
+    throw new SaveProtocolError('SAVE_PROJECT_INVALID', 'The save structure or ID could not be verified. Keep the original data for review.');
   }
   if (normalized.commonRevisions !== undefined && !validCommonHistory(normalized.commonRevisions)) {
-    throw new SaveProtocolError('COMMON_HISTORY_PROTECTED', '共通履歴が不正です。元データを保持して確認してください。');
+    throw new SaveProtocolError('COMMON_HISTORY_PROTECTED', 'Common history is invalid. Keep the original data for review.');
   }
   // Generated defaults/IDs must settle in this captured snapshot, never in a retry.
   const repeated = projectWireObjectShape(migrateProjectsWithReport([normalized]).projects[0]);
   if (canonicalJson(normalized) !== canonicalJson(repeated)) {
-    throw new SaveProtocolError('SAVE_NORMALIZATION_UNSTABLE', '保存形式の変換結果が安定しません。元データを保持して確認してください。');
+    throw new SaveProtocolError('SAVE_NORMALIZATION_UNSTABLE', 'Save format normalization is unstable. Keep the original data for review.');
   }
   if (report.issues.length) {
     publishMigrationReport(migrationReport([...(pendingMigrationReport?.issues ?? []), ...report.issues]));
@@ -1060,7 +1060,7 @@ async function projectSaveSubmission(project: ProjectData): Promise<ProjectData>
     const normalized = normalizeProjectSave(snapshot);
     if (!await matchesSaveIntent(snapshot, normalized)) {
       // Do not silently replace an already checkpointed operation/payload on retry.
-      throw new SaveProtocolError('SAVE_INTENT_NOT_NORMALIZED', '退避した保存要求の形式が一致しません。自動再送せず、保存状態と元データを確認してください。');
+      throw new SaveProtocolError('SAVE_INTENT_NOT_NORMALIZED', 'The stored save request format does not match. Do not resend automatically; check the save status and original data.');
     }
     return snapshot;
   }
@@ -1400,8 +1400,8 @@ function collaborationSaveHeaders(identity?: CollaborationSaveIdentity): Headers
 /** Only called by explicit database saves. Background local drafts never open a confirmation. */
 async function postProjectsWithConfirmation(body: Record<string, unknown>, headers: HeadersInit): Promise<Response> {
   const pending = pendingMigrationReport;
-  if (pending && !window.confirm(`${migrationMessage(pending)}\n今回読み込んだ全プロジェクトの修復・除外を確認し、保存を許可しますか？`)) {
-    throw new Error('修復・除外を含む保存をキャンセルしました。元データは保持されています。');
+  if (pending && !window.confirm(`${migrationMessage(pending)}\nHave you reviewed the repairs and exclusions for all projects loaded this time, and do you allow saving?`)) {
+    throw new Error('Saving with repairs and exclusions was cancelled. The original data is retained.');
   }
   const post = (payload: Record<string, unknown>) => finiteFetch('/api/projects', {
     method: 'POST', headers, body: JSON.stringify({ ...payload, saveProtocol: SAVE_PROTOCOL_VERSION }),
@@ -1411,8 +1411,8 @@ async function postProjectsWithConfirmation(body: Record<string, unknown>, heade
     const rejection = await response.clone().json().catch(() => ({}));
     if (rejection.code === 'MIGRATION_CONFIRMATION_REQUIRED' && typeof rejection.migrationConfirmation === 'string') {
       const report = rejection.migrationReport as MigrationReport;
-      const details = report.issues.map((issue) => `${issue.path}: ${issue.action === 'excluded' ? '除外/削除' : '修復'} ${issue.count} 件`).join('\n');
-      if (window.confirm(`${rejection.error}\n${details}\nこの変更を保存しますか？`)) {
+      const details = report.issues.map((issue) => `${issue.path}: ${issue.action === 'excluded' ? 'Excluded/deleted' : 'Repaired'} ${issue.count} items`).join('\n');
+      if (window.confirm(`${rejection.error}\n${details}\nSave these changes?`)) {
         response = await post({ ...body, migrationConfirmation: rejection.migrationConfirmation });
       }
     }
@@ -1549,7 +1549,7 @@ export async function saveProjectToDatabase(
     const record = payload && typeof payload === 'object' ? payload as { ok?: boolean; project?: ProjectData } : null;
     if (!record?.ok || !record.project || !Array.isArray(record.project.roomTypes)
       || !await matchesSaveIntent(project, record.project)) {
-      throw new SaveProtocolError('SAVE_RESPONSE_INVALID', '保存応答の内容を確認できません。保存状態を確認してください。', response.status, true);
+      throw new SaveProtocolError('SAVE_RESPONSE_INVALID', 'The save response contents could not be verified. Check Save Status.', response.status, true);
     }
     const confirmed = await confirmProjectSave(project, options.collaboration);
     acknowledgeConfirmedMigration();
@@ -1557,10 +1557,10 @@ export async function saveProjectToDatabase(
   } catch (error) {
     console.error('Failed to save project to database.', error);
     if (notifyOnError) {
-      window.alert(`${error instanceof Error ? error.message : '保存を確認できません。'}\n端末の退避状況を確認し、必要ならJSONをバックアップしてください。`);
+      window.alert(`${error instanceof Error ? error.message : 'The save could not be verified.'}\nCheck the local draft status and export a JSON backup if needed.`);
     }
     if (error instanceof TypeError || (error instanceof DOMException && error.name === 'TimeoutError')) {
-      throw new SaveProtocolError('SAVE_RESULT_UNKNOWN', '保存結果が不明です。下書きを保持して保存状態を確認してください。', undefined, true);
+      throw new SaveProtocolError('SAVE_RESULT_UNKNOWN', 'The save result is unknown. Keep your draft and check the save status.', undefined, true);
     }
     throw error;
   }
@@ -1569,11 +1569,11 @@ export async function saveProjectToDatabase(
 /** Read-only, no fallback, draft merge, migration side effects or recovery cleanup. */
 export async function confirmProjectSave(sent: ProjectData, collaboration?: CollaborationSaveIdentity): Promise<ProjectData> {
   const response = await finiteFetch('/api/projects', { cache: 'no-store', headers: collaborationSaveHeaders(collaboration) }, 15_000);
-  if (!response.ok) throw new SaveProtocolError('SAVE_CONFIRMATION_FAILED', '保存先の確認ができません。下書きは保持しています。', response.status, true);
+  if (!response.ok) throw new SaveProtocolError('SAVE_CONFIRMATION_FAILED', 'The saved data could not be verified. Your draft is retained.', response.status, true);
   const body = await response.json().catch(() => null) as { projects?: ProjectData[] } | null;
   const project = body && Array.isArray(body.projects) ? body.projects.find(item => item.id === sent.id) : undefined;
   if (!project || !Array.isArray(project.roomTypes) || !await matchesSaveIntent(sent, project)) {
-    throw new SaveProtocolError('SAVE_RESULT_UNKNOWN', '送信した内容を保存先で確認できません。自動再送せず、保存状態を確認してください。', undefined, true);
+    throw new SaveProtocolError('SAVE_RESULT_UNKNOWN', 'The submitted contents could not be verified at the destination. Do not resend automatically; check the save status.', undefined, true);
   }
   return project;
 }
@@ -1584,9 +1584,9 @@ export async function prepareProjectRestore(project: ProjectData): Promise<Proje
 }
 
 export async function confirmProjectRestore(sent: ProjectData, collaboration?: CollaborationSaveIdentity, confirmedReceipt?: ProjectData): Promise<ProjectData> {
-  if (confirmedReceipt && !await matchesSaveIntent(sent, confirmedReceipt)) throw new SaveProtocolError('RESTORE_RECEIPT_INVALID', '復旧確認の記録が一致しません。原文を保持します。');
+  if (confirmedReceipt && !await matchesSaveIntent(sent, confirmedReceipt)) throw new SaveProtocolError('RESTORE_RECEIPT_INVALID', 'The restore confirmation record does not match. The original data is retained.');
   const response = await finiteFetch('/api/projects?restoreRaw=1', { cache: 'no-store', headers: collaborationSaveHeaders(collaboration) }, 15_000);
-  if (!response.ok) throw new SaveProtocolError('RESTORE_CONFIRMATION_FAILED', '復元先を確認できません。', response.status, true);
+  if (!response.ok) throw new SaveProtocolError('RESTORE_CONFIRMATION_FAILED', 'The restore destination could not be verified.', response.status, true);
   const body = await response.json().catch(() => null) as { projects?: ProjectData[] } | null;
   const matches = Array.isArray(body?.projects) ? body.projects.filter(item => item?.id === sent.id) : [];
   const valid = matches.length === 1 && typeof matches[0].id === 'string' && typeof matches[0].name === 'string'
@@ -1594,28 +1594,50 @@ export async function confirmProjectRestore(sent: ProjectData, collaboration?: C
     && ['circuits', 'locations', 'fixtures'].every(key => Array.isArray((matches[0] as unknown as Record<string, unknown>)[key]))
     && matches[0].roomTypes.every(room => Boolean(room && typeof room === 'object' && !Array.isArray(room)));
   if (!valid || (!confirmedReceipt && !await matchesSaveIntent(sent, matches[0]))) {
-    throw new SaveProtocolError('RESTORE_RESULT_UNKNOWN', '復元先の本体を確認できません。原文と復元要求を保持します。', undefined, true);
+    throw new SaveProtocolError('RESTORE_RESULT_UNKNOWN', 'The restored project could not be verified. The original data and restore request are retained.', undefined, true);
   }
   return matches[0];
 }
 
 export async function saveProjectRestore(sent: ProjectData, collaboration?: CollaborationSaveIdentity): Promise<ProjectData> {
-  if (!sent.lastSaveOperation || sent.lastSaveOperation.fingerprint !== await projectFingerprint(sent)) throw new SaveProtocolError('RESTORE_INTENT_INVALID', '復元要求が変更されています。原文を保持します。');
+  if (!sent.lastSaveOperation || sent.lastSaveOperation.fingerprint !== await projectFingerprint(sent)) throw new SaveProtocolError('RESTORE_INTENT_INVALID', 'The restore request has changed. The original data is retained.');
   const response = await finiteFetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json', ...collaborationSaveHeaders(collaboration) },
     body: JSON.stringify({ projects: [sent], restoreProjectIds: [sent.id], expectedUpdatedAts: { [sent.id]: null }, saveProtocol: SAVE_PROTOCOL_VERSION, restoreRaw: true }) });
   if (!response.ok) { const body = await response.json().catch(() => null); throw saveError(response.status, body?.code); }
   const body = await response.json().catch(() => null) as { ok?: boolean; projects?: ProjectData[] } | null;
   const matches = Array.isArray(body?.projects) ? body.projects.filter(item => item?.id === sent.id) : [];
-  if (body?.ok !== true || matches.length !== 1 || !await matchesSaveIntent(sent, matches[0])) throw new SaveProtocolError('RESTORE_RESPONSE_INVALID', '復元の保存応答を確認できません。', response.status, true);
+  if (body?.ok !== true || matches.length !== 1 || !await matchesSaveIntent(sent, matches[0])) throw new SaveProtocolError('RESTORE_RESPONSE_INVALID', 'The restore save response could not be verified.', response.status, true);
   return confirmProjectRestore(sent, collaboration);
+}
+
+/** Explicit import recovery reload requires an authoritative response, never browser fallback. */
+export async function readImportSharedProjects(collaboration?: CollaborationSaveIdentity): Promise<ProjectData[]> {
+  const response = await finiteFetch('/api/projects', { cache: 'no-store', headers: collaborationSaveHeaders(collaboration) }, 15_000);
+  if (!response.ok) throw saveError(response.status, (await response.json().catch(() => null))?.code);
+  const payload = await response.json().catch(() => null);
+  if (!Array.isArray(payload?.projects) || !payload.projects.every((project: ProjectData) => project && typeof project.id === 'string'
+    && typeof project.name === 'string' && typeof project.updatedAt === 'string'
+    && ['roomTypes', 'circuits', 'locations', 'fixtures'].every(key => Array.isArray((project as unknown as Record<string, unknown>)[key])))) {
+    throw new SaveProtocolError('IMPORT_SHARED_RESPONSE_INVALID', 'Shared data could not be verified. Import recovery is retained.');
+  }
+  const projects: ProjectData[] = payload.migrationReport?.issues?.length && payload.projects.every(isProjectData)
+    ? payload.projects : migrateProjectsPayload(payload);
+  if (projects.length !== payload.projects.length || new Set(projects.map(project => project.id)).size !== projects.length) {
+    throw new SaveProtocolError('IMPORT_SHARED_RESPONSE_INVALID', 'Shared data could not be verified. Import recovery is retained.');
+  }
+  return projects;
 }
 
 export async function saveProjectsToDatabase(
   projects: ReadonlyArray<ProjectData>,
-  options: { notifyOnError?: boolean; collaboration?: CollaborationSaveIdentity; expectedUpdatedAts?: Record<string, string | null>; restoreProjectIds?: string[] } = {},
+  options: { notifyOnError?: boolean; collaboration?: CollaborationSaveIdentity; expectedUpdatedAts?: Record<string, string | null>; restoreProjectIds?: string[]; requirePreparedImport?: boolean } = {},
 ): Promise<ProjectData[]> {
   if (typeof window === 'undefined') return [...projects];
   const notifyOnError = options.notifyOnError ?? true;
+  if (options.requirePreparedImport && !(await Promise.all(projects.map(async project => Boolean(project.lastSaveOperation)
+    && project.lastSaveOperation!.fingerprint === await projectFingerprint(project)))).every(Boolean)) {
+    throw new SaveProtocolError('IMPORT_PREPARED_INVALID', 'The prepared import changed. No import was sent. Keep the recovery backup.');
+  }
   projects = await Promise.all(projects.map(project => projectSaveSubmission(project)));
   try {
     const response = await postProjectsWithConfirmation({ projects, expectedUpdatedAts: options.expectedUpdatedAts, restoreProjectIds: options.restoreProjectIds },
@@ -1629,14 +1651,14 @@ export async function saveProjectsToDatabase(
     if ((payload as { ok?: unknown }).ok !== true || !Array.isArray(savedProjects) || !(await Promise.all(projects.map(project => {
       const saved = savedProjects.find(item => item?.id === project.id);
       return saved ? matchesSaveIntent(project, saved) : false;
-    }))).every(Boolean)) throw new SaveProtocolError('SAVE_RESPONSE_INVALID', '保存応答の内容を確認できません。', response.status, true);
+    }))).every(Boolean)) throw new SaveProtocolError('SAVE_RESPONSE_INVALID', 'The save response contents could not be verified.', response.status, true);
     const confirmed = await Promise.all(projects.map(project => confirmProjectSave(project, options.collaboration)));
     acknowledgeConfirmedMigration();
     return confirmed;
   } catch (error) {
     console.error('Failed to save projects to database.', error);
     if (notifyOnError) {
-      window.alert(`${error instanceof Error ? error.message : '保存を確認できません。'}\n端末の退避状況を確認し、必要ならJSONをバックアップしてください。`);
+      window.alert(`${error instanceof Error ? error.message : 'The save could not be verified.'}\nCheck the local draft status and export a JSON backup if needed.`);
     }
     throw error;
   }
@@ -1680,14 +1702,14 @@ export async function deleteProjectToTrash(
 }
 
 async function readRestoreTrashSnapshot(collaboration?: CollaborationSaveIdentity, isCurrent: () => boolean = () => true) {
-  if (!isCurrent()) throw new Error('利用者が変更されました。復元結果を再確認してください。');
+  if (!isCurrent()) throw new Error('The user has changed. Verify the restore result again.');
   const response = await finiteFetch('/api/trash?restoreRaw=1', { cache: 'no-store', headers: collaborationSaveHeaders(collaboration) }, 15_000);
-  if (!response.ok) throw new SaveProtocolError('RESTORE_TRASH_READ_FAILED', 'Trash更新を確認できません。', response.status, true);
+  if (!response.ok) throw new SaveProtocolError('RESTORE_TRASH_READ_FAILED', 'The Trash update could not be verified.', response.status, true);
   const body = await response.json().catch(() => null) as { trash?: TrashData; updatedAt?: string } | null;
   if (!body || typeof body.updatedAt !== 'string' || !body.trash || !Array.isArray(body.trash.projects) || !Array.isArray(body.trash.roomTypes)) {
-    throw new SaveProtocolError('RESTORE_TRASH_RESPONSE_INVALID', 'Trash応答を確認できません。', response.status, true);
+    throw new SaveProtocolError('RESTORE_TRASH_RESPONSE_INVALID', 'The Trash response could not be verified.', response.status, true);
   }
-  if (!isCurrent()) throw new Error('利用者が変更されました。復元結果を再確認してください。');
+  if (!isCurrent()) throw new Error('The user has changed. Verify the restore result again.');
   return { trash: body.trash, updatedAt: body.updatedAt };
 }
 
@@ -1706,14 +1728,14 @@ export async function readProjectRestoreTrashItem(expected: TrashData['projects'
   isCurrent: () => boolean = () => true): Promise<TrashData['projects'][number]> {
   const token = trashDisplayTokens.get(expected);
   const { trash, updatedAt } = await readRestoreTrashSnapshot(collaboration, isCurrent);
-  if (token === undefined || token !== updatedAt) throw new SaveProtocolError('RESTORE_TRASH_CONFLICT', '表示後にTrashが変化したか、表示の保存基準が不明です。一覧を再読み込みしてください。', 409);
+  if (token === undefined || token !== updatedAt) throw new SaveProtocolError('RESTORE_TRASH_CONFLICT', 'Trash has changed since it was displayed, or its save baseline is unknown. Reload the list.', 409);
   const matches = trash.projects.filter(item => item.id === expected.id);
   // Missing legacy defaults can generate fresh IDs on each display migration.
   // Compare all original fields; generated fields absent from the raw original
   // are display-only. The raw original itself remains the exact write/CAS basis.
   const displayed = matches.length === 1 ? migrateTrashPayload({ projects: matches, roomTypes: [] }).projects[0] : undefined;
   if (matches.length !== 1 || !displayed || canonicalJson(restoredDisplayProjection(displayed, matches[0])) !== canonicalJson(restoredDisplayProjection(expected, matches[0]))) {
-    throw new SaveProtocolError('RESTORE_TRASH_CONFLICT', 'Trash原本が変更されています。削除せず保持します。', 409);
+    throw new SaveProtocolError('RESTORE_TRASH_CONFLICT', 'The original Trash item has changed. It is retained without deletion.', 409);
   }
   return matches[0];
 }
@@ -1724,16 +1746,16 @@ export async function cleanupRestoredProjectTrash(
   collaboration?: CollaborationSaveIdentity,
   isCurrent: () => boolean = () => true,
 ): Promise<TrashData> {
-  const checkOwner = () => { if (!isCurrent()) throw new Error('利用者が変更されました。復元結果を再確認してください。'); };
+  const checkOwner = () => { if (!isCurrent()) throw new Error('The user has changed. Verify the restore result again.'); };
   const headers = collaborationSaveHeaders(collaboration);
   const read = () => readRestoreTrashSnapshot(collaboration, isCurrent);
   const initial = await read();
   if (initial.trash.projects.filter(item => item.id === original.id).length > 1) {
-    throw new SaveProtocolError('RESTORE_TRASH_CONFLICT', '同じIDのTrash原本が複数あります。削除せず保持します。', 409);
+    throw new SaveProtocolError('RESTORE_TRASH_CONFLICT', 'Multiple original Trash items have the same ID. They are retained without deletion.', 409);
   }
   const existing = initial.trash.projects.find(item => item.id === original.id);
   if (existing && canonicalJson(existing) !== canonicalJson(original)) {
-    throw new SaveProtocolError('RESTORE_TRASH_CONFLICT', 'Trash原本が変更されています。削除せず保持します。', 409);
+    throw new SaveProtocolError('RESTORE_TRASH_CONFLICT', 'The original Trash item has changed. It is retained without deletion.', 409);
   }
   let confirmed = initial;
   if (existing) {
@@ -1741,14 +1763,14 @@ export async function cleanupRestoredProjectTrash(
     checkOwner();
     const response = await finiteFetch('/api/trash', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify({ saveProtocol: SAVE_PROTOCOL_VERSION, restoreCleanup: { original }, trash: next, expectedUpdatedAt: initial.updatedAt }) });
-    if (!response.ok) throw new SaveProtocolError('RESTORE_TRASH_SAVE_FAILED', 'Trash更新を確認できません。', response.status, true);
+    if (!response.ok) throw new SaveProtocolError('RESTORE_TRASH_SAVE_FAILED', 'The Trash update could not be verified.', response.status, true);
     const body = await response.json().catch(() => null) as { ok?: boolean; trash?: TrashData; updatedAt?: string } | null;
     if (body?.ok !== true || typeof body.updatedAt !== 'string' || canonicalJson(body.trash) !== canonicalJson(next)) {
-      throw new SaveProtocolError('RESTORE_TRASH_RESPONSE_INVALID', 'Trash保存応答を確認できません。', response.status, true);
+      throw new SaveProtocolError('RESTORE_TRASH_RESPONSE_INVALID', 'The Trash save response could not be verified.', response.status, true);
     }
     confirmed = await read();
     if (canonicalJson(confirmed.trash) !== canonicalJson(next)) {
-      throw new SaveProtocolError('RESTORE_TRASH_RESULT_UNKNOWN', 'Trashの保存先が変化しています。再確認してください。', undefined, true);
+      throw new SaveProtocolError('RESTORE_TRASH_RESULT_UNKNOWN', 'The saved Trash data has changed. Check again.', undefined, true);
     }
   }
   checkOwner();

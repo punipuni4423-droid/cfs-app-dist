@@ -22,7 +22,7 @@ async function readRawTrashSnapshot(): Promise<{ trash: RawTrash; updatedAt: str
 }
 
 async function cleanupRestoredTrash(request: Request, source: Record<string, unknown>): Promise<NextResponse> {
-  if (source.saveProtocol !== 2) return NextResponse.json({ code: 'SAVE_PROTOCOL_REQUIRED', error: '保存形式を更新してください。' }, { status: 409 });
+  if (source.saveProtocol !== 2) return NextResponse.json({ code: 'SAVE_PROTOCOL_REQUIRED', error: 'Update the save format.' }, { status: 409 });
   if (request.headers.get('x-cfs-project-id')?.trim() || source.projectId) return NextResponse.json({ error: 'Restore cleanup requires the workspace edit lock.' }, { status: 400 });
   const original = (source.restoreCleanup as { original?: unknown } | null)?.original;
   if (!original || typeof original !== 'object' || Array.isArray(original)
@@ -42,11 +42,11 @@ async function cleanupRestoredTrash(request: Request, source: Record<string, unk
     const next = { ...current.trash, projects: current.trash.projects.filter(item => !matches.includes(item)) };
     if (typeof source.expectedUpdatedAt !== 'string' || source.expectedUpdatedAt !== current.updatedAt
       || matches.length !== 1 || canonicalJson(matches[0]) !== canonicalJson(original)
-      || canonicalJson(next) !== canonicalJson(source.trash)) return NextResponse.json({ code: 'TRASH_CONFLICT', error: 'Trash原本が変わっています。削除せず保持します。' }, { status: 409 });
+      || canonicalJson(next) !== canonicalJson(source.trash)) return NextResponse.json({ code: 'TRASH_CONFLICT', error: 'The original Trash item has changed. It is retained without deletion.' }, { status: 409 });
     const rawProjects = await localProjectStore.readProjects();
     const projects = Array.isArray(rawProjects) ? rawProjects : (rawProjects as { projects?: unknown })?.projects;
     if (typeof target.project?.id !== 'string' || !Array.isArray(projects)
-      || projects.filter(project => project?.id === target.project!.id).length !== 1) return NextResponse.json({ code: 'PROJECT_RESTORE_REQUIRED', error: '復元済みのProjectを確認できません。Trash原本は保持します。' }, { status: 409 });
+      || projects.filter(project => project?.id === target.project!.id).length !== 1) return NextResponse.json({ code: 'PROJECT_RESTORE_REQUIRED', error: 'The restored Project could not be verified. The original Trash item is retained.' }, { status: 409 });
     const commitAccess = await requireCollaborationEditLock(request);
     if (!commitAccess.ok) return NextResponse.json({ error: commitAccess.error }, { status: commitAccess.status });
     const previous = Date.parse(current.updatedAt);
@@ -183,7 +183,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const current = await readTrashSnapshot();
   const expected = (payload as Record<string, unknown>).expectedUpdatedAt;
   if (typeof expected !== "string" || expected !== current.updatedAt) {
-    return NextResponse.json({ error: "ごみ箱が更新されています。再読み込みしてから保存してください。", code: "TRASH_CONFLICT", serverUpdatedAt: current.updatedAt }, { status: 409 });
+    return NextResponse.json({ error: "Trash has been updated. Reload before saving.", code: "TRASH_CONFLICT", serverUpdatedAt: current.updatedAt }, { status: 409 });
   }
   const scopedProjectId = request.headers.get("x-cfs-project-id")?.trim() ?? "";
   if (scopedProjectId) {

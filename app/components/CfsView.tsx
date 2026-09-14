@@ -1565,32 +1565,32 @@ export default function CfsView({
     }
 
     function issueTitle(issue: CfsLinkIssue): string {
-      if (issue.code === "stale_hvac_target") return "古いHVAC参照が残っています";
-      if (issue.code === "missing_target") return "参照先の設定対象が存在しません";
-      if (issue.code === "missing_area_scene") return "Sceneが存在しないArea Sceneを参照しています";
-      if (issue.code === "missing_switch_scene") return "Switch/Commandが存在しないSceneを参照しています";
-      if (issue.code === "missing_backlight_target") return "Backlightの参照先が見つかりません";
-      if (issue.code === "backlight_target_not_by_scene") return "Backlight対象がBy Scene/Baseになっていません";
-      if (issue.code === "missing_backlight_condition") return "Backlightの条件が未設定です";
-      if (issue.code === "missing_backlight_cfs_row") return "Backlight Logic行が生成されていません";
-      if (issue.code === "duplicate_switch_column") return "CFS上のSwitch列が重複しています";
-      if (issue.code === "dali_ambiguous") return "DALIの紐づけ判定が曖昧です";
-      if (issue.code === "designer_missing") return "Designer#の参照先が見つかりません";
+      if (issue.code === "stale_hvac_target") return "An outdated HVAC reference remains";
+      if (issue.code === "missing_target") return "The referenced setting target does not exist";
+      if (issue.code === "missing_area_scene") return "Scene references an Area Scene that does not exist";
+      if (issue.code === "missing_switch_scene") return "Switch/Command references a Scene that does not exist";
+      if (issue.code === "missing_backlight_target") return "The Backlight target was not found";
+      if (issue.code === "backlight_target_not_by_scene") return "The Backlight target is not set to By Scene/Base";
+      if (issue.code === "missing_backlight_condition") return "Backlight conditions are not set";
+      if (issue.code === "missing_backlight_cfs_row") return "The Backlight Logic row has not been generated";
+      if (issue.code === "duplicate_switch_column") return "Switch columns are duplicated in CFS";
+      if (issue.code === "dali_ambiguous") return "The DALI link is ambiguous";
+      if (issue.code === "designer_missing") return "The Designer# target was not found";
       return issue.title;
     }
 
     function actionHint(issue: CfsLinkIssue): string {
-      if (issue.code === "stale_hvac_target") return "Link MapのWarningsでRepair可能か確認し、HVAC/Area Scene/Switchの参照を現行IDへ置き換えてください。";
-      if (issue.code === "missing_area_scene" || issue.code === "missing_switch_scene") return "参照元のScene選択を開き、現在存在するArea Sceneを選び直してください。";
-      if (issue.code === "missing_target") return "参照元タブでCircuit/HVAC/CCOなどの対象を選び直してください。Circuit自体が存在するだけのIndividual Overrideはエラー扱いしません。";
-      if (issue.code === "missing_backlight_target") return "Backlightタブで対象のPalladiom Backlightグループを選び直してください。";
-      if (issue.code === "backlight_target_not_by_scene") return "対象グループは存在しますが、BacklightタブでBy Scene/Base対象になっていません。CFS Backlight Logicに出す場合は対象側をBy SceneまたはBaseにしてください。";
-      if (issue.code === "missing_backlight_condition") return "BacklightタブでActive/Inactive条件を設定してください。条件が空の場合、CFSのBacklight Logic行は出ません。";
-      if (issue.code === "missing_backlight_cfs_row") return "Backlightの対象と条件は有効です。Link Mapで行生成条件を確認し、CFS出力との不整合を調査してください。";
-      if (issue.code === "duplicate_switch_column") return "同じSwitch番号、名称、ボタン、条件の列が意図した重複か確認してください。不要ならSwitch側を整理してください。";
-      if (issue.code === "dali_ambiguous") return "Device AssignのDetailまたはAddressが、DALI個別灯のどれか一つに絞れるか確認してください。";
-      if (issue.code === "designer_missing") return "Device AssignのCircuit/InputとCircuitタブのDesigner#が一致しているか確認してください。";
-      return "赤いタブとLink MapのWarningsを確認し、参照元の設定を現在存在する対象へ更新してください。";
+      if (issue.code === "stale_hvac_target") return "Check whether Repair is available in Link Map Warnings, then replace HVAC/Area Scene/Switch references with current IDs.";
+      if (issue.code === "missing_area_scene" || issue.code === "missing_switch_scene") return "Open the source Scene selection and select an existing Area Scene again.";
+      if (issue.code === "missing_target") return "Select the Circuit/HVAC/CCO target again in the source tab. An Individual Override is not treated as an error if the Circuit itself exists.";
+      if (issue.code === "missing_backlight_target") return "Select the target Palladiom Backlight group again in the Backlight tab.";
+      if (issue.code === "backlight_target_not_by_scene") return "The target group exists but is not set to By Scene/Base in the Backlight tab. Set the target to By Scene or Base to show it in CFS Backlight Logic.";
+      if (issue.code === "missing_backlight_condition") return "Set Active/Inactive conditions in the Backlight tab. CFS does not show a Backlight Logic row when conditions are empty.";
+      if (issue.code === "missing_backlight_cfs_row") return "The Backlight target and conditions are valid. Check the row generation conditions in Link Map and investigate the mismatch with CFS output.";
+      if (issue.code === "duplicate_switch_column") return "Check whether columns with the same Switch number, name, button, and condition are intentionally duplicated. Remove unwanted duplicates in Switch.";
+      if (issue.code === "dali_ambiguous") return "Check whether Device Assign Detail or Address uniquely identifies one DALI fixture.";
+      if (issue.code === "designer_missing") return "Check that Device Assign Circuit/Input matches Designer# in the Circuit tab.";
+      return "Check the red tabs and Link Map Warnings, then update source settings to reference existing targets.";
     }
 
     return linkGraph.issues
@@ -5969,9 +5969,9 @@ export default function CfsView({
           <div className="cfs-link-issue-list-head">
             <div>
               <span className="cfs-link-issue-kicker">Link Issues</span>
-              <h3>リンク診断リスト</h3>
+              <h3>Link Diagnostics</h3>
               <p>
-                赤く表示されているタブ・セルの理由です。場所、対象、対応目安を確認してください。
+                Reasons for tabs and cells highlighted in red. Review the location, target, and suggested action.
               </p>
             </div>
             <div className="cfs-link-issue-summary-actions">
@@ -6001,15 +6001,15 @@ export default function CfsView({
                 </div>
                 <div className="cfs-link-issue-meta">
                   <div>
-                    <span>場所</span>
+                    <span>Location</span>
                     <code>{issue.group} / {issue.source}</code>
                   </div>
                   <div>
-                    <span>対象</span>
+                    <span>Target</span>
                     <code>{issue.target}</code>
                   </div>
                   <div>
-                    <span>対応目安</span>
+                    <span>Suggested Action</span>
                     <em>{issue.action}</em>
                   </div>
                 </div>

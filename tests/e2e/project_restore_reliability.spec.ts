@@ -1,4 +1,5 @@
 import { test, expect, type Page } from './support/safe-test';
+import { openSaveRecovery } from './support/save-recovery-ui';
 import { installLocalEditingMocks } from './support/secure-sharing-mock';
 import { createNewProject } from '../../app/lib/storage';
 import { readNativeDraftRecords } from './support/native-project-drafts';
@@ -63,14 +64,15 @@ test('Restore POST rejection keeps Trash and does not claim restoration before o
   await expect.poll(() => posts).toBe(1);
   await expect(card(page)).toHaveCount(0);
   await expect(trashRow(page)).toBeVisible();
-  await expect(page.getByText(/復元を確認できません/)).toBeVisible();
+  await expect(page.getByText(/The restore could not be verified/)).toBeVisible();
   expect(state.projects).toHaveLength(0);
   const records = await readNativeDraftRecords(page);
   expect(records.some(record => (record as any).intent?.restore?.trashItemId === 'restore-item')).toBe(true);
   await page.reload();
   await expect(card(page)).toHaveCount(0);
   await expect(trashRow(page)).toBeVisible();
-  await expect(page.getByRole('button', { name: '以前の復元を確認', exact: true })).toBeVisible();
+  await openSaveRecovery(page);
+  await expect(page.getByRole('button', { name: 'Check Previous Restore', exact: true })).toBeVisible();
 });
 
 test('Restore waits for strict readback, blocks duplicate start, then survives reload', async ({ page }) => {
@@ -112,11 +114,11 @@ test('Restore committed with lost reply confirms the same intent and preserves u
     return route.abort('timedout');
   });
   await page.getByRole('button', { name: 'Restore Project', exact: true }).click();
-  await expect(page.getByRole('button', { name: '復元状態を確認', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Check Restore Status', exact: true })).toBeVisible();
   await expect(card(page)).toHaveCount(0);
   const other = { id: 'other-item', deletedAt: '2026-09-10T00:00:00.000Z', project: { ...createNewProject('Other trash original'), unknownHistoricalField: { original: 'retain verbatim' } } };
   state.trash.projects.push(other);
-  await page.getByRole('button', { name: '復元状態を確認', exact: true }).click();
+  await page.getByRole('button', { name: 'Check Restore Status', exact: true }).click();
   await expect(card(page)).toBeVisible();
   await expect(trashRow(page)).toHaveCount(0);
   expect(state.trash.projects).toEqual([other]);
@@ -135,9 +137,9 @@ test('Restore distinguishes confirmed Project from failed Trash cleanup and neve
   await page.getByRole('button', { name: 'Restore Project', exact: true }).click();
   await expect(card(page)).toBeVisible();
   await expect(trashRow(page)).toBeVisible();
-  await expect(page.getByText(/本体は復旧済み.*Trash更新は未確認/)).toBeVisible();
+  await expect(page.getByText(/The project is restored.*Trash update has not been verified/)).toBeVisible();
   setTrashFailure(false);
-  await page.getByRole('button', { name: '復元状態を確認', exact: true }).click();
+  await page.getByRole('button', { name: 'Check Restore Status', exact: true }).click();
   await expect(trashRow(page)).toHaveCount(0);
   expect(posts).toBe(1);
 });
@@ -152,8 +154,8 @@ test('Restore explicit retry reuses the identical original operation and CAS req
     state.projects = body.projects; return route.fulfill({ json: { ok: true, projects: state.projects } });
   });
   await page.getByRole('button', { name: 'Restore Project', exact: true }).click();
-  await expect(page.getByRole('button', { name: '同じ復元を再送', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: '同じ復元を再送', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Retry This Restore', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Retry This Restore', exact: true }).click();
   await expect(trashRow(page)).toHaveCount(0);
   expect(attempts).toHaveLength(2); expect(attempts[1]).toEqual(attempts[0]);
 });
@@ -163,20 +165,22 @@ test('Partial restore confirmation retains later edits durably and survives norm
   setTrashFailure(true);
   await page.getByRole('button', { name: 'Restore Project', exact: true }).click();
   await expect(card(page)).toBeVisible();
-  await page.getByRole('button', { name: '後で確認', exact: true }).click();
+  await page.getByRole('button', { name: 'Check Later', exact: true }).click();
   await page.locator('button.screen-card').filter({ hasText: 'Synthetic restored project' }).click();
   await page.getByRole('tab', { name: 'Remarks', exact: true }).click();
   const body = page.getByLabel('Body for remark 1', { exact: true });
   await body.fill('later-edited-E');
-  await page.getByRole('button', { name: '以前の復元を確認', exact: true }).click();
-  await page.getByRole('button', { name: '復元状態を確認', exact: true }).click();
+  await openSaveRecovery(page);
+  await page.getByRole('button', { name: 'Check Previous Restore', exact: true }).click();
+  await page.getByRole('button', { name: 'Check Restore Status', exact: true }).click();
   await expect(body).toHaveValue('later-edited-E');
   await expect.poll(async () => (await readNativeDraftRecords(page)).some(r => !r.scope.tab.startsWith('recovery:') && r.project.remarks?.[0].body === 'later-edited-E')).toBe(true);
   await page.reload();
   if (await card(page).count()) await page.locator('button.screen-card').filter({ hasText: 'Synthetic restored project' }).click();
   await page.getByRole('tab', { name: 'Remarks', exact: true }).click();
   await expect(body).toHaveValue('saved-original');
-  await page.getByRole('button', { name: '退避を編集へ戻す', exact: true }).and(page.locator(':enabled')).click();
+  await openSaveRecovery(page);
+  await page.getByRole('button', { name: 'Restore Draft to Editing', exact: true }).and(page.locator(':enabled')).click();
   await expect(body).toHaveValue('later-edited-E');
   await page.getByRole('button', { name: 'Save current project without a new revision' }).click();
   await expect.poll(() => (state.projects[0] as any).remarks[0].body).toBe('later-edited-E');
@@ -185,12 +189,14 @@ test('Partial restore confirmation retains later edits durably and survives norm
   setTrashFailure(false);
   await page.reload();
   await page.getByRole('button', { name: 'Back to Project List', exact: true }).click();
-  await page.getByRole('button', { name: '以前の復元を確認', exact: true }).click();
-  await page.getByRole('button', { name: '復元状態を確認', exact: true }).click();
+  await openSaveRecovery(page);
+  await page.getByRole('button', { name: 'Check Previous Restore', exact: true }).click();
+  await page.getByRole('button', { name: 'Check Restore Status', exact: true }).click();
   await expect(trashRow(page)).toHaveCount(0);
   expect((state.projects[0] as any).remarks[0].body).toBe('later-edited-E');
   await page.reload();
-  await expect(page.getByRole('button', { name: '以前の復元を確認', exact: true })).toHaveCount(0);
+  await openSaveRecovery(page);
+  await expect(page.getByRole('button', { name: 'Check Previous Restore', exact: true })).toHaveCount(0);
 });
 
 test('Restore delayed completion cannot publish account A result or clear Trash after owner B registers', async ({ page }) => {
@@ -233,7 +239,8 @@ test('Restore legacy nested defaults keeps the raw wire and confirms the display
   expect(saved.roomTypes[0].deviceAssignments[0]).not.toHaveProperty('deviceGroupId');
   await page.reload();
   await expect(card(page)).toBeVisible();
-  await expect(page.getByRole('button', { name: '以前の復元を確認', exact: true })).toHaveCount(0);
+  await openSaveRecovery(page);
+  await expect(page.getByRole('button', { name: 'Check Previous Restore', exact: true })).toHaveCount(0);
 });
 
 test('Restore rejects a field deletion after the displayed Trash token without sending a Project', async ({ page }) => {
@@ -243,7 +250,7 @@ test('Restore rejects a field deletion after the displayed Trash token without s
   let posts = 0;
   await page.context().route('**/api/projects', route => { if (route.request().method() === 'POST') posts++; return route.fallback(); });
   await page.getByRole('button', { name: 'Restore Project', exact: true }).click();
-  await expect(page.getByText(/表示後にTrashが変化/)).toBeVisible();
+  await expect(page.getByText(/Trash has changed since it was displayed/)).toBeVisible();
   expect(posts).toBe(0); expect(trashPosts()).toBe(0);
   await expect(trashRow(page)).toBeVisible();
   expect(state.trash.projects[0].project).not.toHaveProperty('remarks');

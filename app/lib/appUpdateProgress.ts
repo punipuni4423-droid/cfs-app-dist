@@ -62,17 +62,17 @@ const PHASES = Object.keys(UPDATE_STEP_SECONDS);
 
 export function remainingUpdateEstimate(step: string | undefined, phaseElapsed: number, durations: Record<string, number>, connected: boolean, terminal: boolean): string {
   if (terminal) return "";
-  if (!connected) return "完了までの目安: 通信回復待ち（残り時間は算出できません）";
+  if (!connected) return "Estimated time remaining: waiting for the connection to recover (estimate unavailable)";
   const index = step ? PHASES.indexOf(step) : -1;
-  if (index < 0) return "完了までの目安: 算出待ち（更新処理の開始を確認しています）";
+  if (index < 0) return "Estimated time remaining: pending (checking whether the update has started)";
   const expected = (phase: string): number => {
     const learned = durations[phase];
     return Number.isFinite(learned) && learned >= 1 && learned <= 1800 ? learned : UPDATE_STEP_SECONDS[phase];
   };
   const current = expected(PHASES[index]);
-  if (phaseElapsed > current * 2) return "完了までの目安: 算出待ち（この処理が通常より長くかかっています）";
+  if (phaseElapsed > current * 2) return "Estimated time remaining: pending (this step is taking longer than usual)";
   const remaining = Math.max(0, current - phaseElapsed) + PHASES.slice(index + 1).reduce((sum, phase) => sum + expected(phase), 0);
   const minimum = Math.max(1, Math.ceil(remaining * 0.5 / 60));
   const maximum = Math.max(minimum + 1, Math.ceil(remaining * 2 / 60));
-  return `完了までの目安: 残り約${minimum}〜${maximum}分（PC・回線によって変わります）`;
+  return `Estimated time remaining: about ${minimum}–${maximum} min (varies by PC and connection)`;
 }

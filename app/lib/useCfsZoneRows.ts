@@ -15,6 +15,7 @@ import {
 } from "./cfsTableModel";
 import { hasMeaningfulBacklightSource, hasSwitchOperationalIdentity } from "./switchSync";
 import { PICO_CORRIDOR_ALLOCATION, corridorPicoLedTargets } from "./picoSpecials";
+import { ccoLightingCircuit, isCcoLighting } from "./ccoLighting";
 
 export interface BuildCfsZoneRowsOptions {
   roomType: RoomType;
@@ -670,6 +671,9 @@ function assignmentAddressIndex(assignment: DeviceAssignment): number | null {
 
 function uniqueCircuitsForAssignment(circuits: CircuitEntry[], assignment: DeviceAssignment): CircuitEntry[] {
   const detail = assignment.detail.trim();
+  if (isCcoLighting(assignment) && circuits[0]) {
+    return [{ ...circuits[0], detail: detail || circuits[0].detail }];
+  }
   if (detail && circuits[0]) {
     const normalizedDetail = normalizeDetailMatch(detail);
     const detailMatch = circuits.find((circuit) => normalizeDetailMatch(circuit.detail) === normalizedDetail);
@@ -710,15 +714,18 @@ export function buildCfsZoneRows({
       .map((assignment, assignmentIndex): CfsZoneRow => {
         const assigned = assignment.circuitNumber.trim();
         const assignmentValue = assigned && assigned !== "Reserved" ? assigned : "";
+        const ccoHead = isCcoLighting(assignment) ? ccoLightingCircuit(circuits, assigned) : undefined;
         const rawMatchedCircuits = assigned
-          ? circuits.filter((circuit) => circuit.designerNumber.trim() === assigned)
+          ? circuits.filter((circuit) => isCcoLighting(assignment)
+              ? ccoHead && (circuit.circuitGroupId || circuit.id) === (ccoHead.circuitGroupId || ccoHead.id)
+              : circuit.designerNumber.trim() === assigned)
           : [];
         const matchedCircuits = uniqueCircuitsForAssignment(rawMatchedCircuits, assignment);
         const unlinkedCciCco =
           assignmentValue !== "" &&
           rawMatchedCircuits.length === 0 &&
           isCciOrCcoAddress(assignment.zoneAddress);
-        const assignmentDetail = isCciOrCcoAddress(assignment.zoneAddress)
+        const assignmentDetail = isCcoLighting(assignment) ? "" : isCciOrCcoAddress(assignment.zoneAddress)
           ? ioAssignmentDetail(assignment, locations)
           : unlinkedCciCco
             ? joinDetailParts(assignmentValue, assignment.detail)
@@ -759,15 +766,17 @@ export function buildCfsZoneRows({
           additionalNumbers.length > 0 &&
           rowCircuits.length > 0 &&
           !isDaliAssignment &&
-          !isCciOrCcoAddress(assignment.zoneAddress)
+          (!isCciOrCcoAddress(assignment.zoneAddress) || isCcoLighting(assignment))
         ) {
           const seenGroupKeys = new Set(
             matchedCircuits.map((circuit) => circuit.circuitGroupId.trim() || circuit.id),
           );
           const extraEntries: CircuitEntry[] = [];
           for (const value of additionalNumbers) {
-            const head = circuits.find((circuit) => circuit.designerNumber.trim() === value);
+            const head = isCcoLighting(assignment) ? ccoLightingCircuit(circuits, value)
+              : circuits.find((circuit) => circuit.designerNumber.trim() === value);
             if (!head) continue;
+            if (isCcoLighting(assignment) && !ccoLightingCircuit(circuits, value)) continue;
             const key = head.circuitGroupId.trim() || head.id;
             if (seenGroupKeys.has(key)) continue;
             seenGroupKeys.add(key);
@@ -842,6 +851,7 @@ export function buildCfsZoneRows({
           assignmentDetail,
           inputKind,
           isIoAssignment,
+          ...(isCcoLighting(assignment) ? { ccoLighting: true } : {}),
         };
       });
 

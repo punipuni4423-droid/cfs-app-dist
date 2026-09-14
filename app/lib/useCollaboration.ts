@@ -515,7 +515,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
           lock: keepSignedIn ? current.lock : null,
           locks: keepSignedIn ? current.locks : [],
           message: keepSignedIn
-            ? "アカウントを確認できません。以前の認証と下書きを保持して閲覧モードに戻りました。再サインインしてください。"
+            ? "Your account could not be verified. Previous authentication and drafts are retained, and you are back in viewer mode. Sign in again."
             : error instanceof Error
               ? error.message
               : "Could not verify this CFS account.",
@@ -537,7 +537,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
           const user = loadStoredUser();
           if (user && getApiIdentity()) {
             const registration = await fetch('/api/collaboration/users/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user.id, displayName: user.displayName, email: user.email }) });
-            if (!registration.ok) throw new Error('利用者の接続確認に失敗しました。');
+            if (!registration.ok) throw new Error('The user connection could not be verified.');
             saveStoredUser(user);
           }
           setState((current) => ({ ...current, sharingMode: "local", authReady: true, projectId: projectIdRef.current, sessionId, user }));
@@ -751,7 +751,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
 
   const startEditing = useCallback(async (): Promise<void> => {
     const current = stateRef.current;
-    if (current.authVerificationBlocked) { setState(next => ({ ...next, message: 'アカウントの確認が必要です。再サインインしてください。' })); return; }
+    if (current.authVerificationBlocked) { setState(next => ({ ...next, message: 'Your account needs verification. Sign in again.' })); return; }
     if (current.busy || finishingRef.current) return;
     const transition = ++transitionRef.current;
     idleBlockedRef.current = false;

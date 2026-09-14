@@ -17,9 +17,9 @@ export default function MigrationNotice() {
     <aside role="alert" className="card card-padded" style={{ margin: '12px', border: '1px solid #d97706' }}>
       <p>{migrationMessage(report)}</p>
       <details>
-        <summary>修復・除外の詳細</summary>
+        <summary>Repair and Exclusion Details</summary>
         <ul>{report.issues.map((issue, index) => (
-          <li key={index}>{issue.path}: {issue.action === 'excluded' ? '除外' : '修復'} {issue.count} 件</li>
+          <li key={index}>{issue.path}: {issue.action === 'excluded' ? 'Excluded' : 'Repaired'} {issue.count} items</li>
         ))}</ul>
       </details>
     </aside>

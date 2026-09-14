@@ -49,18 +49,18 @@ export async function finiteFetch(url: string, init: RequestInit, timeout = SAVE
       return new Response(body.byteLength ? body : null, { status: response.status, statusText: response.statusText, headers: response.headers });
     })()]);
   }
-  catch { throw new SaveProtocolError('SAVE_RESULT_UNKNOWN', '保存結果を確認できません。保存状態を確認してください。', undefined, true); }
+  catch { throw new SaveProtocolError('SAVE_RESULT_UNKNOWN', 'The save result could not be verified. Check Save Status.', undefined, true); }
   finally { clearTimeout(timer); }
 }
 export function saveError(status: number, code?: string): SaveProtocolError {
   const messages: Record<number, string> = {
-    401: 'サインインの有効期限が切れました。下書きを保持して再サインインしてください。',
-    403: '保存権限を確認してください。下書きは保持しています。',
-    409: code === 'SAVE_PROTOCOL_REQUIRED' || code === 'COMMON_HISTORY_PROTECTED' ? '保存形式が古いか、共通履歴が欠落しています。アプリを更新して確認してください。' : '共有データが更新されています。最新データと下書きを確認してください。',
-    413: '保存データが容量上限を超えています。バックアップして管理者へ確認してください。',
-    423: '編集権限を失いました。下書きを保持して編集権限を再取得してください。',
+    401: 'Your sign-in has expired. Keep your draft and sign in again.',
+    403: 'Check your save permissions. Your draft is retained.',
+    409: code === 'SAVE_PROTOCOL_REQUIRED' || code === 'COMMON_HISTORY_PROTECTED' ? 'The save format is outdated or common history is missing. Update the app and check again.' : 'Shared data has changed. Review the latest data and your draft.',
+    413: 'The save exceeds the size limit. Export a backup and contact your administrator.',
+    423: 'Edit access was lost. Keep your draft and obtain edit access again.',
   };
-  return new SaveProtocolError(code ?? `SAVE_HTTP_${status}`, messages[status] ?? '保存を確認できません。接続と保存状態を確認してください。', status, status >= 500);
+  return new SaveProtocolError(code ?? `SAVE_HTTP_${status}`, messages[status] ?? 'The save could not be verified. Check the connection and save status.', status, status >= 500);
 }
 export function commonHistoryPreserved(before: ProjectData | undefined, incoming: ProjectData): boolean {
   if ((before?.commonRevisions !== undefined && !Array.isArray(before.commonRevisions)) || (incoming.commonRevisions !== undefined && !Array.isArray(incoming.commonRevisions))) return false;

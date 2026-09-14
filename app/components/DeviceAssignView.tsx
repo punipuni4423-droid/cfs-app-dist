@@ -45,6 +45,7 @@ import DragHandle from "./DragHandle";
 import AutoGrowTextarea from "./AutoGrowTextarea";
 import ResizableMatrixScroll from "./ResizableMatrixScroll";
 import { createAppId } from '../lib/id';
+import { ccoLightingCircuit, clearLightingAssignment, hasCcoLightingOwner, isCcoLighting, planCcoLightingAssignment } from '../lib/ccoLighting';
 
 interface DeviceAssignViewProps {
   assignments: DeviceAssignment[];
@@ -520,6 +521,43 @@ export default function DeviceAssignView({
   }
 
   // ---- Update ----
+  function assignCcoLighting(id: string, value: string, extraIndex?: number): void {
+    if (!canEdit) return;
+    try {
+      const plan = planCcoLightingAssignment(assignments, circuits, id, value, extraIndex);
+      if (plan.movedFrom.length && !window.confirm(
+        `Move ${value} from ${plan.movedFrom.join(", ")} to this CCO? The previous output assignment will be cleared.`,
+      )) return;
+      onChange(syncDeviceAssignmentsWithCircuits(plan.next, { circuits, devices, fixtures }));
+      removeExtraSlot(id);
+    } catch (error) { window.alert(error instanceof Error ? error.message : "Could not assign this circuit."); }
+  }
+
+  function setCcoLightingMode(row: DeviceAssignment, lighting: boolean): void {
+    if (!canEdit || isCcoLighting(row) === lighting) return;
+    if ((row.circuitNumber.trim() && row.circuitNumber !== RESERVED_VALUE) || row.detail.trim()) {
+      if (!window.confirm("Change this CCO assignment mode? Its current assignment will be cleared.")) return;
+    }
+    onChange(assignments.map((a) => {
+      if (a.id !== row.id) return a;
+      const next = clearLightingAssignment(a);
+      if (lighting) next.ccoLighting = true;
+      else delete next.ccoLighting;
+      return next;
+    }));
+    removeExtraSlot(row.id);
+  }
+
+  function ccoOwner(value: string, exceptId: string): boolean {
+    return hasCcoLightingOwner(assignments, circuits, value, exceptId);
+  }
+
+  function lightingOptions(a: DeviceAssignment): ComboboxOptionInput[] {
+    const options = circuitOptionsForDevice(a.device);
+    return isCcoLighting(a) ? options.filter((option) =>
+      Boolean(ccoLightingCircuit(circuits, typeof option === "string" ? option : option.value))) : options;
+  }
+
   function update(
     id: string,
     field: keyof Omit<DeviceAssignment, "id" | "deviceGroupId">,
@@ -528,6 +566,15 @@ export default function DeviceAssignView({
     if (!canEdit) return;
     const target = assignments.find((a) => a.id === id);
     if (!target) return;
+    if (field === "circuitNumber" && isCcoLighting(target)) {
+      if (!value.trim() || value === RESERVED_VALUE) clearCircuitAssignment(target);
+      else assignCcoLighting(id, value);
+      return;
+    }
+    if (field === "circuitNumber" && !isCciOrCcoAddress(target.zoneAddress) && ccoOwner(value, id)) {
+      window.alert("This circuit is assigned to a CCO lighting output. Clear that assignment before assigning it to this output.");
+      return;
+    }
     if (
       field === "detail" &&
       (target.circuitNumber.trim() === "" || target.circuitNumber === RESERVED_VALUE)
@@ -685,7 +732,7 @@ export default function DeviceAssignView({
   function additionalCircuitOptions(a: DeviceAssignment, currentValue: string): ComboboxOptionInput[] {
     const used = new Set([a.circuitNumber.trim(), ...additionalCircuitNumbersOf(a)]);
     used.delete(currentValue);
-    return circuitOptionsForDevice(a.device).filter((option) => {
+    return lightingOptions(a).filter((option) => {
       const value = typeof option === "string" ? option : option.value;
       return !used.has(value);
     });
@@ -719,6 +766,11 @@ export default function DeviceAssignView({
     const trimmed = value.trim();
     const assignment = assignments.find((entry) => entry.id === id);
     if (!assignment) return;
+    if (isCcoLighting(assignment) && trimmed) { assignCcoLighting(id, trimmed, index); return; }
+    if (trimmed && ccoOwner(trimmed, id)) {
+      window.alert("This circuit is assigned to a CCO lighting output. Clear that assignment first.");
+      return;
+    }
     const currentValue = index < 0 ? "" : assignment.additionalCircuitNumbers?.[index] ?? "";
     if (trimmed && !additionalCircuitOptions(assignment, currentValue).some(
       (option) => (typeof option === "string" ? option : option.value) === trimmed,
@@ -811,7 +863,7 @@ export default function DeviceAssignView({
       return newVal || value;
     };
     const converted = assignments.map((a) => {
-      if (isCcoAddress(a.zoneAddress)) return a;
+      if (isCcoAddress(a.zoneAddress) && !isCcoLighting(a)) return a;
       const newPrimary = a.circuitNumber.trim() === "" ? a.circuitNumber : convertValue(a.circuitNumber);
       // T-59: additional circuits convert together with the primary one.
       const extras = a.additionalCircuitNumbers;
@@ -1094,6 +1146,7 @@ export default function DeviceAssignView({
     const from = assignments.find((a) => a.id === fromId);
     const to = assignments.find((a) => a.id === toId);
     if (!from || !to || from.id === to.id) return;
+    if (isCcoLighting(from) || isCcoLighting(to)) return;
     if (from.deviceGroupId !== to.deviceGroupId || from.deviceGroupId === "") {
       return;
     }
@@ -1293,7 +1346,7 @@ export default function DeviceAssignView({
     const counts = new Map<string, number>();
     for (const a of tabAssigns) {
       if (isInputRow(a)) continue;
-      if (isCcoAddress(a.zoneAddress)) continue;
+      if (isCcoAddress(a.zoneAddress) && !isCcoLighting(a)) continue;
       const v = a.circuitNumber.trim();
       if (!v || v === RESERVED_VALUE) continue;
       const dedup = isDeviceDali(a.device)
@@ -1843,7 +1896,7 @@ export default function DeviceAssignView({
 
                 const circuitDup =
                   !inputRow &&
-                  !ccoRow &&
+                  (!ccoRow || isCcoLighting(a)) &&
                   ((a.circuitNumber.trim() !== "" &&
                     dupCircuit.has(a.circuitNumber.trim())) ||
                     additionalCircuitNumbersOf(a).some((value) => dupCircuit.has(value)));
@@ -1859,6 +1912,7 @@ export default function DeviceAssignView({
                 const zoneCount = uniqueZonesPerGroup.get(groupId) ?? 0;
                 const daliGroupInfo = isDali ? daliGroupBlockInfo.get(a.id) : undefined;
                 const showPairSwapHandle =
+                  !isCcoLighting(a) &&
                   groupId !== "" &&
                   !isEmpty &&
                   (isDali
@@ -2120,9 +2174,19 @@ export default function DeviceAssignView({
                             collapsed ? "cell-collapsed-muted" : "",
                             circuitDup ? "cell-duplicate" : "",
                             isReserved ? "cell-reserved" : "",
-                            revisionCellClass(a, ["circuitNumber", "area", "additionalCircuitNumbers"]),
+                            revisionCellClass(a, ["circuitNumber", "area", "additionalCircuitNumbers", "ccoLighting"]),
                           ].filter(Boolean).join(" ") || undefined}
                         >
+                          {ccoRow && !collapsed && canEditCircuit ? (
+                            <select className="cell-input" aria-label="CCO assignment mode"
+                              value={isCcoLighting(a) ? "lighting" : "contact"}
+                              onChange={(e) => setCcoLightingMode(a, e.target.value === "lighting")}
+                              disabled={!canEdit}
+                              title="Lighting: switch an external DC24V relay coil with this dry contact. The CCO does not supply power.">
+                              <option value="contact">Dry Contact</option>
+                              <option value="lighting">On/Off Lighting (external relay)</option>
+                            </select>
+                          ) : null}
                           {collapsed ? (
                             <span className="cell-readonly" />
                           ) : !canEditCircuit ? (
@@ -2153,7 +2217,7 @@ export default function DeviceAssignView({
                                 </button>
                               ) : null}
                             </div>
-                          ) : ccoRow ? (
+                          ) : ccoRow && !isCcoLighting(a) ? (
                             <div className="circuit-cell">
                               <Combobox
                                 value={isReserved ? "" : a.circuitNumber}
@@ -2234,7 +2298,7 @@ export default function DeviceAssignView({
                                   >
                                     <Combobox
                                       value={isReserved ? "" : a.circuitNumber}
-                                      options={circuitOptionsForDevice(a.device)}
+                                      options={lightingOptions(a)}
                                       onChange={(v) =>
                                         update(a.id, "circuitNumber", v)
                                       }

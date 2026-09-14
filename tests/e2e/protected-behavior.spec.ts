@@ -2651,7 +2651,7 @@ test.describe("Protected CFS behaviors", () => {
       roomTypes?: Array<{ name?: string; revisions?: Array<{ note?: string; snapshot?: unknown }> }>;
     } | undefined;
     const persistedRoomType = persistedProject?.roomTypes?.find((candidate) => candidate.name === roomName);
-    expect(persistedRoomType?.revisions?.at(-1)?.note).toBe("自動保存");
+    expect(persistedRoomType?.revisions?.at(-1)?.note).toBe("Automatic save");
     expect(JSON.stringify(persistedRoomType?.revisions?.at(-1)?.snapshot)).toContain("IDLE-AUTO");
     await expect(page.locator("section.collaboration-bar")).toContainText("View Only", { timeout: 12000 });
   });

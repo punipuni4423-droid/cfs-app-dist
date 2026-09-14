@@ -5,6 +5,7 @@ import { buildCfsZoneRows, isPalladiomBacklightTarget, normalizeBacklightConditi
 import { buildAreaAddressAssignmentMap } from "./programming";
 import { hasMeaningfulBacklightSource } from "./switchSync";
 import { additionalCircuitNumbersOf } from "./zoneCircuitMerges";
+import { ccoLightingCircuit, isCcoLighting } from "./ccoLighting";
 
 export type CfsLinkNodeGroup =
   | "Circuit"
@@ -438,16 +439,19 @@ export function buildCfsLinkageGraph(params: {
     });
     const designer = clean(assignment.circuitNumber);
     if (!designer || designer === "Reserved") continue;
-    const matches = circuitByDesigner.get(designer) ?? [];
+    const ccoHead = isCcoLighting(assignment) ? ccoLightingCircuit(circuits, designer) : undefined;
+    const matches = isCcoLighting(assignment)
+      ? ccoHead ? circuitByDesigner.get(ccoHead.designerNumber) ?? [] : []
+      : circuitByDesigner.get(designer) ?? [];
     if (matches.length === 0) {
-      if (!isCciOrCcoAddress(assignment.zoneAddress)) {
+      if (!isCciOrCcoAddress(assignment.zoneAddress) || isCcoLighting(assignment)) {
         issues.add({
           id: `missing-designer:${assignment.id}:${designer}`,
           code: "designer_missing",
           severity: "warning",
           group: "Device Assign",
-          title: "Designer# target not found",
-          detail: `Device Assign ${assignmentLabel || assignment.id} references Designer# ${designer}, but no Circuit row matches it.`,
+          title: isCcoLighting(assignment) ? "CCO On/Off circuit target not found" : "Designer# target not found",
+          detail: `Device Assign ${assignmentLabel || assignment.id} references Designer# ${designer}, but no compatible Circuit row matches it.`,
           sourceId: assignment.id,
           sourceIds: [assignment.id],
           targetId: designer,
@@ -504,7 +508,10 @@ export function buildCfsLinkageGraph(params: {
     // T-59: additional circuits assigned to the same zone ("+" button) also
     // reference this Device Assign row.
     for (const value of additionalCircuitNumbersOf(assignment)) {
-      const extraMatches = circuitByDesigner.get(value) ?? [];
+      const ccoExtraHead = isCcoLighting(assignment) ? ccoLightingCircuit(circuits, value) : undefined;
+      const extraMatches = isCcoLighting(assignment)
+        ? ccoExtraHead ? circuitByDesigner.get(ccoExtraHead.designerNumber) ?? [] : []
+        : circuitByDesigner.get(value) ?? [];
       const head = extraMatches[0];
       if (!head) {
         issues.add({

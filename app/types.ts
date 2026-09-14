@@ -209,6 +209,9 @@ export interface DeviceAssignment {
   deviceNum: string;
   zoneAddress: string;
   circuitNumber: string;
+  // Explicit opt-in: this CCO controls On/Off lighting via an external relay.
+  // Absent/false preserves the existing Dry Contact assignment semantics.
+  ccoLighting?: boolean;
   // Optional area for I/O assignments that are not linked to a lighting circuit.
   area?: string;
   detail: string;

@@ -6,6 +6,7 @@ import {
 } from "./constants";
 import { createAppId } from './id';
 import { additionalCircuitNumbersOf } from './zoneCircuitMerges';
+import { ccoLightingCircuit, isCcoLighting } from './ccoLighting';
 
 interface DeviceAssignmentSyncContext {
   circuits: readonly CircuitEntry[];
@@ -242,7 +243,7 @@ export function cleanupZoneAdditionalCircuits(
       primaryAssigned &&
       !isDeviceDaliModel(assignment.device, context.devices) &&
       !isInputAssignment(assignment, context.devices) &&
-      !isCcoAssignment(assignment);
+      (!isCcoAssignment(assignment) || isCcoLighting(assignment));
     if (!eligible) return strip();
 
     const values = (assignment.additionalCircuitNumbers ?? [])
@@ -250,8 +251,9 @@ export function cleanupZoneAdditionalCircuits(
       .filter((value) => value !== "" && value !== RESERVED_VALUE)
       .filter(
         (value) =>
-          findCircuitGroupEntries(value, assignment.device, context.circuits, context.devices)
-            .length > 0,
+          isCcoLighting(assignment)
+            ? Boolean(ccoLightingCircuit(context.circuits, value))
+            : findCircuitGroupEntries(value, assignment.device, context.circuits, context.devices).length > 0,
       );
     if (values.length === 0) return strip();
     const sameValues =
@@ -277,6 +279,17 @@ export function syncDeviceAssignmentsWithCircuits(
 
   for (const assignment of assignments) {
     if (!assignment.deviceGroupId || !assignment.circuitNumber.trim()) continue;
+    if (isCcoLighting(assignment)) {
+      const head = ccoLightingCircuit(context.circuits, assignment.circuitNumber);
+      if (head) {
+        const detail = additionalCircuitNumbersOf(assignment).length ? head.detail : assignment.detail || head.detail;
+        if (assignment.detail !== detail || assignment.area !== head.area) {
+          list = list.map((a) => a.id === assignment.id ? { ...a, detail, area: head.area } : a);
+          changed = true;
+        }
+      }
+      continue; // One CCO is one physical output, regardless of fixture row count.
+    }
     if (isInputAssignment(assignment, context.devices)) continue;
     if (isCcoAssignment(assignment)) continue;
 

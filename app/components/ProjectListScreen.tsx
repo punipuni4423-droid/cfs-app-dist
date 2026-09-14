@@ -6,6 +6,7 @@ import ActionIconButton from "./ActionIconButton";
 import AppUpdateControl from "./AppUpdateControl";
 import TabletUrlBar from "./TabletUrlBar";
 import { getApiIdentity } from "../lib/apiAccessClient";
+import SaveRecoveryPanel, { SaveRecoveryNotice, useDisclosurePanel, type SaveRecoveryUi } from './SaveRecoveryPanel';
 
 interface ProjectListScreenProps {
   projects: ProjectData[];
@@ -20,6 +21,7 @@ interface ProjectListScreenProps {
   onExportProjects: (projects: ProjectData[], filenamePrefix?: string) => void;
   onImportProjects: (file: File) => void;
   collaborationBar?: ReactNode;
+  reliabilityUi: SaveRecoveryUi;
   canEdit?: boolean;
   canCreateProject?: boolean;
   projectLocks?: CollaborationLock[];
@@ -38,11 +40,13 @@ export default function ProjectListScreen({
   onExportProjects,
   onImportProjects,
   collaborationBar,
+  reliabilityUi,
   canEdit = true,
   canCreateProject,
   projectLocks = [],
 }: ProjectListScreenProps) {
   const [newProjectName, setNewProjectName] = useState("");
+  const recoveryPanel = useDisclosurePanel(reliabilityUi.scopeKey, 'save-recovery-panel');
   const importInputRef = useRef<HTMLInputElement>(null);
   const trashCount = trash.projects.length + trash.roomTypes.length;
   const projectCreationEnabled = canCreateProject ?? canEdit;
@@ -91,6 +95,8 @@ export default function ProjectListScreen({
         <h1 className="app-title project-selection-title">CFS Project Selection</h1>
       </header>
       {collaborationBar}
+      <SaveRecoveryNotice ui={reliabilityUi} onOpen={recoveryPanel.show} />
+      {recoveryPanel.open && <SaveRecoveryPanel id="save-recovery-panel" title="Save and Recovery" onClose={recoveryPanel.close}>{reliabilityUi.panel}</SaveRecoveryPanel>}
 
       <section className="card card-padded screen-management-card fade-in">
         <div className="selector-row">
@@ -122,6 +128,9 @@ export default function ProjectListScreen({
           >
             Export All
           </button>
+          <ActionIconButton icon="restore" label="Save and Recovery" title={`Save and Recovery (${reliabilityUi.recoveryCount} local drafts)`}
+            className="btn-secondary" data-testid="save-recovery-toggle" aria-expanded={recoveryPanel.open}
+            aria-controls="save-recovery-panel" onClick={event => recoveryPanel.toggle(event.currentTarget)} />
           <input
             ref={importInputRef}
             type="file"

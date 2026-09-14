@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   try { grant = JSON.parse(text).grant; } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
   const keys = await readAuthKeys();
   let token = typeof grant === 'string' ? exchangeGrant(grant, keys) : null;
-  if (!token) return NextResponse.json({ error: '接続リンクが無効または期限切れです。ランチャーから開き直してください。' }, { status: 401 });
+  if (!token) return NextResponse.json({ error: 'The connection link is invalid or has expired. Reopen CFS using the launcher.' }, { status: 401 });
   const previous = sessionToken(request);
   const previousSession = readSession(previous, keys);
   if (previousSession && previousSession.role === readSession(token, keys)?.role) token = previous;

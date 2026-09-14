@@ -4,8 +4,8 @@ import { isSecureSharingEnabled } from './secureSharingServer';
 
 export async function requireApiAccess(request: Request, admin = false): Promise<NextResponse | null> {
   const session = readSession(sessionToken(request), await readAuthKeys());
-  if (!session) return NextResponse.json({ error: '認証が必要です。PCのランチャーまたは接続リンクから開き直してください。' }, { status: 401 });
-  if (admin && session.role !== 'admin') return NextResponse.json({ error: 'PC管理者の操作が必要です。' }, { status: 403 });
+  if (!session) return NextResponse.json({ error: 'Authentication is required. Reopen CFS using the PC launcher or connection link.' }, { status: 401 });
+  if (admin && session.role !== 'admin') return NextResponse.json({ error: 'This action requires the PC administrator.' }, { status: 403 });
   const url = new URL(request.url);
   const identities: Record<string, unknown>[] = [{ userId: request.headers.get('x-cfs-user-id'), sessionId: request.headers.get('x-cfs-session-id') }];
   if (url.pathname.startsWith('/api/collaboration/')) {

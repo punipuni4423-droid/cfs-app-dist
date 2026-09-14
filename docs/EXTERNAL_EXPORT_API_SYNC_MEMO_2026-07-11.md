@@ -115,3 +115,11 @@ For future CFS changes that touch data, API, or export behavior, include this li
 - Projects API: POST /api/projects/renameはprojectId・name・expectedUpdatedAtで対象IDのみ改名。POST /api/projectsの一覧保存はexpectedUpdatedAts（既存IDは取得時token、新規/復元は明示null）を必須とし、送信外IDは保持。確定後の更新tokenを応答する。削除はT-115専用APIのみ。
 - Edge: project.rename / projects.mergeを追加、旧projects.saveとsave_cfs_project_set RPCを拒否。SQL migration→Edge→appの適用順。新Edge未適用時は新appの改名/一覧保存は失敗し、旧RPCへのfallbackなし。
 - XC API list / LD API list / Project・Share JSON / Excel / storage v14: データ形式は不変。外部クライアントが一覧書込みを利用する場合だけ新CAS契約への対応が必要。
+
+## 2026-09-14 CCO照明割付（実装・検証中、未配布）
+
+- Project/Share JSON: DeviceAssignmentへ任意の`ccoLighting: true`を追加。欠落・falseは従来のDry Contact。既存`circuitNumber`と`additionalCircuitNumbers`/`zoneDetail`を再使用し、Circuit IDや設定値を移設時に作り直さない。旧schemaのJSON読込・コピーで任意フィールドが保持されることを合成データで確認。
+- CFS/XCの照明設定対象は既存Circuit IDを使用。照明CCOに`cco:{assignmentId}`を重ねて生成しない。従来の接点CCO/CCI targetとInspectionの書戻し契約は維持。XC実クライアントの動作確認は未実施。
+- LD/Lutron spec: 新しい照明CCOだけ`kind: lighting`、物理Zone/AddressはCCOのまま、On/Off・回路番号・照明名・束ねた回路IDを出力する。旧Dry Contactは`kind: input`を維持。LD側の実物理CCO割付対応は未検証で、通常Zn出力への自動置換をしてはならない。
+- CFS Excel: 現在表示と同じモデルからCCOの照明名、On/Off、回路番号、合計VAを出力する。別の積算Excel様式やリレーマスターは導入しない。
+- リレーは外部機器。CCOが外部DC24Vのコイル回路を接点開閉し、外部リレーがAC負荷を開閉する。CCO自体をDC電源として扱わない。1/3/15Aの自動選定・登録は追加しない。

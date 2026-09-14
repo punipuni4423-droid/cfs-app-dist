@@ -138,7 +138,7 @@ function runStepLabel(status: AppUpdateStatus | null, updateSessionActive: boole
   if (status?.state === "checking_failed" && updateSessionActive) {
     // The server is intentionally offline during install/build/restart. Show
     // the last known real step instead of pretending we are at the end.
-    const base = step ? STEP_LABELS[step] ?? step : "更新状態の確認待ち";
+    const base = step ? STEP_LABELS[step] ?? step : "Waiting for update status";
     return `${base} (reconnecting)`;
   }
   if (!step) return updateSessionActive ? "Starting update" : "Checking update";
@@ -161,7 +161,7 @@ function overlayTitle(status: AppUpdateStatus | null): string {
 
 function overlayMessage(status: AppUpdateStatus | null, updateSessionActive: boolean): string {
   if (status?.state === "checking_failed" && updateSessionActive) {
-    return status.message || "更新状態を確認できません。最後に確認できた進捗を表示しています。";
+    return status.message || "Update status could not be verified. Showing the last verified progress.";
   }
   if (status?.lastRun?.message) return status.lastRun.message;
   return "Please do not edit, import, export, or save while the update is running.";
@@ -214,7 +214,7 @@ export default function AppUpdateControl() {
   const runState = status?.lastRun?.state;
   const terminal = runState === "completed" || runState === "failed";
   const elapsedSeconds = Math.max(0, (Date.now() - sessionStartedAtRef.current) / 1000);
-  const elapsedText = `経過時間: ${formatElapsed(elapsedSeconds)}`;
+  const elapsedText = `Elapsed: ${formatElapsed(elapsedSeconds)}`;
   const currentStep = status?.lastRun?.currentStep;
   const awaitingStart = !currentStep || ["queued", "launch", "start"].includes(currentStep);
   const estimateText = remainingUpdateEstimate(currentStep, Math.max(0, (Date.now() - stepTimingRef.current.startedAt) / 1000), loadLearnedDurations(), status?.state !== "checking_failed", terminal);
@@ -268,11 +268,11 @@ export default function AppUpdateControl() {
         enabled: true,
         state: "checking_failed",
         message: error instanceof Error && error.message === "access-required"
-          ? "更新状態の確認に認証が必要です。LAUNCH_CFS_APP.cmd から画面を開き直してください。更新の再実行はしないでください。"
+          ? "Authentication is required to check update status. Reopen the screen using LAUNCH_CFS_APP.cmd. Do not run the update again."
           : error instanceof Error && error.message === "previous-run"
-            ? "今回の更新処理の開始をまだ確認できません。前回の更新結果で完了とは判断せず、状態確認を続けます。"
+            ? "The start of this update has not been confirmed. The previous update result does not confirm completion. Status checks will continue."
           : updateSessionActiveRef.current
-            ? "通信回復待ちです。最後に確認できた進捗を表示しています。更新処理が始まったか・どの段階かはまだ確認できません。"
+            ? "Waiting for the connection to recover. Showing the last verified progress. The start and current step of this update have not been confirmed."
             : "Could not contact the update API.",
         ahead: 0,
         behind: 0,
@@ -439,7 +439,7 @@ export default function AppUpdateControl() {
     } catch {
       // The POST may have reached the server. Keep the session guarded and
       // only poll GET status; clearing it would permit a duplicate worker.
-      window.alert("更新開始の応答を確認できません。状態確認を続けます。更新ボタンを再実行しないでください。");
+      window.alert("The update start response could not be verified. Status checks will continue. Do not run the update again.");
       await refreshStatus();
     } finally {
       setBusy(false);
@@ -480,7 +480,7 @@ export default function AppUpdateControl() {
             <p className="app-update-progress-elapsed">{elapsedText}</p>
             {estimateText ? <p className="app-update-progress-elapsed">{estimateText}</p> : null}
             {!terminal && awaitingStart && status?.state !== "checking_failed" ? (
-              <p className="app-update-overlay-note">開始確認待ち: 更新ワーカーが処理を開始したという応答を待っています。</p>
+              <p className="app-update-overlay-note">Waiting for start confirmation: waiting for the update worker to acknowledge that processing has started.</p>
             ) : null}
             <div
               className="app-update-progress-track"
@@ -497,8 +497,8 @@ export default function AppUpdateControl() {
             ) : null}
             {startDiagnostic || (stalled && status?.state === "checking_failed") ? (
               <p className="app-update-overlay-note">
-                状態確認が長引いています。artifacts\self-update\status.json と最新の update-*.log を配布担当者へ渡してください。
-                更新中か確認できるまで再更新や上書き展開はしないでください。この画面は状態確認だけを続けます。
+                Status checks are taking longer than expected. Send artifacts\self-update\status.json and the latest update-*.log to your app distributor.
+                Do not run another update or overwrite the installation until the update state is verified. This screen will only continue checking status.
               </p>
             ) : null}
             {status?.lastRun?.state === "failed" ? (

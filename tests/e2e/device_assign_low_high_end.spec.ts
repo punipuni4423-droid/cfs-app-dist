@@ -13,6 +13,7 @@
  * データ保護: installLocalEditingMocks で /api/projects を全モック。
  */
 import { expect, test, type Page } from "./support/safe-test";
+import { openSaveRecovery } from './support/save-recovery-ui';
 import { createDefaultLocations, createNewRoomType } from "../../app/lib/constants";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 import { readNativeDraftProject } from './support/native-project-drafts';
@@ -206,7 +207,8 @@ test.describe("T-32 Device Assign Low/High End 列", () => {
     await expect(zn1AfterReload.locator('input[aria-label="Low End"]')).toHaveValue("5");
     await expect(zn1AfterReload.locator('input[aria-label="High End"]')).toHaveValue("90");
     page.once('dialog', dialog => dialog.accept());
-    await page.getByRole('button', { name: '退避を編集へ戻す', exact: true }).click();
+    await openSaveRecovery(page);
+    await page.getByRole('button', { name: 'Restore Draft to Editing', exact: true }).click();
     await expect(zn1AfterReload.locator('input[aria-label="Low End"]')).toHaveValue("25");
     // High End は上書きしていないのでマスター初期値のまま
     await expect(zn1AfterReload.locator('input[aria-label="High End"]')).toHaveValue("90");

@@ -1,5 +1,6 @@
 import type { DeviceAssignment, ProjectData, RoomType } from "../types";
 import { RESERVED_VALUE } from "./constants";
+import { isCcoLighting } from "./ccoLighting";
 
 export type SuggestionOption = string | {
   value: string;
@@ -112,7 +113,7 @@ export function buildProjectCircuitSuggestions(project: ProjectData): ProjectCir
       addDryContact(project, dryContactBucket, roomType, dryContact.area, dryContact.circuit, dryContact.detail);
     }
     for (const assignment of roomType.deviceAssignments) {
-      if (!isCcoAssignment(assignment)) continue;
+      if (!isCcoAssignment(assignment) || isCcoLighting(assignment)) continue;
       addDryContact(
         project,
         dryContactBucket,

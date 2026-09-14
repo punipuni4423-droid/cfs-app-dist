@@ -169,8 +169,8 @@ export default function CollaborationBar({ collaboration, compact = false, proje
             <span className="collaboration-primary" title={primaryText}>{compact ? compactPrimaryText : primaryText}</span>
             {!compact ? <span className="collaboration-meta">Last saved: {lastUpdatedText}</span> : null}
             {hasRemoteProjectUpdate ? (
-              <span className="collaboration-refresh-notice" role="status" title="他のユーザーが保存しました。Editで最新に更新されます。">
-                他のユーザーが保存しました。Editで最新に更新されます。
+              <span className="collaboration-refresh-notice" role="status" title="Another user saved changes. Select Edit to load the latest data.">
+                Another user saved changes. Select Edit to load the latest data.
               </span>
             ) : null}
             {collaboration.message ? <span className="collaboration-message" title={collaboration.message}>{compact ? compactMessage(collaboration.message) : collaboration.message}</span> : null}

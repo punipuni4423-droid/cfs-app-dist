@@ -4,6 +4,7 @@ import { circuitGroupMembers, uniqueCircuitGroupHeads } from "./circuitGroups";
 import { OTHER_AREA_ID } from "./cfsTableModel";
 import { isOnOffLikeDimmingType } from "./settingValues";
 import { applyZoneMergesToSettingTargets, buildZoneCircuitMerges } from "./zoneCircuitMerges";
+import { isCcoLighting } from "./ccoLighting";
 
 export const HVAC_METRICS = ["On/Off", "Setpoint", "Fan Mode", "Drift"] as const;
 
@@ -92,6 +93,7 @@ export function ccoSettingTargets(
 ): SettingTarget[] {
   return deviceAssignments
     .filter((assignment) => /^CCO/i.test(assignment.zoneAddress.trim()))
+    .filter((assignment) => !isCcoLighting(assignment))
     .filter((assignment) => {
       const value = assignment.circuitNumber.trim();
       const detail = assignment.detail.trim();

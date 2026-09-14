@@ -711,7 +711,7 @@ export default function SwitchView({
       const checkedCount = groupRows.filter((sw) => (sw.id === row.id ? true : sw.isPriorityFunction === true)).length;
       if (groupRows.length > 1 && checkedCount >= groupRows.length) {
         window.alert(
-          "同じボタン内では、少なくとも1つのFunctionを未チェックのままにしてください。すべてのFunctionをPriorityにすることはできません。",
+          "Leave at least one Function unchecked within the same button. Not all Functions can be set to Priority.",
         );
         return;
       }

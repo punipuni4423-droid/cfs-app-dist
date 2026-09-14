@@ -71,6 +71,7 @@ export interface CfsZoneRow {
   assignmentDetail?: string;
   inputKind?: string;
   isIoAssignment?: boolean;
+  ccoLighting?: boolean;
 }
 
 export interface FunctionColumn {
