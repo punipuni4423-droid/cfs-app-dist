@@ -23,10 +23,12 @@ import type {
 import { createEmptyRoomScene, normalizeBacklightLevels } from "../lib/constants";
 import { ensureRoomScenes, isPmsScene, sortRoomScenesByGroup } from "../lib/roomScenes";
 import { normalizeRoomSceneSettingLinksAfterCommit } from "../lib/roomSceneSettingLinks";
+import { byScenePalladiomBacklightTargets, switchGroupId } from "../lib/useCfsZoneRows";
 import { useDragReorder } from "../lib/useDragReorder";
 import ActionIconButton from "./ActionIconButton";
 import DragHandle from "./DragHandle";
 import AutoGrowTextarea from "./AutoGrowTextarea";
+import BacklightConditionSelect from "./BacklightConditionSelect";
 import Combobox from "./Combobox";
 import { buildSettingTargetGroups, hvacSettingTargets as buildHvacSettingTargets, settingTargetIds, type SettingTarget } from "../lib/settingTargets";
 import {
@@ -62,7 +64,6 @@ interface RoomSceneViewProps {
 }
 
 const PHASES: RoomScenePhase[] = ["Check In", "Check Out"];
-const BY_SCENE_VALUE = "__byScene";
 const ON_OFF_QUICK_VALUES = ["On", "Off", "Blinking (Short)", "Blinking (Long)", "0.5 sec", "Uneffected"];
 const PERCENT_QUICK_VALUES = ["Raise", "Lower", "Uneffected"];
 function settingValue(scene: RoomScene, circuitId: string): string {
@@ -124,7 +125,6 @@ export default function RoomSceneView({
   triggerMasters = [],
   locations,
   onChange,
-  onSwitchesChange,
   revisionChanges = {},
   canEdit = true,
 }: RoomSceneViewProps) {
@@ -185,43 +185,13 @@ export default function RoomSceneView({
     () => buildHvacSettingTargets(hvacAssignments, locations),
     [hvacAssignments, locations],
   );
-  const palladiomSwitches = useMemo(
-    () => {
-      const groups = new Map<string, SwitchEntry>();
-      for (const sw of switches) {
-        if (sw.kind !== "lutronPd") continue;
-        const groupId = switchGroupId(sw);
-        const current = groups.get(groupId);
-        if (!current) {
-          groups.set(groupId, sw);
-        }
-      }
-      return Array.from(groups.values());
-    },
+  const byScenePalladiomSwitches = useMemo(
+    () => byScenePalladiomBacklightTargets(switches),
     [switches],
   );
   const backlightConditions = useMemo(() => {
     return normalizeBacklightLevels(backlightLevels).map(({ key, name }) => ({ key, name }));
   }, [backlightLevels]);
-
-  function switchGroupId(sw: SwitchEntry): string {
-    return sw.switchGroupId || sw.id;
-  }
-
-  function updatePalladiomByScene(groupId: string, checked: boolean): void {
-    if (!canEdit || !onSwitchesChange) return;
-    // Assignment "" = By Scene. Unchecking pins the group to the first
-    // backlight level (a concrete fixed assignment, adjustable on the
-    // Backlight tab) instead of leaving an ambiguous empty value.
-    const fallbackLevel = backlightConditions[0]?.key ?? "";
-    onSwitchesChange(
-      switches.map((sw) =>
-        switchGroupId(sw) === groupId
-          ? { ...sw, backlightAssignment: checked ? "" : fallbackLevel }
-          : sw,
-      ),
-    );
-  }
 
   function update(id: string, patch: Partial<RoomScene>): void {
     commitRoomScenes(effectiveRoomScenes.map((scene) => (scene.id === id ? { ...scene, ...patch } : scene)));
@@ -721,60 +691,38 @@ export default function RoomSceneView({
   }
 
   function renderBacklightPanel(scene: RoomScene): ReactNode {
-    // Same layout as the Switch tab's Backlight panel: Target first, then
-    // Condition, with the clear actions shown only when a value is set.
+    // The scene has one condition for all By Scene targets. Assignment is
+    // edited on the Backlight tab, so this list is intentionally read-only.
     return (
       <div className="scene-card switch-setting-card">
         <div className="switch-setting-layout switch-backlight-setting-layout">
           <div className="switch-setting-section">
             <div className="switch-setting-title">Target</div>
-            <div className="switch-target-list">
-              {palladiomSwitches.length === 0 ? (
-                <span className="cell-readonly">No Palladiom switches are registered.</span>
+            <div className="switch-target-list" role="list" aria-label="By Scene Palladiom switches">
+              {byScenePalladiomSwitches.length === 0 ? (
+                <span className="cell-readonly">No By Scene Palladiom switches. Set By Scene on the Backlight tab.</span>
               ) : (
-                palladiomSwitches.map((sw) => {
-                  const groupId = switchGroupId(sw);
-                  return (
-                    <label className="switch-target-option" key={groupId}>
-                      <input
-                        type="checkbox"
-                        checked={sw.backlightAssignment.trim() === ""}
-                        onChange={(event) => updatePalladiomByScene(groupId, event.target.checked)}
-                        disabled={!canEdit || !onSwitchesChange}
-                      />
-                      <span>{[sw.switchNumber, sw.switchName].filter(Boolean).join(" - ") || "(No switch #)"}</span>
-                    </label>
-                  );
-                })
+                byScenePalladiomSwitches.map((sw) => (
+                  <div className="switch-target-option" role="listitem" key={switchGroupId(sw)}>
+                    <span>{[sw.switchNumber, sw.switchName].filter(Boolean).join(" - ") || "(No switch #)"}</span>
+                  </div>
+                ))
               )}
             </div>
+            {byScenePalladiomSwitches.length > 0 ? (
+              <div className="cell-readonly" style={{ marginTop: "0.5rem" }}>
+                Change By Scene assignments on the Backlight tab.
+              </div>
+            ) : null}
           </div>
           <div className="switch-setting-section">
             <div className="switch-setting-title">Condition</div>
-            <select
-              className="cell-input"
+            <BacklightConditionSelect
               value={scene.backlightCondition}
-              onChange={(event) => update(scene.id, { backlightCondition: event.target.value })}
+              conditions={backlightConditions}
+              onChange={(value) => update(scene.id, { backlightCondition: value })}
               disabled={!canEdit}
-            >
-              <option value="" disabled>Uneffected</option>
-              {backlightConditions.map((condition) => (
-                <option key={condition.key} value={condition.key}>
-                  {condition.name}
-                </option>
-              ))}
-            </select>
-            {scene.backlightCondition.trim() ? (
-              <button
-                type="button"
-                className="btn-clear-circuit"
-                style={{ marginTop: "0.5rem" }}
-                onClick={() => update(scene.id, { backlightCondition: "" })}
-                disabled={!canEdit}
-              >
-                Uneffected
-              </button>
-            ) : null}
+            />
           </div>
         </div>
       </div>

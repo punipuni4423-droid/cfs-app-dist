@@ -66,6 +66,7 @@ Device Assignの追加回路は機器に適合する候補から選びます。�
 - Link MapのCurrent Linksは現在のプロジェクトデータから実際に成立しているリンク、All Rulesはデータ有無に関係なくCFSで守るべき連動ルールを表示します。Overviewでは固定レーン型のDependency mapで、タブ群ごとの役割、代表ノード、連動ルートの件数、警告状態を確認します。
 - Link Mapで警告やエラーが出た場合、WarningsでIssue内容とRepair hintを確認します。通常のCFSタブやサブタブにはリンク未接続の赤い警告表示を出さず、必要時だけLink Mapで診断します。意図したアップデートによる差分でない場合は、Scene / Switch / Device Assign / HVACの参照元を確認してから修正します。
 - Backlight Logicの対象側はBy SceneまたはBaseを有効な対象として扱います。Palladiom Backlight Assignmentは未設定時にBy Sceneを既定として扱い、Uneffectedは選択肢に出しません。By Sceneは対象指定用の状態であり、CFSには表示値として出さず、BaseやMaster Onなど実際のBacklight Scene名だけを表示します。Switch番号、名称、CCI割当、Functionなどが空の未入力行はBacklight警告対象にしません。
+- SceneのBacklight Targetは、通常設定・一括適用ともSwitch/Commandと同じBy SceneのPalladiomだけを表示する確認用一覧です。Sceneから割当は変更せず、By Sceneへの切替はBacklightタブで行います。SceneではシーンごとのBacklight Conditionを設定します。CFSのBacklight Logic行でBaseも対象にする既存基準は変えません。
 - 各タブのCopy/Deleteは、文字ボタンではなくアイコンボタンを基本とします。誤操作を避けるため、ホバー説明とアクセシビリティラベルは残します。
 - Switch / CCI / Palladiom / Pico / PIRでは、Function行だけを消す操作とスイッチ全体を消す操作を列で分けます。Row列のマイナスは該当Function行の削除、Switch列のゴミ箱はスイッチ/CCI/Palladiom/Pico/PIR全体の削除、コピーはCopy Switchです。Switch列はスイッチ単位で行結合して中央配置します。最後の1行は行削除ではなく全体削除で扱います。
 - Switchで同一ボタンに複数Functionを持たせる場合、Priorityは任意選択です。同一ボタン内で複数選択できますが、少なくとも1つのFunctionは未チェックのままにします。選択したFunctionはCFSのTrigger Conditionセルが自動でハイライトされます。このハイライトはCFSのHighlightsメニュー項目ではありません。
@@ -86,6 +87,7 @@ Device Assignの追加回路は機器に適合する候補から選びます。�
 ## 2026-09-10 操作と出力名
 
 - Device Assign の機器追加後は Reserved 行も表示します。Hide Reserved で表示が0件になった場合は、未登録と区別してフィルタ解除を案内します。通常のタブ移動では表示設定を保持します。
+- CFS の Hide Reserved は、CCO/CCI の割当とDetailが空ならAreaだけが設定されていても非表示にします。Detailに場所名だけ、操作名、非照明用途が入力された行は表示を保ちます。画面のReserved灰色とExcel出力も同じ判定です。Device Assign側の割当基準は変更しません。
 - Select Device は最初の機器へフォーカスし、Tab／Shift+Tab はダイアログ内を循環します。Escape、Cancel、背景クリック、選択後は追加ボタンへ戻ります。
 - Remarks 等の複数行セルは通常の矢印、Home／End、PageUp／PageDown を文章編集に使います。セル間は Ctrl+矢印で移動します。単一行入力、選択欄、チェック欄の操作は従来どおりです。
 - View 権限では Remarks の入力欄は読み取り専用、追加・削除・複製・表変更・並べ替えは無効です。Preview と Excel Export は使用できます。

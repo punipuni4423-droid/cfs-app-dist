@@ -251,7 +251,7 @@
         <thead><tr><th>No</th><th>名称</th><th>機能</th><th>注意点</th></tr></thead>
         <tbody>
           <tr><td>1</td><td>CFS Project Selection</td><td>プロジェクト一覧画面のタイトルです。</td><td>ログイン直後にプロジェクトがない場合は、権限またはログイン状態を確認します。</td></tr>
-          <tr><td>2</td><td>Check Update / Tablet URL</td><td>Git管理版の更新確認、タブレットや別端末から開くURL表示、URLコピーを行います。</td><td>Git管理Zipでは同梱PortableGitを使って更新確認できます。通常ZipはGit情報を持たないため更新対象外です。</td></tr>
+          <tr><td>2</td><td>Check Update / Tablet URL</td><td>Git管理版の更新確認、タブレットや別端末から開くURL表示、URLコピーを行います。同じ列の「App」バッジは稼働中ビルドの版(build-info の Git SHA 先頭12桁)で、コピーボタンで全文を控えられます。版情報が無い場合は「Version unknown」と表示します。</td><td>Git管理Zipでは同梱PortableGitを使って更新確認できます。通常ZipはGit情報を持たないため更新対象外です。</td></tr>
           <tr><td>3</td><td>編集ステータス</td><td>現在のユーザー、編集権限、ロック状態、Finish Editingを確認します。</td><td>Editできない場合は他ユーザーのロック、権限、ログイン状態を確認します。</td></tr>
           <tr><td>4</td><td>New project name</td><td>新規プロジェクト名を入力します。</td><td>Database版では権限がないと作成/編集できません。</td></tr>
           <tr><td>5</td><td>Create Project / Import Data / Export All</td><td>新規作成、JSONインポート、全プロジェクトエクスポートを行います。</td><td>インポート時は既存IDとの重複に注意します。</td></tr>
@@ -282,7 +282,7 @@
         <tbody>
           <tr><td>1</td><td>View Only / Editing / Edit / Finish</td><td>表示専用と編集状態を切り替えます。Database版では編集ロックを取得してから編集します。</td><td>複数人運用では、作業後にFinishしてロックを解放します。</td></tr>
           <tr><td>2</td><td>Undo / Redo</td><td>現在の編集セッション内の変更を戻す、やり直す操作です。</td><td>保存済みRevisionを戻す操作ではありません。</td></tr>
-          <tr><td>3</td><td>Revision表示 / Draft表示</td><td>選択RoomTypeの現在RevisionとDraft保存状態を表示します。</td><td>RevisionはRoomType単位で履歴管理されます。</td></tr>
+          <tr><td>3</td><td>Revision表示 / Draft表示</td><td>選択RoomTypeの現在RevisionとDraft保存状態を表示します。</td><td>RevisionはRoomType単位で履歴管理されます。ツールバー右端の「App」バッジはアプリ本体の版(稼働ビルド)で、RoomTypeのRevisionとは別のものです。</td></tr>
           <tr><td>4</td><td>Save Revision / Revision Management / Highlight Updates</td><td>Revision保存、履歴確認、差分ハイライト切替を行います。</td><td>Save Revisionは全RoomType一括保存ダイアログで対象を選択できます。Revision Management の各行はメモ欄と自動検出差分を並べて表示し、差分はタブ単位・セル単位（項目 / Before / After）で確認できます。比較元 Revision の変更、変更種別の絞り込み、Copy / CSV 出力に対応します。</td></tr>
           <tr><td>5</td><td>右上アイコン</td><td>表示補助メニューとアプリ設定を開きます。</td><td>歯車はアプリ設定、三本線は補助メニューです。</td></tr>
           <tr><td>6</td><td>Back to Project List</td><td>プロジェクト一覧へ戻ります。</td><td>未保存の編集がある場合は先にRevision保存を検討します。</td></tr>
@@ -448,7 +448,7 @@
         <tbody>
           <tr><td>Scene</td><td>From PMS Scene</td><td>From PMS、Check-in/Check-out、PMS VAR: EnableのようなPMS連動列を登録します。</td></tr>
           <tr><td>Scene</td><td>Door Magnet Scene</td><td>ドアマグネットなどを起点にしたWelcome Sceneなどを登録します。</td></tr>
-          <tr><td>Scene</td><td>Setting / Backlight Setting</td><td>Sceneの照明値、Area Scene参照、Backlight条件を設定します。</td></tr>
+          <tr><td>Scene</td><td>Setting / Backlight Setting</td><td>Sceneの照明値、Area Scene参照、Backlight条件を設定します。BacklightのTargetは、通常設定・一括適用ともBy SceneのPalladiomだけを表示する確認用一覧です。割当変更はBacklightタブで行います。CFSのBacklight Logic行は別基準でBy SceneまたはBaseを対象とします。</td></tr>
           <tr><td>Switch</td><td>Palladiom / CCI / Pico / PIR / QSM</td><td>スイッチ種別を切り替えます。CCIは動作の起点であり、CFSのBase列には通常表示しません。</td></tr>
           <tr><td>Switch</td><td>Switch # / Name / Button / Trigger Condition</td><td>スイッチ番号、名称、ボタン、起動条件を設定します。</td></tr>
           <tr><td>Switch</td><td>Setting</td><td>Area Scene呼び出し、直接%値、On/Offなどを設定します。Refresh/Relax/NightはBedroomのArea Sceneとして呼ぶ運用です。</td></tr>

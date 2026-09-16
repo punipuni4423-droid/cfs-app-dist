@@ -31,6 +31,7 @@ import { buildSettingLinkGroups } from "../lib/settingLinkGroups";
 import ActionIconButton from "./ActionIconButton";
 import DragHandle from "./DragHandle";
 import AutoGrowTextarea from "./AutoGrowTextarea";
+import BacklightConditionSelect from "./BacklightConditionSelect";
 import Combobox from "./Combobox";
 import ResizableMatrixScroll from "./ResizableMatrixScroll";
 import { buildSettingTargetGroups, hvacSettingTargets as buildHvacSettingTargets, settingTargetIds, type SettingTarget } from "../lib/settingTargets";
@@ -1116,30 +1117,12 @@ export default function SwitchView({
           </div>
           <div className="switch-setting-section">
             <div className="switch-setting-title">Condition</div>
-            <select
-              className="cell-input"
+            <BacklightConditionSelect
               value={backlightConditionValue(sw.backlightCondition)}
-              onChange={(e) => updateSwitch(sw.id, { backlightCondition: e.target.value })}
+              conditions={backlightConditions}
+              onChange={(value) => updateSwitch(sw.id, { backlightCondition: value })}
               disabled={!canEdit}
-            >
-              <option value="" disabled>Uneffected</option>
-              {backlightConditions.map((condition) => (
-                <option key={condition.key} value={condition.key}>
-                  {condition.name}
-                </option>
-              ))}
-            </select>
-            {backlightConditionValue(sw.backlightCondition) ? (
-              <button
-                type="button"
-                className="btn-clear-circuit"
-                style={{ marginTop: "0.5rem" }}
-                onClick={() => updateSwitch(sw.id, { backlightCondition: "" })}
-                disabled={!canEdit}
-              >
-                Uneffected
-              </button>
-            ) : null}
+            />
           </div>
         </div>
       </div>

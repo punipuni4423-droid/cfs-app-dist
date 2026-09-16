@@ -1789,6 +1789,10 @@ textarea:disabled {
 }
 
 .project-list-shell {
+  /* Width kept free for the "CFS Project Selection" heading at the top-left.
+     The fixed top toolbar (App badge / Update / Tablet URL) never extends into
+     it, so the heading and the toolbar cannot compete for the same pixels. */
+  --project-list-title-reserve: 22.75rem;
   padding-top: max(var(--app-shell-inline-padding), 0.95rem);
 }
 
@@ -1796,6 +1800,12 @@ textarea:disabled {
   min-height: 2.55rem;
   justify-content: center;
   padding-right: min(38rem, calc(100vw - 21rem));
+}
+
+.project-list-shell .project-selection-title {
+  /* Shrink-wrap the heading so its box ends where its text ends. */
+  align-self: flex-start;
+  max-width: 100%;
 }
 
 .project-list-top-tools {
@@ -1807,7 +1817,18 @@ textarea:disabled {
   align-items: center;
   gap: 0.5rem;
   justify-content: flex-end;
-  max-width: calc(100vw - 8.5rem);
+  max-width: calc(100vw - 4.25rem - var(--project-list-title-reserve));
+}
+
+/* When the toolbar has to shrink, the Tablet URL input and the Update message
+   give way first; the App badge keeps its full 12-character SHA. */
+.project-list-top-tools > .app-update-control,
+.project-list-top-tools > .tablet-url-bar {
+  flex: 0 1 auto;
+}
+
+.project-list-top-tools > .tablet-url-bar {
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .project-list-shell > .collaboration-bar {
@@ -1906,7 +1927,9 @@ textarea:disabled {
   gap: 0.5rem;
   flex: 0 1 auto;
   min-width: 0;
-  max-width: min(78rem, calc(100vw - 20rem));
+  /* T-139: only the breadcrumb reserve caps the groups; a fixed rem cap forced
+     the real-data toolbar onto a second row on wide screens. */
+  max-width: calc(100vw - 20rem);
   margin-left: auto;
 }
 
@@ -3834,7 +3857,7 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 
   .project-top-action-groups {
     gap: 0.3rem;
-    max-width: min(70rem, calc(100vw - 16rem));
+    max-width: calc(100vw - 16rem);
   }
 
   .project-top-action-groups > .collaboration-bar.is-compact {
@@ -10058,6 +10081,84 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   flex: 0 0 auto;
 }
 
+/* T-139: from 1366px up the project toolbar is ONE row; the wrap above stays
+   as the fallback for narrower viewports. The breadcrumb keeps at least its
+   minimum and takes the remaining width. When the row is short of space the
+   compact collaboration bar gives way first (message and refresh notice, then
+   the e-mail chip, each clamped to one line with an ellipsis), then the room
+   revision pill. Role/status pills, icon buttons, save status, App badge and
+   Hide top bar never shrink. The bar's floor is its min-content, i.e. the sum
+   of those fixed parts, so short local-mode bars keep their natural width. */
+@media (min-width: 1366px) {
+  .project-screen-shell .project-top-breadcrumb {
+    flex: 1 1 0%;
+    min-width: 12.5rem;
+    flex-wrap: nowrap;
+  }
+
+  .project-screen-shell .project-top-breadcrumb .breadcrumb-current {
+    flex: 0 1 auto;
+  }
+
+  .project-screen-shell .project-top-action-groups,
+  .project-screen-shell .history-controls,
+  .project-screen-shell .revision-top-controls {
+    flex-wrap: nowrap;
+  }
+
+  /* No outer cap: the inner caps (7rem status, 8rem message/notice, 11.5rem
+     chip) bound the bar, so its flex base size equals its rendered width and
+     the shrink weights below are exact. */
+  .project-screen-shell .project-top-action-groups > .collaboration-bar.is-compact {
+    flex: 0 20 auto;
+    min-width: min-content;
+    max-width: none;
+  }
+
+  .project-screen-shell .collaboration-bar.is-compact .collaboration-status {
+    flex: 1 3 auto;
+    min-width: min-content;
+  }
+
+  .project-screen-shell .collaboration-bar.is-compact .collaboration-actions {
+    flex: 0 1 auto;
+    min-width: min-content;
+  }
+
+  .project-screen-shell .collaboration-bar.is-compact .collaboration-message,
+  .project-screen-shell .collaboration-bar.is-compact .collaboration-refresh-notice,
+  .project-screen-shell .collaboration-bar.is-compact .collaboration-user-chip {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .project-screen-shell .collaboration-bar.is-compact .collaboration-refresh-notice {
+    line-height: calc(1.45rem - 2px);
+  }
+
+  .project-screen-shell .collaboration-bar.is-compact .collaboration-user-chip {
+    min-width: 3.5rem;
+    line-height: 28px;
+  }
+
+  .project-screen-shell .revision-top-controls > .muted-pill:not(.revision-save-status) {
+    flex: 0 1 auto;
+    min-width: 4rem;
+  }
+}
+
+@media (min-width: 1500px) {
+  .project-screen-shell .project-top-breadcrumb {
+    min-width: 21rem;
+  }
+}
+
 .save-reliability-notice {
   display: flex;
   flex-wrap: wrap;
@@ -10092,3 +10193,123 @@ body.cfs-top-ui-collapsed .save-reliability-notice {
 .save-recovery-panel-heading h2:focus { outline: none; }
 .recovery-record { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--color-border); }
 .recovery-record > span:first-child { flex: 1 1 24rem; min-width: 0; }
+
+/* App version badge (T-121): running build identifier from .cfs-build-info.json.
+   Labelled "App" so it is not read as a Room Type revision. */
+.app-version-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 0.3rem;
+  min-height: 40px;
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 0.2rem 0.25rem 0.2rem 0.65rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow-card);
+  color: var(--color-text-secondary);
+}
+
+.app-version-label {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.app-version-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--color-text-primary);
+}
+
+.app-version-badge.is-unknown .app-version-value {
+  font-family: inherit;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+.app-version-badge .app-version-copy {
+  position: relative;
+  color: var(--color-accent);
+}
+
+.app-version-badge .app-version-copy:disabled {
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.app-version-badge .app-version-copy.is-copied {
+  border-color: rgba(0, 128, 128, 0.32);
+  background: var(--color-accent-soft);
+}
+
+.app-version-copy-feedback {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Compact variant inside the project toolbar (.history-controls). */
+.history-controls .app-version-badge.is-compact {
+  min-height: 30px;
+  padding: 0 0.1rem 0 0.55rem;
+  gap: 0.2rem;
+  box-shadow: none;
+  border-color: rgba(0, 123, 126, 0.2);
+  background: #f8fbfb;
+}
+
+.history-controls .app-version-badge.is-compact .app-version-label {
+  font-size: 0.62rem;
+}
+
+.history-controls .app-version-badge.is-compact .app-version-value {
+  font-size: 0.72rem;
+}
+
+.history-controls .app-version-badge.is-compact .app-version-copy {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+}
+
+/* T-139: up to 1680px the project toolbar shows the 7-character SHA prefix
+   (or "Unknown") without the "App" label; textContent, aria-label, tooltip and
+   copy keep the full identifier. The project-list badge is unchanged. */
+@media (max-width: 1680px) {
+  .history-controls .app-version-badge.is-compact .app-version-label,
+  .history-controls .app-version-badge.is-compact .app-version-value-wide-only {
+    display: none;
+  }
+
+  .history-controls .app-version-badge.is-compact.is-unknown .app-version-value {
+    text-transform: capitalize;
+  }
+}
+
+@media (max-width: 760px) {
+  .history-controls .app-version-badge.is-compact {
+    flex: 0 1 auto;
+    max-width: calc(100vw - 2rem);
+  }
+}
+
+@media (max-width: 420px) {
+  .history-controls .app-version-badge.is-compact .app-version-copy {
+    flex: 0 0 auto;
+    min-width: 26px;
+  }
+}

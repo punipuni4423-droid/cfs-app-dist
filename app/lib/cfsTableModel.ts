@@ -69,6 +69,8 @@ export interface CfsZoneRow {
   hvacMetric?: string;
   assignmentValue?: string;
   assignmentDetail?: string;
+  // Detail can be displayed as Location instead; keep its presence for Reserved.
+  hasSourceAssignmentDetail?: boolean;
   inputKind?: string;
   isIoAssignment?: boolean;
   ccoLighting?: boolean;

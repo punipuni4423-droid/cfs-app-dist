@@ -34,6 +34,7 @@ export interface AppUpdateStatus {
   localSha?: string;
   remoteSha?: string;
   buildSha?: string;
+  buildPackageVersion?: string;
   buildBuiltAt?: string;
   buildDistDir?: string;
   buildInfoPath?: string;
@@ -75,6 +76,7 @@ export const selfUpdateStatusFile = path.join(selfUpdateDir, "status.json");
 
 interface AppBuildInfo {
   gitSha?: string;
+  packageVersion?: string;
   builtAt?: string;
   distDir?: string;
 }
@@ -86,6 +88,7 @@ interface AppBuildInfoRecord {
 
 interface AppBuildStatusFields {
   buildSha?: string;
+  buildPackageVersion?: string;
   buildBuiltAt?: string;
   buildDistDir?: string;
   buildInfoPath?: string;
@@ -214,6 +217,7 @@ function buildStatusFields(buildInfo: AppBuildInfoRecord | undefined, localSha?:
   const buildDistDir = buildInfo?.info.distDir?.trim() || undefined;
   return {
     buildSha,
+    buildPackageVersion: typeof buildInfo?.info.packageVersion === "string" ? buildInfo.info.packageVersion : undefined,
     buildBuiltAt,
     buildDistDir,
     buildInfoPath: buildInfo?.filePath,

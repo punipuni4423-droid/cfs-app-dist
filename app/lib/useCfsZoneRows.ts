@@ -112,7 +112,7 @@ export function rowZoneValues(row: CfsZoneRow): string[] {
 }
 
 export function isReservedCfsRow(row: CfsZoneRow): boolean {
-  if (row.isIoAssignment && (row.assignmentValue || row.assignmentDetail || row.location)) return false;
+  if (row.isIoAssignment && (row.assignmentValue || row.assignmentDetail || row.hasSourceAssignmentDetail)) return false;
   return row.circuits.length === 0 && !row.isHvac && !row.isCurtain && !row.isBacklight && !row.assignmentValue;
 }
 
@@ -849,6 +849,7 @@ export function buildCfsZoneRows({
           rowKind: rowCircuits.length > 0 ? "lighting" : "cco",
           assignmentValue,
           assignmentDetail,
+          hasSourceAssignmentDetail: Boolean(assignment.detail.trim()),
           inputKind,
           isIoAssignment,
           ...(isCcoLighting(assignment) ? { ccoLighting: true } : {}),

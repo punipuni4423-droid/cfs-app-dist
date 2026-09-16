@@ -76,6 +76,7 @@ import BacklightView from "./BacklightView";
 import PduView from "./PduView";
 import LutronSpecView from "./LutronSpecView";
 import CollaborationBar from "./CollaborationBar";
+import AppVersionBadge from "./AppVersionBadge";
 import ActionIconButton, { ActionIcon } from "./ActionIconButton";
 import SaveRecoveryPanel, { SaveRecoveryNotice, useDisclosurePanel, type SaveRecoveryUi } from './SaveRecoveryPanel';
 import { createAppId } from '../lib/id';
@@ -2924,7 +2925,7 @@ export default function ProjectScreen({
           <nav className="breadcrumb project-top-breadcrumb fade-in">
             <button className="breadcrumb-link" onClick={handleBackToProjectList}>Back to Project List</button>
             <span className="breadcrumb-sep">/</span>
-            <span className="breadcrumb-current">{project.name}</span>
+            <span className="breadcrumb-current" title={project.name}>{project.name}</span>
           </nav>
           <div className="project-top-action-groups">
             <CollaborationBar collaboration={collaboration} compact projectUpdatedAt={project.updatedAt} />
@@ -3022,6 +3023,7 @@ export default function ProjectScreen({
               <ActionIconButton icon="restore" label="Save and Recovery" title={`Save and Recovery (${reliabilityUi.recoveryCount} local drafts)`}
                 className="history-button history-icon-button project-recovery-icon" data-testid="save-recovery-toggle"
                 aria-expanded={recoveryPanel.open} aria-controls="save-recovery-panel" onClick={event => recoveryPanel.toggle(event.currentTarget)} />
+              <AppVersionBadge compact />
               <button
                 type="button"
                 className="history-button history-icon-button top-ui-collapse-button"

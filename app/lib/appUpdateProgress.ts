@@ -9,6 +9,7 @@ export interface AppUpdateStatus {
   localSha?: string;
   remoteSha?: string;
   buildSha?: string;
+  buildPackageVersion?: string;
   buildBuiltAt?: string;
   buildDistDir?: string;
   buildInfoPath?: string;
@@ -38,7 +39,7 @@ export function isAppUpdateStatus(value: unknown): value is AppUpdateStatus {
     || typeof item.checkedAt !== "string" || !Number.isFinite(Date.parse(item.checkedAt))
     || typeof item.ahead !== "number" || !Number.isFinite(item.ahead)
     || typeof item.behind !== "number" || !Number.isFinite(item.behind)) return false;
-  for (const key of ["branch", "upstream", "localSha", "remoteSha", "buildSha", "buildBuiltAt", "buildDistDir", "buildInfoPath", "appDir", "gitPath"]) {
+  for (const key of ["branch", "upstream", "localSha", "remoteSha", "buildSha", "buildPackageVersion", "buildBuiltAt", "buildDistDir", "buildInfoPath", "appDir", "gitPath"]) {
     if (item[key] !== undefined && typeof item[key] !== "string") return false;
   }
   if (item.lastRun !== undefined) {

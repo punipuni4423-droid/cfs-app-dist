@@ -13,7 +13,7 @@ const root = path.resolve(__dirname, '..');
 const scratch = process.env.CFS_PROGRESS_TEST_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'cfs-progress-ui-'));
 fs.mkdirSync(path.join(scratch, 'app/components'), { recursive: true });
 fs.mkdirSync(path.join(scratch, 'app/lib'), { recursive: true });
-for (const file of ['app/components/AppUpdateControl.tsx', 'app/lib/appUpdateProgress.ts']) {
+for (const file of ['app/components/AppUpdateControl.tsx', 'app/lib/appUpdateProgress.ts', 'app/lib/appBuildVersion.ts']) {
   fs.writeFileSync(path.join(scratch, file.replace(/\.tsx?$/, '.js')), ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
   }).outputText);
@@ -33,6 +33,8 @@ function loadTsModule(file) {
   assert.equal(isAppUpdateStatus({ error: 'unauthorized' }), false);
   assert.equal(isAppUpdateStatus({ ...status(), lastRun: { progress: NaN } }), false);
   assert.equal(isAppUpdateStatus({ ...status(), message: {} }), false);
+  assert.equal(isAppUpdateStatus({ ...status(), buildPackageVersion: '26.9.1' }), true);
+  assert.equal(isAppUpdateStatus({ ...status(), buildPackageVersion: 26 }), false);
   assert.match(remainingUpdateEstimate('unknown', 600, {}, true, false), /pending/);
   assert.equal(remainingUpdateEstimate('build', 50, {}, true, true), '');
   await new Promise((resolve, reject) => webpackModule.webpack({

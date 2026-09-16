@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAppUpdateStatus, remainingUpdateEstimate, UPDATE_STEP_SECONDS, type AppUpdateStatus } from "../lib/appUpdateProgress";
+import { isCalendarAppVersion } from "../lib/appBuildVersion";
 
 const UPDATE_SESSION_KEY = "cfs-self-update-active";
 const UPDATE_STARTED_KEY = "cfs-self-update-started-at";
@@ -195,7 +196,8 @@ export default function AppUpdateControl() {
     const build = shortSha(status.buildSha);
     if (local) parts.push(`Local: ${local}`);
     if (remote) parts.push(`Remote SHA: ${remote}`);
-    if (build) parts.push(`Build SHA: ${build}`);
+    // Only the build metadata owns this number; Local/Remote are separate Git refs.
+    if (build) parts.push(`Build SHA: ${build}${isCalendarAppVersion(status.buildPackageVersion) ? ` (v${status.buildPackageVersion})` : ""}`);
     if (status.buildBuiltAt) parts.push(`Built at: ${status.buildBuiltAt}`);
     if (status.buildInfoPath) parts.push(`Build info: ${status.buildInfoPath}`);
     if (status.behind > 0) parts.push(`${status.behind} update commit(s) behind.`);
