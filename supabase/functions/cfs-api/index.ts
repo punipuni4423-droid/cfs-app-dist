@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.0";
+import { readProjectUpdates } from './projectUpdates.ts';
 
 type MembershipRole = "viewer" | "editor" | "admin";
 
@@ -352,6 +353,14 @@ async function lastUpdatedBy() {
 async function status(body: Record<string, unknown>, membership: Membership) {
   const sessionId = body.sessionId ? normalizeIdentifier(body.sessionId, "Session ID") : "";
   const scope = stateScope(body);
+  // Optional observation has its own deadline; lock/auth failures retain their
+  // existing semantics and metadata failures never fail the status operation.
+  const updates = readProjectUpdates((after, size, signal) => {
+    let query = readableProjects(membership, 'id,updatedAt:payload->>updatedAt,lastUpdatedBy:payload->lastUpdatedBy')
+      .order('id', { ascending: true }).limit(size).abortSignal(signal);
+    if (after) query = query.gt('id', after);
+    return query;
+  });
   let locks = await activeLocks();
   let ownedLock = sessionId ? ownedLockForScope(locks, scope.stateId, membership, sessionId) : null;
   const ownsLock = Boolean(ownedLock && roleAllows(membership.role, "editor"));
@@ -372,6 +381,7 @@ async function status(body: Record<string, unknown>, membership: Membership) {
     locks,
     lastUpdatedBy: await lastUpdatedBy(),
     lastUpdatedAt: await projectLastUpdatedAt(scope.projectId),
+    projectUpdates: await updates,
     membership: publicMembership(membership),
     leaseSeconds,
     heartbeatMs,
@@ -397,8 +407,16 @@ async function assertProjectCreateAccess(body: Record<string, unknown>, membersh
   return { sessionId, stateId: scope.stateId, requestedStateId: scope.stateId, projectId: scope.projectId };
 }
 
-async function readProjects() {
-  const result = await admin.from("cfs_projects").select("payload").is("deleted_at", null).order("updated_at", { ascending: false });
+function readableProjects(membership: Membership, columns: string) {
+  if (!membership.active || !membership.auth_user_id) throw Object.assign(new Error('Membership is required.'), { status: 403 });
+  // Shared authorization boundary for list bodies and notification metadata.
+  // Current registered members can read this workspace. Future project grants
+  // must be applied here to both projections, never only to the client UI.
+  return admin.from('cfs_projects').select(columns).is('deleted_at', null);
+}
+
+async function readProjects(membership: Membership) {
+  const result = await readableProjects(membership, 'payload').order("updated_at", { ascending: false });
   if (result.error) throw result.error;
   return (result.data || []).map((row) => row.payload);
 }
@@ -720,7 +738,7 @@ async function memberUpsert(body: Record<string, unknown>, membership: Membershi
 async function handleAction(action: string, body: Record<string, unknown>, membership: Membership) {
   if (action === "auth.me") return { ok: true, membership: publicMembership(membership) };
   if (action === "status") return status(body, membership);
-  if (action === "projects.read") return { ok: true, projects: await readProjects() };
+  if (action === "projects.read") return { ok: true, projects: await readProjects(membership) };
   if (action === "projects.save") throw Object.assign(new Error('Legacy project list saves are disabled. Reload or upgrade the app.'), { status: 409, code: 'PROJECT_LIST_UPGRADE_REQUIRED' });
   if (action === "projects.merge") return saveProjects(body, membership);
   if (action === "project.rename") return renameProject(body, membership);

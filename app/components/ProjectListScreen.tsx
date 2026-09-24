@@ -1,10 +1,11 @@
 "use client";
 
 import { type ReactNode, useRef, useState } from "react";
-import type { CollaborationLock, ProjectData, TrashData } from "../types";
+import type { CollaborationLock, CollaborationProjectUpdate, ProjectData, TrashData } from "../types";
 import ActionIconButton from "./ActionIconButton";
 import AppUpdateControl from "./AppUpdateControl";
 import AppVersionBadge from "./AppVersionBadge";
+import UpdateHighlights from "./UpdateHighlights";
 import TabletUrlBar from "./TabletUrlBar";
 import { getApiIdentity } from "../lib/apiAccessClient";
 import SaveRecoveryPanel, { SaveRecoveryNotice, useDisclosurePanel, type SaveRecoveryUi } from './SaveRecoveryPanel';
@@ -26,6 +27,8 @@ interface ProjectListScreenProps {
   canEdit?: boolean;
   canCreateProject?: boolean;
   projectLocks?: CollaborationLock[];
+  remoteUpdates?: ReadonlyMap<string, CollaborationProjectUpdate>;
+  remoteReloadSafe?: boolean;
 }
 
 export default function ProjectListScreen({
@@ -45,6 +48,8 @@ export default function ProjectListScreen({
   canEdit = true,
   canCreateProject,
   projectLocks = [],
+  remoteUpdates,
+  remoteReloadSafe = false,
 }: ProjectListScreenProps) {
   const [newProjectName, setNewProjectName] = useState("");
   const recoveryPanel = useDisclosurePanel(reliabilityUi.scopeKey, 'save-recovery-panel');
@@ -99,6 +104,7 @@ export default function ProjectListScreen({
       {collaborationBar}
       <SaveRecoveryNotice ui={reliabilityUi} onOpen={recoveryPanel.show} />
       {recoveryPanel.open && <SaveRecoveryPanel id="save-recovery-panel" title="Save and Recovery" onClose={recoveryPanel.close}>{reliabilityUi.panel}</SaveRecoveryPanel>}
+      <UpdateHighlights />
 
       <section className="card card-padded screen-management-card fade-in">
         <div className="selector-row">
@@ -170,6 +176,10 @@ export default function ProjectListScreen({
                       <span>Locked by {projectLockById.get(project.id)?.userName}</span>
                     ) : null}
                     <span>{project.roomTypes.length} room types</span>
+                    {remoteUpdates?.get(project.id) && <span className="remote-project-update-badge" data-testid="remote-project-update-badge">
+                      <strong>Updated by {remoteUpdates.get(project.id)?.lastUpdatedBy?.displayName || 'Another user'}</strong>
+                      <span>{remoteReloadSafe ? 'Press F5 to reload the latest data.' : 'Review Save and Recovery before reloading.'}</span>
+                    </span>}
                   </span>
                 </button>
                 <div className="screen-card-actions">

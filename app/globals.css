@@ -1831,6 +1831,38 @@ textarea:disabled {
   grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
+.update-highlights {
+  margin: 0 0 1rem;
+  padding: 1rem 1.25rem;
+  min-width: 0;
+  border: 1px solid var(--color-border-strong);
+  border-left: 4px solid var(--color-accent);
+  border-radius: 12px;
+  background: var(--color-surface);
+  overflow-wrap: anywhere;
+}
+
+.update-highlights-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.update-highlights-heading h2 { margin: 0; font-size: 1rem; }
+.update-highlights-heading button { flex-shrink: 0; }
+.update-highlights-entry h3 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  margin: 0.8rem 0 0.4rem;
+  font-size: 0.875rem;
+}
+.update-highlights-entry time { color: var(--color-text-secondary); font-weight: 400; }
+.update-highlights-entry ul { margin: 0; padding-left: 1.25rem; list-style: disc; font-size: 0.875rem; line-height: 1.6; }
+.update-highlights-entry li + li { margin-top: 0.2rem; }
+.update-highlights-more, .update-highlights-note { margin: 0.75rem 0 0; font-size: 0.8rem; color: var(--color-text-secondary); }
+
 .project-list-shell > .collaboration-bar {
   min-height: 40px;
   box-sizing: border-box;
@@ -10313,3 +10345,9 @@ body.cfs-top-ui-collapsed .save-reliability-notice {
     min-width: 26px;
   }
 }
+/* T-38: notification lives outside the collapsible project toolbar. */
+.remote-project-update-backdrop { z-index: 10050; padding: 20px; }
+.remote-project-update-dialog { width: min(480px, 100%); padding: 24px; border-radius: 14px; border: 1px solid #dbe4e7; background: #fff; color: #26383e; box-shadow: 0 16px 48px #142f3829; overflow-wrap: anywhere; }
+.remote-project-update-dialog h2 { font-size: 1.2rem; margin: 0 0 12px; }
+.remote-project-update-dialog p { line-height: 1.6; margin: 0 0 16px; }
+.remote-project-update-badge { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 7px 10px; border-radius: 8px; background: #e7f5f5; color: #195b62; white-space: normal; overflow-wrap: anywhere; max-width: 100%; }

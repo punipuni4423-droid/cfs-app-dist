@@ -158,6 +158,7 @@ export interface CollaborationStatus {
   locks?: CollaborationLock[];
   lastUpdatedBy: CollaborationEditorInfo | null;
   lastUpdatedAt?: string | null;
+  projectUpdates?: CollaborationProjectUpdate[];
   membership?: CollaborationMembership;
   leaseSeconds: number;
   heartbeatMs: number;
@@ -310,6 +311,13 @@ export interface RoomScene {
   settingLinkGroupId?: string;
   areaSceneSelections: RoomSceneAreaSceneSelection[];
   settings: SceneCircuitSetting[];
+}
+
+/** Notification metadata only; never a project save/CAS baseline. */
+export interface CollaborationProjectUpdate {
+  id: string;
+  updatedAt: string;
+  lastUpdatedBy: CollaborationEditorInfo | null;
 }
 
 export type SwitchKind = 'contact' | 'lutronPd' | 'lutronPico' | 'command' | 'tstat' | 'pir' | 'qsm';

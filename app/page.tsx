@@ -34,6 +34,8 @@ import ProjectListScreen from "./components/ProjectListScreen";
 import type { SaveRecoveryUi } from './components/SaveRecoveryPanel';
 import ProjectScreen from "./components/ProjectScreen";
 import CollaborationBar from "./components/CollaborationBar";
+import RemoteProjectUpdateDialog from './components/RemoteProjectUpdateDialog';
+import { useRemoteProjectUpdates } from './lib/useRemoteProjectUpdates';
 import { createAppId } from './lib/id';
 import { useCollaboration } from "./lib/useCollaboration";
 import { DEFAULT_CFS_ROW_ORDER } from "./lib/cfsRowDisplay";
@@ -329,12 +331,18 @@ export default function Home() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const trashSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const trashSavesInFlight = useRef(new Set<Promise<void>>());
+  const [notificationTrashRevision, setNotificationTrashRevision] = useState(0);
+  const [notificationTrashUnverified, setNotificationTrashUnverified] = useState(false);
   const skipNextSave = useRef(false);
   const skipNextTrashSave = useRef(false);
   const collaborationAccessTokenRef = useRef(collaboration.accessToken);
   const trashSaveIdentity = useRef(collaboration.editIdentity);
   const persistedProjectUpdatedAt = useRef<Map<string, string>>(new Map());
   const persistedProjects = useRef(new Map<string, ProjectData>());
+  const [notificationBaselineRevision, setNotificationBaselineRevision] = useState(0);
+  const notificationBaselineOwner = useRef(-1);
+  const [notificationDraftRevision, setNotificationDraftRevision] = useState(0);
+  const [notificationDraftReady, setNotificationDraftReady] = useState(false);
   const explicitSavePending = useRef(false);
   const deletePending = useRef(false);
   const [deletingProject, setDeletingProject] = useState(false);
@@ -374,12 +382,20 @@ export default function Home() {
   }, [activeProjectId]);
 
   useEffect(() => {
+    const update = () => setNotificationDraftRevision(value => value + 1);
+    window.addEventListener(DRAFT_STATUS_EVENT, update);
+    return () => window.removeEventListener(DRAFT_STATUS_EVENT, update);
+  }, []);
+
+  useEffect(() => {
     if (!collaboration.authReady) return;
     // Flush with the previous owner before changing scope or clearing the signed-out screen.
     projectsRef.current.forEach(project => {
       if (hasProjectChanges(project, persistedProjects.current.get(project.id))) void checkpointProject(project, persistedProjectUpdatedAt.current.get(project.id) ?? null);
     });
     ownerEpoch.current++;
+    setNotificationDraftReady(false);
+    setNotificationTrashUnverified(false);
     importInFlight.current = false; importPhase.current = null; setImportBusy(false); setImportAttempt(null);
     setDeferredImportsReady([]); setConfirmedImportsReady([]); deferredRuntimeBlocked.current.clear();
     explicitSavePending.current = false; setSaveStatus('idle');
@@ -398,7 +414,7 @@ export default function Home() {
       setWorkspaceUnverified(false);
       const records = await initializeProjectDrafts({ workspace: `${collaboration.sharingMode}:${config?.url ?? window.location.origin}`,
         owner: collaboration.user?.id ?? 'local', tab: tabId.current });
-      if (!cancelled) setRecoveryRecords(records);
+      if (!cancelled) { setRecoveryRecords(records); setNotificationDraftReady(true); }
       await archiveLegacyProjectDrafts().catch(() => undefined);
     })();
     return () => { cancelled = true; };
@@ -423,17 +439,22 @@ export default function Home() {
   const rememberPersistedProjects = useCallback((nextProjects: ReadonlyArray<ProjectData>): void => {
     persistedProjectUpdatedAt.current = new Map(nextProjects.map((project) => [project.id, project.updatedAt]));
     persistedProjects.current = new Map(nextProjects.map((project) => [project.id, project]));
+    notificationBaselineOwner.current = ownerEpoch.current;
+    setNotificationBaselineRevision(value => value + 1);
   }, []);
 
   const rememberPersistedProject = useCallback((project: ProjectData): void => {
     persistedProjectUpdatedAt.current.set(project.id, project.updatedAt);
     persistedProjects.current.set(project.id, project);
+    notificationBaselineOwner.current = ownerEpoch.current;
+    setNotificationBaselineRevision(value => value + 1);
   }, []);
 
   const applyLoadedServerState = useCallback((loaded: ProjectData[], loadedTrash: TrashData, sharingMode: SharingMode): void => {
     skipNextSave.current = true;
     skipNextTrashSave.current = true;
     rememberPersistedProjects(loaded);
+    setNotificationTrashUnverified(false);
     if (sharingMode === "supabase") {
       // Shared mode: the server is authoritative. Silently adopting newer
       // browser drafts resurrected stale data and overwrote other users'
@@ -604,17 +625,22 @@ export default function Home() {
         notifyOnError: true,
         collaboration: scheduledCollaboration,
       }).catch(() => {
-        if (epoch === ownerEpoch.current) setSaveStatus("error");
+        if (epoch === ownerEpoch.current) { setSaveStatus("error"); setNotificationTrashUnverified(true); }
       });
       trashSavesInFlight.current.add(save);
-      void save.finally(() => trashSavesInFlight.current.delete(save));
+      void save.finally(() => {
+        trashSavesInFlight.current.delete(save);
+        if (epoch === ownerEpoch.current) setNotificationTrashRevision(value => value + 1);
+      });
       trashSaveTimer.current = null;
     }, 300);
+    setNotificationTrashRevision(value => value + 1);
 
     return () => {
       if (trashSaveTimer.current) {
         clearTimeout(trashSaveTimer.current);
         trashSaveTimer.current = null;
+        setNotificationTrashRevision(value => value + 1);
       }
     };
   }, [trash]);
@@ -1661,6 +1687,41 @@ export default function Home() {
   const feedbackIsError = currentFeedback?.kind === 'save-failed' || currentFeedback?.kind === 'restore-failed' || currentFeedback?.kind === 'restore-partial';
   const noticeRequired = Boolean(importNotice || pendingSave || pendingRestore || draftFailed || draftUnconfirmed || lockLost || workspaceUnverified || invalidRecovery || feedbackNeedsAttention);
   const noticeError = draftFailed || lockLost || Boolean(pendingRestore?.projectConfirmed) || feedbackIsError;
+  // Reload affects the whole page, including inactive projects and recovery.
+  // This is display-only: never advance a CAS baseline or mutate a draft here.
+  void notificationDraftRevision;
+  void notificationTrashRevision;
+  const notificationScope = draftScope();
+  const notificationObservation = collaboration.projectUpdateObservation;
+  const notificationRecords = cachedDraftRecords();
+  const notificationEnabled = collaboration.sharingMode === 'supabase' && collaboration.authReady && !collaboration.requiresSignIn
+    && !collaboration.authVerificationBlocked && !loading && !loadError && notificationDraftReady
+    && notificationBaselineOwner.current === ownerEpoch.current
+    && notificationScope?.owner === collaboration.user?.id
+    && notificationScope?.workspace === `supabase:${notificationObservation?.workspace}`
+    && notificationObservation?.userId === collaboration.user?.id;
+  const notificationScopeKey = JSON.stringify([notificationScope?.workspace, collaboration.user?.id]);
+  const notificationDirty = projects.some(project => hasProjectChanges(project, persistedProjects.current.get(project.id)));
+  // A verified complete batch may retain deferredAt as recovery history.
+  const notificationImportsUnsafe = importBatches(notificationRecords).some(records => !confirmedImportBatch(records)
+    || !confirmedImportsReady.includes(records[0].importRecovery!.batchId)
+    || deferredRuntimeBlocked.current.has(records[0].importRecovery!.batchId));
+  const notificationDraftUnsafe = getDraftStatus().state !== 'saved'
+    || projects.some(project => ['saving', 'failed'].includes(getDraftStatus(project.id).state))
+    || notificationImportsUnsafe
+    || notificationRecords.some(record => !validDraftRecord(record) || Boolean(record.intent)
+      || ['saving', 'failed'].includes(getDraftStatus(record.project.id).state));
+  const notificationReloadSafe = collaboration.mode === 'view' && !collaboration.busy && !notificationDirty && !notificationDraftUnsafe
+    && !noticeRequired && !explicitSavePending.current && !deletePending.current && !restoreInFlight.current && !importInFlight.current
+    && !importBusy && !restoringProject && !deletingProject && !pendingSave && !pendingRestore
+    && !trashSaveTimer.current && trashSavesInFlight.current.size === 0 && !notificationTrashUnverified
+    && !['savingProject', 'savingRevision', 'savingDraft'].includes(saveStatus)
+    && !collaboration.userDialogOpen && !collaboration.membersDialogOpen;
+  const remoteUpdates = useRemoteProjectUpdates({ observation: notificationObservation, scopeKey: notificationScopeKey,
+    baseline: persistedProjectUpdatedAt.current, baselineRevision: notificationBaselineRevision, userId: collaboration.user?.id || '',
+    activeProjectId, enabled: Boolean(notificationEnabled), reloadSafe: notificationReloadSafe });
+  const remoteUpdateDialog = remoteUpdates.dialog ? <RemoteProjectUpdateDialog key={`${notificationScopeKey}:${activeProjectId}`} update={remoteUpdates.dialog}
+    recovery={notificationRecords.length > 0} onClose={remoteUpdates.close} /> : null;
   const downloadCurrentBackup = activeProject ? () => downloadProjectBackup([activeProject], 'unsaved_recovery') : null;
   const pendingActions = <>{/* Existing explicit handlers and edit/restore guards are unchanged. */}
         {pendingRestore && <>
@@ -1784,6 +1845,7 @@ export default function Home() {
 
   if (activeProject) {
     return (
+      <>
       <ProjectScreen
         project={activeProject}
         saveReceipt={saveReceipt}
@@ -1803,6 +1865,8 @@ export default function Home() {
         canEdit={collaboration.canEdit}
         onReadOnlyAction={collaboration.readOnlyMessage}
       />
+      {remoteUpdateDialog}
+      </>
     );
   }
 
@@ -1824,6 +1888,8 @@ export default function Home() {
       canEdit={collaboration.canEdit && !deletingProject && !restoringProject && !pendingRestore}
       canCreateProject={collaboration.canCreateProject && !deletingProject && !restoringProject && !pendingRestore}
       projectLocks={collaboration.locks ?? []}
+      remoteUpdates={remoteUpdates.updates}
+      remoteReloadSafe={remoteUpdates.canReload}
     />
   );
 }

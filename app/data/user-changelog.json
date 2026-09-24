@@ -1,0 +1,26 @@
+{
+  "entries": [
+    {
+      "id": "2026-09-24-1",
+      "date": "2026-09-24",
+      "title": "Update notices and shared editing awareness",
+      "items": [
+        "After an update, this list shows what changed. Press Close to mark it as read.",
+        "When another user saves a project, the project list shows an \"Updated by\" badge and a notice to press F5 to reload the latest data.",
+        "The App version now supports a numbered format (for example v26.9.1); the full build ID stays in the tooltip and copy button."
+      ]
+    },
+    {
+      "id": "2026-09-17-1",
+      "date": "2026-09-17",
+      "title": "Display and Backlight improvements",
+      "items": [
+        "Check and copy the running App version from the project list or project toolbar.",
+        "The App badge no longer overlaps the heading. On project screens at least 1366px wide, the shared editing toolbar stays on one row.",
+        "Hide Reserved now hides empty CCO/CCI rows with only location or area assignments. Rows with Detail remain visible.",
+        "Scene Backlight Target choices now use By Scene switches and groups in both individual and bulk settings.",
+        "Select Uneffected directly for Backlight Condition in Scene, Switch, and Command. CFS and Excel keep the existing blank display."
+      ]
+    }
+  ]
+}

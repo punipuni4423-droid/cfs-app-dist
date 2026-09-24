@@ -13,6 +13,15 @@ import type {
 import type { CollaborationSaveIdentity } from "./storage";
 import { getApiIdentity } from "./apiAccessClient";
 import { finiteFetch, SaveProtocolError } from './projectSaveProtocol';
+import { parseProjectUpdates } from './remoteProjectUpdates';
+import type { CollaborationProjectUpdate } from '../types';
+
+export interface ProjectUpdateObservation {
+  workspace: string;
+  userId: string;
+  sequence: number;
+  updates: CollaborationProjectUpdate[] | null;
+}
 
 const USER_KEY = "cfs-collaboration-user-v1";
 const SESSION_KEY = "cfs-collaboration-session-v1";
@@ -33,6 +42,7 @@ interface CollaborationReleaseResponse {
 }
 
 interface CollaborationClientState {
+  projectUpdateObservation?: ProjectUpdateObservation | null;
   enabled: boolean;
   mode: CollaborationStatus["mode"];
   sharingMode: SharingMode;
@@ -279,6 +289,9 @@ export function useCollaboration(projectId = ""): CollaborationController {
   const idleBlockedRef = useRef(false);
   const transitionRef = useRef(0);
   const authGenerationRef = useRef(0);
+  const updateSequenceRef = useRef(0);
+  const acceptedUpdateSequenceRef = useRef(0);
+  const updateWorkspaceRef = useRef('');
   const finishGuardRef = useRef<CollaborationFinishGuard | null>(null);
   const editStartRefreshRef = useRef<CollaborationEditStartRefresh | null>(null);
   const startEditingAfterRegistrationRef = useRef(false);
@@ -297,6 +310,15 @@ export function useCollaboration(projectId = ""): CollaborationController {
     sessionId: stateRef.current.sessionId || "",
     projectId: projectIdRef.current,
   }), []);
+
+  const acceptProjectUpdates = useCallback((status: CollaborationStatus, sequence: number, transition: number, generation: number, userId: string) => {
+    if (!updateWorkspaceRef.current || !userId || transition !== transitionRef.current || generation !== authGenerationRef.current
+      || sequence <= acceptedUpdateSequenceRef.current) return;
+    acceptedUpdateSequenceRef.current = sequence;
+    const observation: ProjectUpdateObservation = { workspace: updateWorkspaceRef.current, userId, sequence, updates: parseProjectUpdates(status.projectUpdates) };
+    setState(current => current.user?.id === userId && current.sharingMode === 'supabase'
+      ? { ...current, projectUpdateObservation: observation } : current);
+  }, []);
 
   const applyStatus = useCallback((status: CollaborationStatus, message?: string): void => {
     setState((current) => {
@@ -324,6 +346,8 @@ export function useCollaboration(projectId = ""): CollaborationController {
   const refreshStatus = useCallback(async (): Promise<void> => {
     const current = stateRef.current;
     const transition = transitionRef.current;
+    const generation = authGenerationRef.current;
+    const sequence = ++updateSequenceRef.current;
     if (current.sharingMode === "supabase" && !current.accessToken) return;
     const { userId, sessionId, projectId } = identityBody();
     const query = new URLSearchParams({ userId, sessionId, projectId });
@@ -332,18 +356,24 @@ export function useCollaboration(projectId = ""): CollaborationController {
       headers: authHeaders(),
     });
     const status = await parseJsonResponse<CollaborationStatus>(response);
-    if (transition === transitionRef.current && !releasingRef.current) applyStatus(status);
-  }, [applyStatus, authHeaders, identityBody]);
+    if (transition === transitionRef.current && !releasingRef.current) {
+      applyStatus(status);
+      acceptProjectUpdates(status, sequence, transition, generation, current.user?.id || '');
+    }
+  }, [applyStatus, authHeaders, identityBody, acceptProjectUpdates]);
 
   const releaseEditingLock = useCallback(async (): Promise<CollaborationStatus | null> => {
+    const sequence = ++updateSequenceRef.current, transition = transitionRef.current, generation = authGenerationRef.current;
+    const userId = stateRef.current.user?.id || '';
     const response = await fetchWithTimeout("/api/collaboration/lock/release", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(identityBody()),
     });
     const payload = await parseJsonResponse<CollaborationReleaseResponse>(response);
+    if (payload.status) acceptProjectUpdates(payload.status, sequence, transition, generation, userId);
     return payload.status ?? null;
-  }, [authHeaders, identityBody]);
+  }, [authHeaders, identityBody, acceptProjectUpdates]);
 
   const runEditStartRefresh = useCallback(async (status: CollaborationStatus): Promise<boolean> => {
     const transition = transitionRef.current;
@@ -451,6 +481,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       if (authGeneration !== authGenerationRef.current) return;
       if (stateRef.current.user?.id !== userFromMembership(authPayload.membership).id) transitionRef.current++;
       const transition = transitionRef.current;
+      const updateSequence = ++updateSequenceRef.current;
       let status: CollaborationStatus | null = null;
       let statusError = "";
       try {
@@ -487,6 +518,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
           ? status.mode === "edit" ? "Editing resumed." : "Signed in. Start editing when you are ready."
           : `Signed in. Shared edit status could not be read${statusError ? `: ${statusError}` : "."}`,
       }));
+      if (status) acceptProjectUpdates(status, updateSequence, transition, authGeneration, user.id);
     } catch (error) {
       // Supabase fires an auth event on every token refresh, and this hydrate
       // runs each time. A transient network failure here must not clear the
@@ -522,7 +554,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
         };
       });
     }
-  }, [authHeaders]);
+  }, [authHeaders, acceptProjectUpdates]);
 
   useEffect(() => {
     let mounted = true;
@@ -533,6 +565,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
         const configResponse = await fetch("/api/sharing/config", { cache: "no-store" });
         const config = await parseJsonResponse<SharingConfig>(configResponse);
         if (!mounted) return;
+        updateWorkspaceRef.current = config.mode === 'supabase' ? config.url || '' : '';
         if (config.mode !== "supabase") {
           const user = loadStoredUser();
           if (user && getApiIdentity()) {
@@ -765,6 +798,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       return;
     }
     setState((next) => ({ ...next, busy: true, message: "Checking edit lock." }));
+    const updateSequence = ++updateSequenceRef.current, updateGeneration = authGenerationRef.current;
     try {
       const response = await fetchWithTimeout("/api/collaboration/lock/acquire", {
         method: "POST",
@@ -773,6 +807,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       });
       const payload = await parseJsonResponse<{ acquired: boolean; lock: CollaborationLock | null; status: CollaborationStatus }>(response);
       if (transition !== transitionRef.current) return;
+      acceptProjectUpdates(payload.status, updateSequence, transition, updateGeneration, current.user.id);
       if (!payload.acquired) {
         const owner = payload.lock?.userName || payload.status?.lock?.userName || "Another user";
         applyStatus(payload.status, `${owner} is editing. Stay in view mode.`);
@@ -789,7 +824,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
     } finally {
       if (transition === transitionRef.current) setState((next) => ({ ...next, busy: false }));
     }
-  }, [applyStatus, authHeaders, identityBody, runEditStartRefresh]);
+  }, [applyStatus, authHeaders, identityBody, runEditStartRefresh, acceptProjectUpdates]);
 
   const forceReleaseLock = useCallback(async (): Promise<void> => {
     const current = stateRef.current;
@@ -799,6 +834,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       return;
     }
     setState((next) => ({ ...next, busy: true, message: "Releasing the edit lock." }));
+    const updateSequence = ++updateSequenceRef.current, updateTransition = transitionRef.current, updateGeneration = authGenerationRef.current;
     try {
       const response = await fetchWithTimeout("/api/collaboration/lock/force-release", {
         method: "POST",
@@ -808,6 +844,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       const payload = await parseJsonResponse<{ released: boolean; releasedLock?: CollaborationLock | null; status?: CollaborationStatus }>(response);
       const ownerName = payload.releasedLock?.userName || "the previous editor";
       if (payload.status) {
+        acceptProjectUpdates(payload.status, updateSequence, updateTransition, updateGeneration, current.user?.id || '');
         applyStatus(
           payload.status,
           payload.released
@@ -822,7 +859,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
     } finally {
       setState((next) => ({ ...next, busy: false }));
     }
-  }, [applyStatus, authHeaders, identityBody, refreshStatus]);
+  }, [applyStatus, authHeaders, identityBody, refreshStatus, acceptProjectUpdates]);
 
   const setFinishGuard = useCallback((guard: CollaborationFinishGuard | null): void => {
     finishGuardRef.current = guard;
@@ -903,6 +940,8 @@ export function useCollaboration(projectId = ""): CollaborationController {
         if (now - lastHeartbeatAtRef.current < current.heartbeatMs || heartbeatInFlightRef.current) return;
         heartbeatInFlightRef.current = true;
         const transition = transitionRef.current;
+        const updateSequence = ++updateSequenceRef.current;
+        const updateGeneration = authGenerationRef.current;
         void fetchWithTimeout("/api/collaboration/lock/heartbeat", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -911,6 +950,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
           .then((response) => parseJsonResponse<{ acquired: boolean; lock: CollaborationLock | null; status?: CollaborationStatus }>(response))
           .then((payload) => {
             if (transition !== transitionRef.current || releasingRef.current) return;
+            if (payload.status) acceptProjectUpdates(payload.status, updateSequence, transition, updateGeneration, current.user?.id || '');
             if (!payload.acquired) {
               transitionRef.current++;
               idleBlockedRef.current = true;
@@ -942,7 +982,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       }
     }, 5_000);
     return () => window.clearInterval(timer);
-  }, [applyStatus, authHeaders, finishEditing, identityBody, refreshStatus]);
+  }, [applyStatus, authHeaders, finishEditing, identityBody, refreshStatus, acceptProjectUpdates]);
 
   useEffect(() => {
     const release = (): void => {
