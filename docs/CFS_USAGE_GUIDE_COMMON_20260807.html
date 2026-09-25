@@ -673,7 +673,7 @@
     </section>
 
     <section id="cfs-edit" class="card">
-      <h2>CFS編集モード(Edit)とリンク・一括変更(2026-09-08更新)</h2>
+      <h2>CFS編集モード(Edit)とリンク・一括変更(2026-09-24更新)</h2>
       <p>CFSタブの「Edit」トグルに、設定変更(Setting)・リンク(Link / Unlink)・Low End / High End 編集の入口を統合しました。Editは既定でオフで、オフの間は編集用のチェックボックスや編集ボタンは表示されません。View(閲覧のみ)ではEdit自体を押せません。</p>
 
       <h3>Editトグルと設定(Setting)への入口</h3>
@@ -696,6 +696,10 @@
           <tr><td>4</td><td>Link / Unlink</td><td>チェックした列同士をリンク/リンク解除します(詳細は下記)。</td></tr>
         </tbody>
       </table>
+      <h3>Scene列の設定とBacklight</h3>
+      <p>Scene列の名前または鉛筆から、Switch・Commandと共通の設定画面が開きます。Area Sceneをまだ選んでいないSceneも編集できます。<code>Scene Value</code>では、左側の<code>Area Scene</code>表でエリアごとにシーンを選び、<code>Clear</code>でそのエリアの選択だけを解除します。右側の<code>Individual Override</code>を開くと、そのSceneの回路別の値を設定できます。<code>Uneffected</code>は個別値を空に戻します。</p>
+      <p><code>Backlight</code>では、そのSceneの<code>Condition</code>を選びます。<code>Target</code>はBy Sceneに設定されたPalladiomの確認用一覧です。対象の割当はBacklightタブで変更します。CFSからの変更とSceneタブからの変更は同じ設定へ反映されます。</p>
+      <p>Area Scene定義そのものの回路値は、Area Sceneタブで編集します。設定画面内の<code>Edit Area Scene definitions</code>からも従来の定義エディタを開けます。選択済みの定義を開き、未選択なら最初の登録定義を開きます。定義の一括変更では、引き続き確認画面で対象と値を確認してから適用します。</p>
       <div class="note">InspectionModeと同時にオンにできますが、InspectionMode中はSettingとリンクの操作は使えません(Low End / High Endの編集のみ可能です)。</div>
 
       <h3>複数条件の選択メニュー(結合セル)</h3>
@@ -787,7 +791,7 @@
           <tr><td>3</td><td>Cancel / Confirm</td><td>Confirmで適用します。Cancel・<code>Escape</code>キー・背景クリックで中止でき、その場合は値は変わりません。</td></tr>
         </tbody>
       </table>
-      <div class="note">この2段階の確認は、Area Sceneタブの一括変更と、CFSタブのArea Scene Settingオーバーレイ内の一括変更の両方で共通です。</div>
+      <div class="note">この2段階の確認は、Area Sceneタブの一括変更と、CFSのScene設定内「Edit Area Scene definitions」から開く定義エディタの一括変更の両方で共通です。</div>
     </section>
 
     <section id="inspection" class="card">

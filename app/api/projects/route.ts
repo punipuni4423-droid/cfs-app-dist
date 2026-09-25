@@ -13,9 +13,12 @@ import {
 } from "../../lib/secureSharingServer";
 import { migrateProjectsPayload, migrateProjectsWithReport } from "../../lib/storage";
 import { collectionLosses, migrationReport } from "../../lib/migrationSafety";
-import { commonHistoryPreserved, matchesSaveIntent, saveContent, SAVE_PROTOCOL_VERSION } from '../../lib/projectSaveProtocol';
+import { commonHistoryPreserved, roomHistoryPreserved, matchesSaveIntent, saveContent, SAVE_PROTOCOL_VERSION } from '../../lib/projectSaveProtocol';
 import { validCommonHistory } from '../../lib/projectCommonHistory';
 import { canonicalJson } from '../../lib/canonicalJson';
+import { validRestoreProject } from '../../lib/projectDraftStore';
+import { localProjectBase, localRevisionRestore } from '../../lib/localRevisionRestore';
+import { validProjectBase, type RestoreSource } from '../../lib/projectBase';
 
 export const runtime = "nodejs";
 
@@ -177,7 +180,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     if (restoreRaw) return NextResponse.json(result.body, { headers: { 'Cache-Control': 'no-store' } });
     const { projects, report } = migrateProjectsWithReport(result.body);
     if (report.issues.length) console.warn('CFS MigrationReport', report);
-    return NextResponse.json({ ...result.body, projects, migrationReport: report });
+    return NextResponse.json({ ...result.body, projects, migrationReport: report }, { headers: { 'Cache-Control': 'no-store' } });
   }
   const raw = await localProjectStore.locked(readRawProjects);
   if (restoreRaw) return NextResponse.json({ projects: rawProjectList(raw) }, { headers: { 'Cache-Control': 'no-store' } });
@@ -217,7 +220,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   // Legacy direct table upserts cannot enforce the SQL save contract.
   if (!isSecureSharingEnabled() && isSupabaseConfigured()) return NextResponse.json({ error: 'Safe project saves require local storage or secure sharing.', code: 'SAVE_PROTOCOL_REQUIRED' }, { status: 503 });
   if (rawProject !== undefined) {
-    const projects = migrateProjectsPayload([rawProject]);
+    const explicitRestore = source.restoreSource != null;
+    // A restore must match the server-reconstructed source exactly. Migrating a
+    // preview here could insert defaults or rewrite old values after confirmation.
+    const projects = explicitRestore
+      ? (validRestoreProject(rawProject) ? [rawProject] : [])
+      : migrateProjectsPayload([rawProject]);
     if (projects.length !== 1) {
       return NextResponse.json({ error: "project contains invalid project data" }, { status: 400 });
     }
@@ -240,38 +248,23 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: 'Reserved update tokens cannot be used.' }, { status: 400 });
     }
     if (isSecureSharingEnabled()) {
+      if (forceOverwrite) return NextResponse.json({ error: 'Overwrite is unavailable. Reload the latest project and keep your changes in Recovery.', code: 'STALE_BASE' }, { status: 409 });
       const snapshot = await callSecureSharingFunctionJson(request, "projects.read");
       if (snapshot.status !== 200) return NextResponse.json(snapshot.body, { status: snapshot.status });
       const rawExisting = rawProjectList(snapshot.body).filter((candidate) =>
         candidate && typeof candidate === 'object' && (candidate as { id?: unknown }).id === project.id);
-      const blocked = shrinkageResponse(rawExisting, [rawProject], source);
+      // Explicit restore already has a preview/confirmation. Only this path
+      // bypasses count-loss confirmation; SQL still validates the trusted source,
+      // the complete candidate, the original base and the edit lease atomically.
+      const blocked = explicitRestore ? undefined : shrinkageResponse(rawExisting, [rawProject], source);
       if (blocked) return blocked;
-      if (forceOverwrite) {
-        const latest = await callSecureSharingFunctionJson(request, "projects.read");
-        if (latest.status !== 200) {
-          return NextResponse.json(latest.body, { status: latest.status });
-        }
-        const latestProjects = migrateProjectsPayload(latest.body.projects);
-        const existing = latestProjects.find((candidate) => candidate.id === project.id);
-        if (!existing || !forceOverwriteUpdatedAt || existing.updatedAt !== forceOverwriteUpdatedAt) {
-          return projectConflictResponse(existing);
-        }
-        return callSecureSharingFunction(request, "project.save", {
-          ...secureSharingSessionPayload(request),
-          projectId: project.id,
-          saveProtocol: SAVE_PROTOCOL_VERSION,
-          project,
-          expectedUpdatedAt: existing.updatedAt,
-          createOnly,
-          forceOverwrite,
-          forceOverwriteUpdatedAt,
-        });
-      }
       return callSecureSharingFunction(request, "project.save", {
         ...secureSharingSessionPayload(request),
         projectId: project.id,
         saveProtocol: SAVE_PROTOCOL_VERSION,
         project,
+        base: source.base,
+        restoreSource: source.restoreSource,
         expectedUpdatedAt,
         createOnly,
         forceOverwrite,
@@ -294,18 +287,31 @@ export async function POST(request: Request): Promise<NextResponse> {
       const rawCurrent = rawProjectList(await readRawProjects());
       const currentProjects = migrateProjectsPayload(rawCurrent);
       const existing = currentProjects.find((candidate) => candidate.id === project.id);
+      const original = rawCurrent.find(candidate => candidate && typeof candidate === 'object' && (candidate as { id?: unknown }).id === project.id) as ProjectData | undefined;
       if (currentProjects.filter(candidate => candidate.id === project.id).length > 1) { conflict = true; return; }
       if (existing?.commonRevisions !== undefined && !validCommonHistory(existing.commonRevisions)) {
         migrationBlocked = NextResponse.json({ error: 'Saved common history is invalid. Check the original data.', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 }); return;
       }
-      if (existing && await matchesSaveIntent(project, existing)) { project = existing; nextProjects = currentProjects; return; }
+      if (original && await matchesSaveIntent(project, original)) { project = original; nextProjects = currentProjects; return; }
       if (existing && project.lastSaveOperation && existing.lastSaveOperation?.id === project.lastSaveOperation.id) {
         migrationBlocked = NextResponse.json({ error: 'The contents for the same save operation do not match. Check Save Status.', code: 'SAVE_OPERATION_CONFLICT' }, { status: 409 }); return;
       }
       if (!createOnly && !existing) { conflict = true; nextProjects = currentProjects; return; }
+      if (explicitRestore && original) {
+        try {
+          const base = localProjectBase(original);
+          if (!validProjectBase(source.base) || source.base.hash !== base.hash || source.base.updatedAt !== base.updatedAt) throw new Error('The restore base changed. Open a new preview.');
+          if (canonicalJson(saveContent(localRevisionRestore(original, source.restoreSource as RestoreSource))) !== canonicalJson(saveContent(project))) throw new Error('The restore contents do not match the selected revision.');
+        } catch (error) {
+          migrationBlocked = NextResponse.json({ error: error instanceof Error ? error.message : 'Restore failed.', code: 'STALE_BASE' }, { status: 409 }); return;
+        }
+      }
       if (createOnly && (await trashedProjects()).some(item => item.id === project.id)) { conflict = true; return; }
-      if (!commonHistoryPreserved(existing, project)) {
+      if (!commonHistoryPreserved(original, project)) {
         migrationBlocked = NextResponse.json({ error: 'Existing common history cannot be deleted or changed.', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 }); return;
+      }
+      if (!roomHistoryPreserved(original, project)) {
+        migrationBlocked = NextResponse.json({ error: 'Existing room revision history cannot be deleted or changed.', code: 'ROOM_HISTORY_PROTECTED' }, { status: 409 }); return;
       }
       if (existing && createOnly) {
         conflict = true;
@@ -332,7 +338,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         return;
       }
       const rawExisting = rawCurrent.filter((candidate) => candidate && typeof candidate === 'object' && (candidate as { id?: unknown }).id === project.id);
-      migrationBlocked = shrinkageResponse(rawExisting, [rawProject], source);
+      migrationBlocked = explicitRestore ? undefined : shrinkageResponse(rawExisting, [rawProject], source);
       if (migrationBlocked) return;
       const previousTime = Date.parse(existing?.updatedAt ?? '');
       project = { ...project, updatedAt: new Date(Math.max(Date.now(), Number.isFinite(previousTime) ? previousTime + 1 : 0)).toISOString() };
@@ -401,7 +407,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (snapshot.status !== 200) return NextResponse.json(snapshot.body, { status: snapshot.status });
     const blocked = restoreRaw ? undefined : shrinkageResponse(targetedRaw(rawProjectList(snapshot.body)), rawProjects, source);
     if (blocked) return blocked;
-    return callSecureSharingFunction(request, "projects.merge", { ...secureSharingSessionPayload(request), saveProtocol: SAVE_PROTOCOL_VERSION, projects, expectedUpdatedAts, restoreProjectIds, restoreRaw });
+    return callSecureSharingFunction(request, "projects.merge", { ...secureSharingSessionPayload(request), saveProtocol: SAVE_PROTOCOL_VERSION, projects, bases: source.bases, expectedUpdatedAts, restoreProjectIds, restoreRaw });
   }
 
   if (isSupabaseConfigured()) return NextResponse.json({ error: 'Safe list updates require local storage or secure sharing.' }, { status: 503 });
@@ -422,6 +428,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (matches.length === 1 && await matchesSaveIntent(project, matches[0])) { receipts.set(project.id, matches[0]); continue; }
       if (matches[0] && project.lastSaveOperation && matches[0].lastSaveOperation?.id === project.lastSaveOperation.id) return NextResponse.json({ error: 'The contents for the same save operation do not match.', code: 'SAVE_OPERATION_CONFLICT' }, { status: 409 });
       if (!commonHistoryPreserved(matches[0], project)) return NextResponse.json({ error: 'Existing common history cannot be deleted or changed.', code: 'COMMON_HISTORY_PROTECTED' }, { status: 409 });
+      if (!roomHistoryPreserved(matches[0], project)) return NextResponse.json({ error: 'Existing room revision history cannot be deleted or changed.', code: 'ROOM_HISTORY_PROTECTED' }, { status: 409 });
       if (matches.length > 1 || (matches.length ? matches[0].updatedAt !== expectedUpdatedAts[project.id] : expectedUpdatedAts[project.id] !== null)) return projectConflictResponse(matches[0]);
       const originals = trashProjects.filter(item => item.id === project.id);
       if (restoreIds.has(project.id)) {

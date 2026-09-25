@@ -9,6 +9,7 @@ import { backlightPaleColor } from "../lib/backlightColors";
 import CfsLinkMapPanel from "./CfsLinkMapPanel";
 import CommandView, { type CommandSettingOverlayRequest } from "./CommandView";
 import SceneView, { type AreaSceneSettingOverlayRequest } from "./SceneView";
+import RoomSceneView, { type RoomSceneSettingOverlayRequest } from "./RoomSceneView";
 import SwitchView, { type SwitchSettingOverlayRequest } from "./SwitchView";
 import type {
   BacklightLevelSetting,
@@ -1333,6 +1334,7 @@ export default function CfsView({
   const [cfsSwitchSettingRequest, setCfsSwitchSettingRequest] = useState<SwitchSettingOverlayRequest | null>(null);
   const [cfsCommandSettingRequest, setCfsCommandSettingRequest] = useState<CommandSettingOverlayRequest | null>(null);
   const [cfsAreaSceneSettingRequest, setCfsAreaSceneSettingRequest] = useState<AreaSceneSettingOverlayRequest | null>(null);
+  const [cfsRoomSceneSettingRequest, setCfsRoomSceneSettingRequest] = useState<RoomSceneSettingOverlayRequest | null>(null);
   const [repairedLinkTargetIds, setRepairedLinkTargetIds] = useState<Set<string>>(new Set());
   const [lastHvacRepairSummary, setLastHvacRepairSummary] = useState<{ count: number; skipped: number } | null>(null);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
@@ -3341,26 +3343,25 @@ export default function CfsView({
       .join(" / ") || "-";
   }
 
-  function areaSceneSettingTargetId(col: FunctionColumn): string {
-    if (!col.roomScene) return "";
-    for (const selection of col.roomScene.areaSceneSelections ?? []) {
+  function areaSceneDefinitionTargetId(roomScene: RoomScene): string {
+    for (const selection of roomScene.areaSceneSelections ?? []) {
       const sceneId = selection.sceneId.trim();
       if (!sceneId) continue;
       const scene = scenesById.get(sceneId);
       if (scene && (!selection.areaId || scene.areaId === selection.areaId)) return scene.id;
     }
-    return "";
+    return roomType.scenes[0]?.id ?? "";
   }
 
-  function cfsSettingOverlayKind(col: FunctionColumn): "Area Scene" | "Command" | "Switch" {
-    if (col.category === "scene") return "Area Scene";
+  function cfsSettingOverlayKind(col: FunctionColumn): "Scene" | "Command" | "Switch" {
+    if (col.category === "scene") return "Scene";
     return col.category === "command" ? "Command" : "Switch";
   }
 
   function editableCfsSettingColumns(cols: readonly FunctionColumn[]): FunctionColumn[] {
     const targets = new Map<string, FunctionColumn>();
     for (const col of cols) {
-      const id = col.category === "scene" ? areaSceneSettingTargetId(col) : col.source?.id;
+      const id = col.category === "scene" ? col.roomScene?.id : col.source?.id;
       if (!id) continue;
       const key = `${col.category}:${id}`;
       if (!targets.has(key)) targets.set(key, col);
@@ -3370,11 +3371,10 @@ export default function CfsView({
 
   function cfsSettingEditTitle(col: FunctionColumn): string {
     if (col.category === "scene") {
-      if (!onScenesChange) return "Settings are not available in this view";
-      if (!areaSceneSettingTargetId(col)) return "Select an Area Scene before editing";
+      if (!onRoomScenesChange || !col.roomScene) return "Settings are not available in this view";
       if (!canEdit) return "Start editing to change settings";
       if (inspectionMode) return "Finish InspectionMode before editing settings";
-      return "Open Area Scene Setting Overlay";
+      return "Open Scene Setting Overlay";
     }
     if (!onSwitchesChange) return "Settings are not available in this view";
     if (!canEdit) return "Start editing to change settings";
@@ -3385,18 +3385,20 @@ export default function CfsView({
   function openCfsSettingOverlay(col: FunctionColumn): void {
     if (!cfsEditMode) return;
     if (col.category === "scene") {
-      const sceneId = areaSceneSettingTargetId(col);
-      if (!sceneId || !onScenesChange || !canEdit || inspectionMode) return;
+      const roomSceneId = col.roomScene?.id;
+      if (!roomSceneId || !onRoomScenesChange || !canEdit || inspectionMode) return;
       cfsSettingRequestIdRef.current += 1;
       setCfsSwitchSettingRequest(null);
       setCfsCommandSettingRequest(null);
-      setCfsAreaSceneSettingRequest({ sceneId, requestId: cfsSettingRequestIdRef.current });
+      setCfsAreaSceneSettingRequest(null);
+      setCfsRoomSceneSettingRequest({ roomSceneId, tab: "sceneValue", requestId: cfsSettingRequestIdRef.current });
       return;
     }
     if (!col.source || !onSwitchesChange || !canEdit || inspectionMode) return;
     cfsSettingRequestIdRef.current += 1;
     const requestId = cfsSettingRequestIdRef.current;
     setCfsAreaSceneSettingRequest(null);
+    setCfsRoomSceneSettingRequest(null);
     if (col.category === "command") {
       setCfsSwitchSettingRequest(null);
       setCfsCommandSettingRequest({ switchId: col.source.id, tab: "scene", requestId });
@@ -3415,7 +3417,7 @@ export default function CfsView({
     if (!cfsEditMode || !canEdit || !col) return content;
     const kind = cfsSettingOverlayKind(col);
     const disabled =
-      !(col.category === "scene" ? onScenesChange && areaSceneSettingTargetId(col) : onSwitchesChange && col.source) ||
+      !(col.category === "scene" ? onRoomScenesChange && col.roomScene : onSwitchesChange && col.source) ||
       !canEdit ||
       inspectionMode;
     return (
@@ -6027,6 +6029,39 @@ export default function CfsView({
           lastHvacRepairSummary={lastHvacRepairSummary}
           onRepairStaleHvacLinks={handleRepairStaleHvacLinks}
           onClose={() => setShowLinkMap(false)}
+        />
+      ) : null}
+
+      {!inspectionMode && onRoomScenesChange ? (
+        <RoomSceneView
+          key={`cfs-room-scene-setting-host:${roomType.id}`}
+          overlayHostOnly
+          roomScenes={roomType.roomScenes}
+          scenes={roomType.scenes}
+          circuits={circuits}
+          locations={locations}
+          deviceAssignments={roomType.deviceAssignments}
+          cfsRows={roomType.rows}
+          curtainAssignments={roomType.curtainAssignments ?? []}
+          hvacAssignments={roomType.hvacAssignments}
+          hvacSeasons={roomType.hvacSeasons}
+          switches={roomType.switches}
+          backlightLevels={backlightLevels ?? roomType.backlightLevels}
+          triggerMasters={triggerMasters}
+          onChange={onRoomScenesChange}
+          revisionChanges={revisionDiff?.roomSceneFields}
+          canEdit={canEdit}
+          externalSettingRequest={cfsRoomSceneSettingRequest}
+          canEditAreaSceneDefinitions={Boolean(onScenesChange && roomType.scenes.length)}
+          onEditAreaSceneDefinitions={roomScene => {
+            const sceneId = areaSceneDefinitionTargetId(roomScene);
+            if (!sceneId || !onScenesChange || !canEdit || inspectionMode || !cfsEditMode) return;
+            cfsSettingRequestIdRef.current += 1;
+            setCfsRoomSceneSettingRequest(null);
+            setCfsSwitchSettingRequest(null);
+            setCfsCommandSettingRequest(null);
+            setCfsAreaSceneSettingRequest({ sceneId, requestId: cfsSettingRequestIdRef.current });
+          }}
         />
       ) : null}
 

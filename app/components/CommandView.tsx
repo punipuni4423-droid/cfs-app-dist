@@ -2,7 +2,9 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { createPortal } from "react-dom";
+import SettingOverlayFrame from "./setting-overlay/SettingOverlayFrame";
+import SceneValueSettingPanel from "./setting-overlay/SceneValueSettingPanel";
+import BacklightSettingPanel from "./setting-overlay/BacklightSettingPanel";
 import type {
   BacklightLevelSetting,
   CircuitEntry,
@@ -24,7 +26,6 @@ import { byScenePalladiomBacklightTargets } from "../lib/useCfsZoneRows";
 import { useDragReorder } from "../lib/useDragReorder";
 import { selectedSceneIdsForSwitch as selectedSceneIds } from "../lib/cfsValueResolver";
 import AutoGrowTextarea from "./AutoGrowTextarea";
-import BacklightConditionSelect from "./BacklightConditionSelect";
 import Combobox from "./Combobox";
 import { buildSettingTargetGroups, hvacSettingTargets as buildHvacSettingTargets, settingTargetIds, type SettingTarget } from "../lib/settingTargets";
 import {
@@ -35,7 +36,6 @@ import {
   type BulkSettingMode,
 } from "../lib/settingValues";
 import HvacSettingPanel from "./HvacSettingPanel";
-import CurtainActionButtons from "./CurtainActionButtons";
 import ActionIconButton from "./ActionIconButton";
 import DragHandle from "./DragHandle";
 import { createAppId } from '../lib/id';
@@ -488,55 +488,14 @@ export default function CommandView({
       update(sw.id, { backlightTarget: Array.from(next).join(",") });
     };
     return (
-      <div className="scene-card switch-setting-card">
-        <div className="switch-setting-layout switch-backlight-setting-layout">
-          <div className="switch-setting-section">
-            <div className="switch-setting-title">Target</div>
-            <div className="switch-target-list">
-              {byScenePalladiomSwitches.length === 0 ? (
-                <span className="cell-readonly">No By Scene Palladiom switches.</span>
-              ) : (
-                byScenePalladiomSwitches.map((target) => {
-                  const targetId = switchGroupId(target);
-                  return (
-                    <label className="switch-target-option" key={targetId}>
-                      <input
-                        type="checkbox"
-                        checked={selectedTargets.has(targetId)}
-                        onChange={(e) => updateTargets(targetId, e.target.checked)}
-                        disabled={!canEdit}
-                      />
-                      <span>
-                        {[target.switchNumber, target.switchName].filter(Boolean).join(" - ") || "(No switch #)"}
-                      </span>
-                    </label>
-                  );
-                })
-              )}
-            </div>
-            {selectedTargets.size > 0 ? (
-              <button
-                type="button"
-                className="btn-clear-circuit"
-                style={{ marginTop: "0.5rem" }}
-                onClick={() => update(sw.id, { backlightTarget: "" })}
-                disabled={!canEdit}
-              >
-                Clear Target
-              </button>
-            ) : null}
-          </div>
-          <div className="switch-setting-section">
-            <div className="switch-setting-title">Condition</div>
-            <BacklightConditionSelect
-              value={backlightConditionValue(sw.backlightCondition)}
-              conditions={backlightConditions}
-              onChange={(value) => update(sw.id, { backlightCondition: value })}
-              disabled={!canEdit}
-            />
-          </div>
-        </div>
-      </div>
+      <BacklightSettingPanel
+        targets={byScenePalladiomSwitches.map(target => ({ id: switchGroupId(target), label: [target.switchNumber, target.switchName].filter(Boolean).join(" - ") || "(No switch #)" }))}
+        selection={{ mode: "editable", selectedIds: selectedTargets, onToggle: updateTargets, onClear: () => update(sw.id, { backlightTarget: "" }) }}
+        condition={backlightConditionValue(sw.backlightCondition)}
+        conditions={backlightConditions}
+        onConditionChange={value => update(sw.id, { backlightCondition: value })}
+        canEdit={canEdit}
+      />
     );
   }
 
@@ -554,225 +513,26 @@ export default function CommandView({
     });
   }
 
-  function renderSettingPanel(sw: SwitchEntry) {
+  function renderSettingPanel(sw: SwitchEntry): ReactNode {
     return (
-      <div className="scene-card switch-setting-card">
-        <div className="switch-setting-layout">
-          <div className="switch-setting-section switch-setting-scene-section">
-            <div className="switch-setting-title">Area Scene</div>
-            <div className="matrix-scroll">
-              <table className="matrix-table master-table switch-setting-table switch-scene-table">
-                <thead>
-                  <tr>
-                    <th>Area</th>
-                    <th>Scene</th>
-                    <th className="col-center">Clear</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {areasWithScenes.length === 0 ? (
-                    <tr>
-                      <td colSpan={3} className="screen-empty">
-                        No areas with scenes are registered.
-                      </td>
-                    </tr>
-                  ) : (
-                    areasWithScenes.map((area) => {
-                      const areaScenes = scenes.filter((scene) => scene.areaId === area.id);
-                      return (
-                        <tr key={area.id}>
-                          <td><span className="cell-readonly">{area.name || "(No name)"}</span></td>
-                          <td>
-                            <select
-                              className="cell-input"
-                              value={sceneForArea(sw, area.id)}
-                              onChange={(e) => setSceneForArea(sw, area.id, e.target.value)}
-                              disabled={!canEdit}
-                            >
-                              <option value="">-</option>
-                              {areaScenes.map((scene, index) => (
-                                <option key={scene.id} value={scene.id}>
-                                  {scene.name || `Scene ${index + 1}`}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="col-center">
-                            <button
-                              type="button"
-                              className="btn-clear-circuit"
-                              onClick={() => setSceneForArea(sw, area.id, "")}
-                              disabled={!canEdit}
-                            >
-                              Clear
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="switch-setting-section switch-setting-individual-section">
-            <div className="switch-setting-title">Individual Override</div>
-            <div className="switch-individual-list">
-              {settingTargetGroups.length === 0 ? (
-                <p className="screen-empty">No circuits are registered.</p>
-              ) : (
-                settingTargetGroups.map((area) => {
-                  const bulkKey = areaKey(sw.id, area.id);
-                  const open = expandedAreaKeys.has(bulkKey);
-                  const hasAreaSetting = area.targets.some((target) => getTargetValue(sw, target).trim() !== "");
-                  return (
-                    <div className="switch-area-panel" key={area.id}>
-                      <button
-                        type="button"
-                        className={`switch-area-toggle${hasAreaSetting ? " has-setting" : ""}`}
-                        onClick={() => toggleArea(sw.id, area.id)}
-                        aria-expanded={open}
-                      >
-                        <span className="switch-area-caret">{open ? "v" : ">"}</span>
-                        <span>{area.name || "(No name)"}</span>
-                        <span className="muted-pill">{area.targets.length}</span>
-                      </button>
-                      {open ? (
-                        <>
-                        <div className="switch-area-bulk-panel">
-                          <span className="switch-area-bulk-label">Area bulk</span>
-                          <div className="scene-level-control switch-area-bulk-control">
-                            <input
-                              className="cell-input scene-level-input"
-                              type="number"
-                              min="0"
-                              max="100"
-                              step="1"
-                              value={areaBulkValues[bulkKey] ?? ""}
-                              onChange={(e) => applyAreaBulkPercentValue(sw, area.targets, bulkKey, e.target.value)}
-                              disabled={!canEdit}
-                            />
-                            <div className="scene-step-grid switch-step-grid" aria-label="Area bulk level adjustment">
-                              <button type="button" onClick={() => stepAreaBulkValue(sw, area.targets, bulkKey, 1)} disabled={!canEdit}>+1</button>
-                              <button type="button" onClick={() => stepAreaBulkValue(sw, area.targets, bulkKey, 10)} disabled={!canEdit}>+10</button>
-                              <button type="button" onClick={() => stepAreaBulkValue(sw, area.targets, bulkKey, -1)} disabled={!canEdit}>-1</button>
-                              <button type="button" onClick={() => stepAreaBulkValue(sw, area.targets, bulkKey, -10)} disabled={!canEdit}>-10</button>
-                            </div>
-                          </div>
-                          <div className="switch-onoff-buttons switch-area-bulk-buttons" role="group" aria-label="Area On Off Uneffected Raise Lower 0.5 sec">
-                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "percent", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "percent", bulkKey)}>Apply %</button>
-                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "on", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "on", bulkKey)}>On</button>
-                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "off", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "off", bulkKey)}>Off</button>
-                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "blinkShort", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "blinkShort", bulkKey)}>Blinking (Short)</button>
-                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "blinkLong", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "blinkLong", bulkKey)}>Blinking (Long)</button>
-                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "raise", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "raise", bulkKey)}>Raise</button>
-                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "lower", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "lower", bulkKey)}>Lower</button>
-                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "halfSec", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "halfSec", bulkKey)}>0.5 sec</button>
-                            <button type="button" onClick={() => applyAreaBulk(sw, area.targets, "clear", bulkKey)} disabled={!canEdit || !canApplyAreaBulkMode(area.targets, "clear", bulkKey)}>Uneffected</button>
-                          </div>
-                        </div>
-                        <div className="matrix-scroll">
-                          <table className="matrix-table master-table switch-setting-table switch-individual-table">
-                            <thead>
-                              <tr>
-                                <th>Circuit #</th>
-                                <th>Dimming Type</th>
-                                <th>Detail</th>
-                                <th>Override</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {area.targets.map((target) => {
-                                const value = getTargetValue(sw, target);
-                                return (
-                                  <tr key={target.id}>
-                                    <td><span className="cell-readonly">{target.circuitNumber}</span></td>
-                                    <td><span className="cell-readonly">{target.dimmingType || "-"}</span></td>
-                                    <td><span className="cell-readonly">{target.detail}</span></td>
-                                    <td>
-                                      {isCurtainTarget(target) ? (
-                                        <CurtainActionButtons
-                                          value={value}
-                                          onChange={(nextValue) => handleTargetValueChange(sw, target, nextValue)}
-                                          disabled={!canEdit}
-                                        />
-                                      ) : target.isOnOff ? (
-                                        <div className="switch-onoff-buttons" role="group" aria-label="On Off Uneffected 0.5 sec">
-                                          {[
-                                            ["On", "On"],
-                                            ["Off", "Off"],
-                                            ["Blinking (Short)", "Blinking (Short)"],
-                                            ["Blinking (Long)", "Blinking (Long)"],
-                                            ["0.5 sec", "0.5 sec"],
-                                            ["", "Uneffected"],
-                                          ].map(([nextValue, label]) => (
-                                            <button
-                                              key={label}
-                                              type="button"
-                                              className={(nextValue === "" ? value === "" : value === nextValue) ? "is-active" : ""}
-                                              onClick={() => handleTargetValueChange(sw, target, nextValue)}
-                                              disabled={!canEdit}
-                                            >
-                                              {label}
-                                            </button>
-                                          ))}
-                                        </div>
-                                      ) : (
-                                        <div className="scene-level-control switch-override-control">
-                                          <input
-                                            className="cell-input scene-level-input"
-                                            type="text"
-                                            min="0"
-                                            max="100"
-                                            step="1"
-                                            value={value}
-                                            onChange={(e) => handleTargetValueChange(sw, target, e.target.value)}
-                                            disabled={!canEdit}
-                                          />
-                                          <div className="scene-step-grid switch-step-grid" aria-label="Level adjustment">
-                                            <button type="button" onClick={() => stepTargetPercent(sw, target, 1)} disabled={!canEdit}>+1</button>
-                                            <button type="button" onClick={() => stepTargetPercent(sw, target, 10)} disabled={!canEdit}>+10</button>
-                                            <button type="button" onClick={() => stepTargetPercent(sw, target, -1)} disabled={!canEdit}>-1</button>
-                                            <button type="button" onClick={() => stepTargetPercent(sw, target, -10)} disabled={!canEdit}>-10</button>
-                                          </div>
-                                          <button
-                                            type="button"
-                                            className={`btn-clear-circuit${value === "" ? " is-active" : ""}`}
-                                            onClick={() => handleTargetValueChange(sw, target, "")}
-                                            disabled={!canEdit}
-                                          >
-                                            Uneffected
-                                          </button>
-                                          <div className="scene-quick-buttons area-scene-extra-buttons">
-                                            {["Raise", "Lower"].map((option) => (
-                                              <button
-                                                key={option}
-                                                type="button"
-                                                className={value === option ? "is-active" : ""}
-                                                onClick={() => handleTargetValueChange(sw, target, option)}
-                                                disabled={!canEdit}
-                                              >
-                                                {option}
-                                              </button>
-                                            ))}
-                                          </div>
-                                        </div>
-                                      )}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                        </>
-                      ) : null}
-                    </div>
-                  );
-                })
-              )}
-            </div>
+      <SceneValueSettingPanel
+        areasWithScenes={areasWithScenes} scenes={scenes} targetGroups={settingTargetGroups} canEdit={canEdit}
+        sceneForArea={areaId => sceneForArea(sw, areaId)}
+        onSceneForAreaChange={(areaId, sceneId) => setSceneForArea(sw, areaId, sceneId)}
+        isAreaExpanded={areaId => expandedAreaKeys.has(areaKey(sw.id, areaId))}
+        onAreaToggle={areaId => toggleArea(sw.id, areaId)}
+        areaHasSetting={area => area.targets.some(target => getTargetValue(sw, target).trim() !== "")}
+        bulk={{
+          value: area => areaBulkValues[areaKey(sw.id, area.id)] ?? "",
+          onPercentChange: (area, value) => applyAreaBulkPercentValue(sw, area.targets, areaKey(sw.id, area.id), value),
+          onStep: (area, delta) => stepAreaBulkValue(sw, area.targets, areaKey(sw.id, area.id), delta),
+          canApply: (area, mode) => canApplyAreaBulkMode(area.targets, mode, areaKey(sw.id, area.id)),
+          onApply: (area, mode) => applyAreaBulk(sw, area.targets, mode, areaKey(sw.id, area.id)),
+        }}
+        valueForTarget={target => getTargetValue(sw, target)}
+        onTargetValueChange={(target, value) => handleTargetValueChange(sw, target, value)}
+        onTargetStep={(target, delta) => stepTargetPercent(sw, target, delta)}
+      >
             <HvacSettingPanel
               targets={hvacSettingTargets}
               getValue={(targetId) => getPercent(sw, targetId)}
@@ -792,9 +552,7 @@ export default function CommandView({
               seasons={hvacSeasons}
               disabled={!canEdit}
             />
-          </div>
-        </div>
-      </div>
+      </SceneValueSettingPanel>
     );
   }
 
@@ -803,33 +561,13 @@ export default function CommandView({
     const activeBacklight = commands.find((command) => expandedBacklightIds.has(command.id));
     const active = activeSetting ?? activeBacklight;
     if (!active) return null;
-    const overlay = (
-      <div className="setting-overlay" role="dialog" aria-modal="true">
-        <button
-          type="button"
-          className="setting-overlay-backdrop"
-          aria-label="Close settings"
-          onClick={closeSettingOverlay}
-        />
-        <div className="setting-overlay-panel">
-          <div className="setting-overlay-header">
-            <strong>{commandSettingTitle(active)}</strong>
-            <div className="setting-overlay-actions">
-              <button
-                type="button"
-                className={`btn btn-secondary btn-sm${activeSetting ? " is-active" : ""}`}
-                onClick={() => openCommandSetting(active.id)}
-              >
-                Scene Value
-              </button>
-              <button
-                type="button"
-                className={`btn btn-secondary btn-sm${activeBacklight ? " is-active" : ""}`}
-                onClick={() => openBacklightSetting(active.id)}
-              >
-                Backlight
-              </button>
-              {bulkApplyMode ? (
+    return (
+      <SettingOverlayFrame
+        title={commandSettingTitle(active)}
+        activeTab={activeSetting ? "sceneValue" : "backlight"}
+        onTabChange={tab => tab === "sceneValue" ? openCommandSetting(active.id) : openBacklightSetting(active.id)}
+        onClose={closeSettingOverlay}
+        actions={<>              {bulkApplyMode ? (
                 <button
                   type="button"
                   className="btn btn-primary btn-sm"
@@ -839,18 +577,12 @@ export default function CommandView({
                 >
                   Apply to {bulkSelectedIds.size} rows
                 </button>
-              ) : null}
-              <button type="button" className="btn btn-danger-ghost" onClick={closeSettingOverlay}>
-                Close
-              </button>
-            </div>
-          </div>
-          {activeSetting ? renderSettingPanel(activeSetting) : null}
-          {activeBacklight ? renderBacklightPanel(activeBacklight) : null}
-        </div>
-      </div>
+              ) : null}</>}
+      >
+        {activeSetting ? renderSettingPanel(activeSetting) : null}
+        {activeBacklight ? renderBacklightPanel(activeBacklight) : null}
+      </SettingOverlayFrame>
     );
-    return typeof document === "undefined" ? null : createPortal(overlay, document.body);
   }
 
   if (overlayHostOnly) {

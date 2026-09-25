@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./support/safe-test";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
+import { readNativeDraftProjects } from "./support/native-project-drafts";
 
 // Command tab (2026-08-21): per-row Backlight Setting button + bulk-select
 // checkboxes with top-right Scene/Backlight Setting buttons.
@@ -84,9 +85,8 @@ test.describe("Command tab backlight + bulk setting", () => {
     await panel.locator("button").filter({ hasText: /^Apply to 2 rows$/ }).click();
     await page.waitForTimeout(1800);
 
-    const rows = await page.evaluate(() => {
+    const rows = await readNativeDraftProjects(page).then(drafts => {
       try {
-        const drafts = JSON.parse(localStorage.getItem("cfs-project-drafts-v2") || "[]");
         return (drafts?.[0]?.roomTypes?.[0]?.switches ?? [])
           .filter((item: { kind?: string }) => item.kind === "command")
           .map((item: { backlightCondition?: string; backlightTarget?: string }) => ({

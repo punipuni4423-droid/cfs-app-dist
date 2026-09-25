@@ -107,7 +107,7 @@ test('normalization wire Current NewRev idle keeps all kinds, immutable requests
 
 // Isolated real-browser IndexedDB harness. No application API or customer data.
 function bundle() {
-  const names = ['canonicalJson', 'id', 'projectDraftStore', 'projectSaveProtocol', 'projectSaveState', 'projectCommonHistory'];
+  const names = ['canonicalJson', 'id', 'projectDraftStore', 'projectSaveProtocol', 'projectSaveState', 'projectCommonHistory', 'projectBase', 'projectImportRecovery'];
   return Object.fromEntries(names.map(name => [name, ts.transpileModule(fs.readFileSync(path.resolve(`app/lib/${name}.ts`), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText]));
 }
 async function harness(page: Page) {
@@ -253,7 +253,7 @@ test('HTTP 200 invalid receipt never becomes Saved and blocks a second blind ope
   expect(afterReload.intent).toEqual(unresolved.intent);
 });
 
-for (const outcome of ['success', 'failure'] as const) test(`idle common-only ${outcome}: heartbeat continues, no repeated POST, exact autosave note`, async ({ page }) => {
+test('idle common-only retains draft, keeps heartbeat and never saves automatically', async ({ page }) => {
   test.setTimeout(65_000);
   const state = await installLocalEditingMocks(page);
   const project = createNewProject('Synthetic idle common only');
@@ -272,36 +272,18 @@ for (const outcome of ['success', 'failure'] as const) test(`idle common-only ${
   await page.locator('button.screen-card').filter({ hasText: project.name }).click();
   await page.getByRole('tab', { name: 'Remarks', exact: true }).click();
   await page.getByLabel('Body for remark 1', { exact: true }).fill('unsaved-common-only');
-  let release = () => {};
-  const gate = new Promise<void>(resolve => { release = resolve; });
   await page.context().route('**/api/projects', async route => {
     if (route.request().method() !== 'POST') return route.fallback();
-    posts++; const payload = route.request().postDataJSON();
-    await gate;
-    if (outcome === 'failure') return route.fulfill({ status: 503, json: { error: 'synthetic failure' } });
-    state.projects = [payload.project]; return route.fulfill({ json: { ok: true, project: payload.project } });
+    posts++;
+    return route.fulfill({ status: 500, json: { error: 'Unexpected automatic save' } });
   });
-  try {
-    armed = true;
-    await expect.poll(() => posts, { timeout: 20_000 }).toBe(1);
-    const start = heartbeats;
-    await page.waitForTimeout(11_500);
-    expect(heartbeats).toBeGreaterThan(start);
-    expect(releases).toBe(0);
-    release();
-    if (outcome === 'success') {
-      await expect.poll(() => releases).toBe(1);
-      const saved = state.projects[0] as unknown as typeof project;
-      expect(saved.roomTypes).toHaveLength(0);
-      expect(saved.commonRevisions?.at(-1)?.note).toBe('Automatic save');
-      expect(saved.commonRevisions?.at(-1)?.snapshot.remarks?.[0].body).toBe('unsaved-common-only');
-    } else {
-      await expect(page.getByRole('dialog', { name: 'Finish editing with draft changes?' })).toBeVisible();
-      await page.waitForTimeout(10_500);
-      expect(posts).toBe(1);
-      expect(releases).toBe(0);
-    }
-  } finally { release(); }
+  armed = true;
+  await expect(page.getByRole('dialog', { name: 'Finish editing with draft changes?' })).toBeVisible({ timeout: 20000 });
+  const start = heartbeats;
+  await expect.poll(() => heartbeats, { timeout: 15000 }).toBeGreaterThan(start);
+  expect(posts).toBe(0); expect(releases).toBe(0);
+  expect((state.projects[0] as any).remarks[0].body).toBe('server');
+  expect((await readNativeDraftRecords(page)).some(record => record.project.remarks?.[0].body === 'unsaved-common-only')).toBe(true);
 });
 
 test('full backup/migration roundtrip preserves common history and flags malformed history without deleting bytes', () => {
@@ -341,42 +323,35 @@ test('409 Reload preserves the edited durable draft across reload instead of sav
   expect(raw).toContain('local-before-conflict');
   expect(raw).not.toContain('other-editor');
   await openSaveRecovery(page);
-  await expect(page.getByRole('button', { name: 'Export Original Draft', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Export Original Draft', exact: true }).first()).toBeVisible();
 });
 
-test('confirmed force save with lost response retains the same operation and force CAS token for explicit retry', async ({ page }, testInfo) => {
+test('lost response retains the same operation and original base for explicit retry without overwrite', async ({ page }) => {
   const state = await installLocalEditingMocks(page);
-  const project = createNewProject('Synthetic force unknown');
+  const project = createNewProject('Synthetic unknown receipt');
   project.remarks = [{ id: 'remark', title: 'Initial', body: 'base', hasTable: false, columns: [], rows: [] }];
   state.projects = [project as unknown as Record<string, unknown>];
   await page.goto('/');
   await page.locator('button.screen-card').filter({ hasText: project.name }).click();
   await page.getByRole('tab', { name: 'Remarks', exact: true }).click();
-  await page.getByLabel('Body for remark 1', { exact: true }).fill('my-confirmed-overwrite');
+  await page.getByLabel('Body for remark 1', { exact: true }).fill('my uncertain save');
   const attempts: any[] = [];
   await page.context().route('**/api/projects', async route => {
     if (route.request().method() !== 'POST') return route.fallback();
     const payload = route.request().postDataJSON(); attempts.push(payload);
-    if (attempts.length === 1) {
-      const server = { ...project, updatedAt: '2031-01-01T00:00:00.000Z' };
-      state.projects = [server as unknown as Record<string, unknown>];
-      return route.fulfill({ status: 409, json: { code: 'PROJECT_CONFLICT', error: 'Project was updated by another user.', project: server } });
-    }
     state.projects = [payload.project];
-    if (attempts.length === 2) return route.fulfill({ status: 503, json: { error: 'synthetic response loss' } });
+    if (attempts.length === 1) return route.fulfill({ status: 503, json: { error: 'synthetic response loss' } });
     return route.fulfill({ json: { ok: true, project: payload.project } });
   });
-  page.on('dialog', dialog => dialog.type() === 'prompt' ? dialog.accept('O') : dialog.accept());
   await page.getByRole('button', { name: 'Save current project without a new revision' }).click();
   await expect(page.getByRole('button', { name: 'Retry This Save', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Retry This Save', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Retry This Save', exact: true })).toHaveCount(0);
-  expect(attempts).toHaveLength(3);
-  expect(attempts[2].forceOverwriteUpdatedAt).toBe('2031-01-01T00:00:00.000Z');
-  expect(attempts[2].forceOverwrite).toBe(true);
-  expect(attempts[2].expectedUpdatedAt).toBe(attempts[1].expectedUpdatedAt);
-  expect(attempts[2].project).toEqual(attempts[1].project);
-  await page.screenshot({ path: testInfo.outputPath('critical-force-confirmed.png'), fullPage: true });
+  expect(attempts).toHaveLength(2);
+  expect(attempts[1].forceOverwrite).toBe(false);
+  expect(attempts[1].expectedUpdatedAt).toBe(attempts[0].expectedUpdatedAt);
+  expect(attempts[1].project.lastSaveOperation).toEqual(attempts[0].project.lastSaveOperation);
+  expect(attempts[1].project).toEqual(attempts[0].project);
 });
 
 test('New Revision captures normalized new rows and preserves prior snapshot bytes across reload', async ({ page }, testInfo) => {

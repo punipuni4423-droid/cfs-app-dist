@@ -116,8 +116,11 @@ async function gotoRootRobust(page: Page): Promise<void> {
         // draft. Keep it through the mocked save; do not discard the seed.
         const finish = page.getByRole('dialog', { name: 'Finish editing with draft changes?' });
         if (await finish.isVisible()) {
-          await finish.getByRole('button', { name: 'Save Current & Finish', exact: true }).click();
+          await finish.getByRole('button', { name: 'Continue Editing', exact: true }).click();
           await expect(finish).toBeHidden();
+          await page.getByRole('button', { name: 'Save current project without a new revision', exact: true }).click();
+          await expect(page.locator('.revision-save-status-label')).toHaveText('Saved');
+          await backToList.click();
         }
       }
       await expect(projectListReady).toBeVisible({ timeout: 15000 });

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./support/safe-test";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
+import { readNativeDraftProjects } from "./support/native-project-drafts";
 
 // Bulk setting feature (2026-08-21): checkbox column left of Function
 // Setting + toolbar Scene/Backlight Setting buttons that apply one panel's
@@ -91,9 +92,8 @@ test.describe("Switch bulk setting", () => {
     // Both rows carry the same condition in the persisted draft, and their
     // switch-specific backlight targets are untouched by the bulk copy.
     await page.waitForTimeout(1800);
-    const rows = await page.evaluate(() => {
+    const rows = await readNativeDraftProjects(page).then(drafts => {
       try {
-        const drafts = JSON.parse(localStorage.getItem("cfs-project-drafts-v2") || "[]");
         return (drafts?.[0]?.roomTypes?.[0]?.switches ?? [])
           .filter((item: { kind?: string }) => item.kind === "lutronPd")
           .map((item: { backlightCondition?: string; backlightTarget?: string; backlightAssignment?: string }) => ({

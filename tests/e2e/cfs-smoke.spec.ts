@@ -1,19 +1,29 @@
 /**
  * CFS Web App - E2E Smoke Tests
  * 対象: http://localhost:3001 (PLAYWRIGHT_BASE_URL で上書き可)
- * Storage: cfs-projects-v14 (プロジェクト), cfs-app-settings-v1 (デバイスマスター)
+ * Draft observation: native IndexedDB; server writes are mocked per browser context.
  */
 import { test, expect, type Page } from './support/safe-test';
 import { installLocalEditingMocks } from './support/secure-sharing-mock';
+import { readNativeDraftProject } from './support/native-project-drafts';
 
 const PROJECT_NAME = `E2E-Test-${Date.now()}`;
 const ROOM_NAME = `TestRoom-${Date.now()}`;
+let mockState: Awaited<ReturnType<typeof installLocalEditingMocks>>;
 
 test.beforeEach(async ({ page }) => {
-  await installLocalEditingMocks(page);
+  mockState = await installLocalEditingMocks(page);
 });
 
 // ---- helpers ----
+
+function observeProjectPosts(page: Page): () => number {
+  let posts = 0;
+  page.on('request', request => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/projects') posts += 1;
+  });
+  return () => posts;
+}
 
 /** localStorage を完全クリアする */
 async function clearStorage(page: Page): Promise<void> {
@@ -115,6 +125,68 @@ async function setupRoomAndSelectDeviceAssign(page: Page, roomName: string): Pro
 }
 
 // ============================================================
+
+async function addDeviceGroup(page: Page, model = 'MQSE-4S1-D'): Promise<void> {
+  await page.getByRole('tab', { name: model.includes('DAL') ? 'DALI' : 'On/Off / Dimming', exact: true }).click();
+  const count = await page.locator('tbody .device-cell select').count();
+  await page.locator('.btn-add-row').first().click();
+  const dialog = page.getByRole('dialog', { name: 'Select Device', exact: true });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button').filter({ has: page.locator('div').filter({ hasText: new RegExp('^' + model + '$') }) }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator('tbody .device-cell select')).toHaveCount(count + 1);
+}
+async function registerCircuit(page: Page, designer: string, internal: string, dimming = 'On/Off', pcs = '1') {
+  await switchTab(page, /^Circuit$/);
+  await page.locator('.btn-add-row').first().click();
+  // The empty-state placeholder occupies a tbody row before the first add.
+  const index = (await page.locator('tbody tr').count()) - 1;
+  const row = page.locator('tbody tr').nth(index);
+  await row.locator('.device-cell textarea').fill(designer);
+  await row.locator('textarea').nth(1).fill(internal);
+  await row.locator('select').first().selectOption(dimming);
+  await row.locator('.combobox-input').first().fill(pcs);
+  await page.keyboard.press('Tab');
+  return row;
+}
+async function setupAssignments(page: Page, designers: string[]): Promise<void> {
+  await createAndOpenProject(page, PROJECT_NAME + '-assign-' + Date.now());
+  await createRoomTypeAndSelect(page, ROOM_NAME);
+  for (const name of designers) await registerCircuit(page, name, 'I-' + name);
+  await switchTab(page, /^Device Assign$/);
+  await addDeviceGroup(page);
+}
+async function assignAt(page: Page, rowIndex: number, circuit: string): Promise<void> {
+  const input = page.locator('tbody tr').nth(rowIndex).locator('.combobox-input').first();
+  await input.fill(circuit);
+  await input.press('Tab');
+  await expect(input).toHaveValue(circuit);
+}
+async function logicalColumn(page: Page, header: string) {
+  return page.locator('table').first().evaluate((element, name) => {
+    const table = element as HTMLTableElement;
+    const index = [...table.tHead!.rows[0].cells].findIndex(cell => cell.textContent?.trim() === name);
+    if (index < 0) throw new Error('Missing column ' + name);
+    type Cell = { text: string; originRow: number; rowSpan: number; editable: boolean };
+    const grid: Cell[][] = [];
+    [...table.tBodies[0].rows].forEach((row, rowIndex) => {
+      grid[rowIndex] ??= [];
+      let column = 0;
+      for (const cell of [...row.cells]) {
+        while (grid[rowIndex][column]) column++;
+        const value = { text: cell.textContent?.trim() ?? '', originRow: rowIndex, rowSpan: cell.rowSpan,
+          editable: !!cell.querySelector('input,textarea,select') };
+        for (let y = rowIndex; y < rowIndex + cell.rowSpan; y++) {
+          grid[y] ??= [];
+          for (let x = column; x < column + cell.colSpan; x++) grid[y][x] = value;
+        }
+        column += cell.colSpan;
+      }
+    });
+    return grid.map(row => row[index]);
+  }, header);
+}
+
 // テスト 1: アプリ起動 & プロジェクト一覧
 // ============================================================
 test.describe('01 - プロジェクト一覧', () => {
@@ -216,53 +288,46 @@ test.describe('03 - Area タブ', () => {
     await expect(colorSelect).toBeVisible();
   });
 
-  test('Colorプルダウンで Red を選択すると行の背景色が変わる', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await expect(page.locator('tbody input').first()).toBeVisible({ timeout: 5000 });
-
-    const colorSelect = page.locator('.color-cell select, select.color-select').first();
-    await colorSelect.selectOption({ value: '#FFC7CE' });
-
+  test('現行 Area パレットで選択すると行の背景色が変わる', async ({ page }) => {
+    await page.locator('.btn-add-row').first().click();
     const row = page.locator('tbody tr').last();
-    await expect(async () => {
-      const bgColor = await row.evaluate((el) =>
-        window.getComputedStyle(el).backgroundColor
-      );
-      expect(bgColor).not.toBe('rgba(0, 0, 0, 0)');
-      expect(bgColor).not.toBe('transparent');
-    }).toPass({ timeout: 3000 });
+    await row.locator('.color-select').selectOption('#FF8A65');
+    await expect(row.locator('.color-select')).toHaveValue('#FF8A65');
+    await expect(row).toHaveCSS('background-color', 'rgb(255, 138, 101)');
   });
 
-  test('削除ボタン → キャンセルで行が消えない', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await expect(page.locator('tbody input').first()).toBeVisible({ timeout: 5000 });
 
-    const inputsBefore = await page.locator('tbody input').count();
-
-    page.once('dialog', (dialog) => dialog.dismiss());
-    await page.locator('tbody tr').last().locator('button').filter({ hasText: /削除/ }).click();
-
-    await page.waitForTimeout(500);
-    expect(await page.locator('tbody input').count()).toBe(inputsBefore);
-  });
 
   test('削除ボタン → OK で行が削除される', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await expect(page.locator('tbody input').first()).toBeVisible({ timeout: 5000 });
-
-    const inputsBefore = await page.locator('tbody input').count();
-
-    page.once('dialog', (dialog) => dialog.accept());
-    await page.locator('tbody tr').last().locator('button').filter({ hasText: /削除/ }).click();
-
-    await expect(async () => {
-      const inputsAfter = await page.locator('tbody input').count();
-      const emptyMsg = await page.locator('tbody .screen-empty').count();
-      expect(inputsAfter < inputsBefore || emptyMsg > 0).toBe(true);
-    }).toPass({ timeout: 5000 });
+    const posts = observeProjectPosts(page);
+    const serverBefore = JSON.stringify(mockState.projects);
+    await page.locator('.btn-add-row').first().click();
+    await page.locator('tbody tr').last().locator('input').first().fill('AREA-KEEP-UNSAVED');
+    await page.locator('.btn-add-row').first().click();
+    await page.locator('tbody tr').last().locator('input').first().fill('AREA-DELETE-UNSAVED');
+    await expect.poll(async () => (await readNativeDraftProject(page))?.locations.at(-1)?.name).toBe('AREA-DELETE-UNSAVED');
+    const before = (await readNativeDraftProject(page))!.locations;
+    const target = before.find(row => row.name === 'AREA-DELETE-UNSAVED')!;
+    expect(target?.id).toBeTruthy();
+    expect(before.some(row => row.name === 'AREA-KEEP-UNSAVED')).toBe(true);
+    // Edits within 900 ms form one Undo step; deletion must be its own action.
+    await page.waitForTimeout(1050);
+    const buttons = page.getByRole('button', { name: 'Delete Area', exact: true });
+    const count = await buttons.count();
+    expect(count).toBeGreaterThan(0);
+    await buttons.last().click();
+    await expect(buttons).toHaveCount(count - 1);
+    await expect.poll(async () => (await readNativeDraftProject(page))?.locations).toEqual(before.filter(row => row.id !== target.id));
+    expect(posts()).toBe(0);
+    expect(JSON.stringify(mockState.projects)).toBe(serverBefore);
+    const undo = page.getByRole('button', { name: 'Undo', exact: true });
+    await expect(undo).toBeEnabled();
+    await undo.click();
+    await expect(buttons).toHaveCount(count);
+    await expect.poll(async () => (await readNativeDraftProject(page))?.locations).toEqual(before);
+    expect(posts()).toBe(0);
+    expect(JSON.stringify(mockState.projects)).toBe(serverBefore);
+    await expect(page.locator('.revision-save-status-label')).toHaveText('Draft');
   });
 });
 
@@ -300,18 +365,25 @@ test.describe('04 - Fixture タブ', () => {
   });
 
   test('削除ボタン → OK で Fixture 行が削除される', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await expect(page.locator('tbody input').first()).toBeVisible({ timeout: 5000 });
-
-    page.once('dialog', (dialog) => dialog.accept());
-    await page.locator('tbody tr').last().locator('button').filter({ hasText: /削除/ }).click();
-
-    await expect(async () => {
-      const inputCount = await page.locator('tbody input').count();
-      const emptyMsg = await page.locator('tbody .screen-empty, tbody td[colspan]').count();
-      expect(inputCount === 0 || emptyMsg > 0).toBe(true);
-    }).toPass({ timeout: 5000 });
+    const posts = observeProjectPosts(page);
+    const serverBefore = JSON.stringify(mockState.projects);
+    await page.locator('.btn-add-row').first().click();
+    await page.locator('tbody tr').last().locator('input').first().fill('FIXTURE-KEEP-UNSAVED');
+    await page.locator('.btn-add-row').first().click();
+    await page.locator('tbody tr').last().locator('input').first().fill('FIXTURE-DELETE-UNSAVED');
+    await expect.poll(async () => (await readNativeDraftProject(page))?.fixtures.at(-1)?.fixture).toBe('FIXTURE-DELETE-UNSAVED');
+    const before = (await readNativeDraftProject(page))!.fixtures;
+    const target = before.find(row => row.fixture === 'FIXTURE-DELETE-UNSAVED')!;
+    expect(target?.id).toBeTruthy();
+    expect(before.some(row => row.fixture === 'FIXTURE-KEEP-UNSAVED')).toBe(true);
+    const buttons = page.getByRole('button', { name: 'Delete Fixture', exact: true });
+    const count = await buttons.count();
+    expect(count).toBeGreaterThan(0);
+    await buttons.last().click();
+    await expect(buttons).toHaveCount(count - 1);
+    await expect.poll(async () => (await readNativeDraftProject(page))?.fixtures).toEqual(before.filter(row => row.id !== target.id));
+    expect(posts()).toBe(0);
+    expect(JSON.stringify(mockState.projects)).toBe(serverBefore);
   });
 });
 
@@ -329,13 +401,7 @@ test.describe('05 - Room Type → Circuit 子タブ [R8, R9]', () => {
   });
 
   test('[R8] Circuit タブに「行を追加」ボタン（旧「+回路を追加」ではない）がある', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await expect(addBtn).toBeVisible({ timeout: 5000 });
-    // ラベルが「行を追加」であること
-    const label = await addBtn.textContent();
-    expect(label).toMatch(/行を追加/);
-    // 旧ラベルでないこと
-    expect(label).not.toMatch(/^\+回路を追加$/);
+    await expect(page.locator('.btn-add-row').first()).toHaveText('+ Add Row');
   });
 
   test('[R9] 「行を追加」ボタンが親テーブルの全幅にほぼ一致する', async ({ page }) => {
@@ -377,31 +443,28 @@ test.describe('05 - Room Type → Circuit 子タブ [R8, R9]', () => {
         expect(inputsAfter).toBeGreaterThan(inputsBefore);
       }).toPass({ timeout: 5000 });
     } else {
-      test.fixme(true, 'Circuit sub-add + button not found');
+      throw new Error('Circuit sub-add + button not found');
     }
   });
 
   test('削除ボタン → OK で Circuit 行が削除される', async ({ page }) => {
-    // Circuit subtab がアクティブであることを再確認
-    const circuitTab = page.locator('[role="tab"]').filter({ hasText: /Circuit/i }).first();
-    await expect(circuitTab).toHaveAttribute('aria-selected', 'true', { timeout: 5000 });
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await expect(page.locator('tbody input').first()).toBeVisible({ timeout: 5000 });
-
-    // 削除ボタンを持つ行のカウントを取得
-    const rowsWithDelete = page.locator('tbody tr:has(button:has-text("削除"))');
-    const rowsBefore = await rowsWithDelete.count();
-
-    page.once('dialog', (dialog) => dialog.accept());
-    await page.locator('tbody tr').last().locator('button').filter({ hasText: /削除/ }).click();
-
-    await expect(async () => {
-      const rowsAfter = await rowsWithDelete.count();
-      const emptyMsg = await page.locator('tbody .screen-empty, tbody td[colspan]').count();
-      expect(rowsAfter < rowsBefore || emptyMsg > 0).toBe(true);
-    }).toPass({ timeout: 8000 });
+    const posts = observeProjectPosts(page);
+    const serverBefore = JSON.stringify(mockState.projects);
+    await registerCircuit(page, 'CIRCUIT-KEEP-UNSAVED', 'KEEP-INTERNAL');
+    await registerCircuit(page, 'CIRCUIT-DELETE-UNSAVED', 'DELETE-INTERNAL');
+    await expect.poll(async () => (await readNativeDraftProject(page))?.circuits.at(-1)?.internalNumber).toBe('DELETE-INTERNAL');
+    const before = (await readNativeDraftProject(page))!.circuits;
+    const target = before.find(row => row.designerNumber === 'CIRCUIT-DELETE-UNSAVED')!;
+    expect(target?.id).toBeTruthy();
+    expect(before.some(row => row.designerNumber === 'CIRCUIT-KEEP-UNSAVED')).toBe(true);
+    const buttons = page.getByRole('button', { name: 'Delete Circuit', exact: true });
+    const count = await buttons.count();
+    expect(count).toBeGreaterThan(0);
+    await buttons.last().click();
+    await expect(buttons).toHaveCount(count - 1);
+    await expect.poll(async () => (await readNativeDraftProject(page))?.circuits).toEqual(before.filter(row => row.id !== target.id));
+    expect(posts()).toBe(0);
+    expect(JSON.stringify(mockState.projects)).toBe(serverBefore);
   });
 });
 
@@ -427,92 +490,33 @@ test.describe('06 - Room Type → Device Assign タブ [R1〜R6]', () => {
 
   // ---- R4/R5: ▽ボタン押下でリスト表示、フォーカスのみでは出ない ----
   test('[R4] Circuit # 入力欄の右側に ▾ ボタンがある', async ({ page }) => {
-    // 行を追加して Combobox を表示する
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    // combobox-trigger ボタンが存在する
-    const triggerBtn = page.locator('.combobox-trigger').first();
-    await expect(triggerBtn).toBeVisible({ timeout: 5000 });
-    const label = await triggerBtn.textContent();
-    expect(label?.trim()).toMatch(/▾|▽/);
+    await addDeviceGroup(page);
+    await expect(page.locator('.combobox-trigger').first()).toBeVisible();
   });
 
   test('[R5] フォーカスだけでは Combobox リストが開かない', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    // Combobox input にフォーカス
-    const comboInput = page.locator('.combobox-input').first();
-    await comboInput.focus();
-    await page.waitForTimeout(300);
-
-    // リスト (.combobox-list) は表示されていないこと
-    const list = page.locator('.combobox-list');
-    expect(await list.count()).toBe(0);
+    await addDeviceGroup(page);
+    await page.locator('.combobox-input').first().focus();
+    await expect(page.getByRole('listbox')).toHaveCount(0);
   });
 
   test('[R4/R5] ▾ ボタン押下でリストが開く', async ({ page }) => {
-    // combobox は device が設定された行でしか enabled にならない。
-    // MQSE-4S1-D を選択してグループを展開し、最初の行で combobox を操作する。
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    // デバイスが設定された行の combobox-trigger を取得 (enabled になっているはず)
-    const triggerBtn = page.locator('.combobox-trigger:not([disabled])').first();
-    await expect(triggerBtn).toBeVisible({ timeout: 5000 });
-    await triggerBtn.click();
-    await page.waitForTimeout(300);
-
-    // aria-expanded が true になる
-    const comboboxWrap = page.locator('[role="combobox"]').first();
-    await expect(comboboxWrap).toHaveAttribute('aria-expanded', 'true');
+    await registerCircuit(page, 'D-001', 'I-001');
+    await switchTab(page, /^Device Assign$/);
+    await addDeviceGroup(page);
+    await page.locator('.combobox-trigger').first().click();
+    await expect(page.getByRole('listbox')).toBeVisible();
+    await expect(page.getByRole('listbox')).toContainText('D-001');
   });
 
   // ---- R18 (旧 R2 を置き換え): No 列はデバイスインスタンス毎に先頭行のみ表示 ----
   test('[R18] No 列はデバイスインスタンス毎に先頭行のみ番号、以降は空欄', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    // MQSE-4S1-D を選択 (6 行展開)
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    // tbody の全行の "No" 列 (2列目 = index 1) を取得
-    const rows = page.locator('tbody tr');
-    const rowCount = await rows.count();
-    expect(rowCount).toBeGreaterThanOrEqual(6);
-
-    // 展開された 6 行: 先頭行は "1"、2〜6行目は空欄
-    const nos: string[] = [];
-    for (let i = rowCount - 6; i < rowCount; i++) {
-      const noCell = rows.nth(i).locator('td').nth(1);
-      const text = (await noCell.textContent()) ?? '';
-      nos.push(text.trim());
-    }
-    expect(nos[0]).toBe('1');
-    expect(nos.slice(1)).toEqual(['', '', '', '', '']);
+    await addDeviceGroup(page);
+    const column = await logicalColumn(page, 'No');
+    expect(column).toHaveLength(6);
+    expect(column.map(cell => cell.text)).toEqual(Array(6).fill('1'));
+    expect(column.map(cell => cell.originRow)).toEqual(Array(6).fill(0));
+    expect(column[0].rowSpan).toBe(6);
   });
 
   // ---- R9: ボタン幅がテーブル全幅 ----
@@ -532,92 +536,26 @@ test.describe('06 - Room Type → Device Assign タブ [R1〜R6]', () => {
     await expect(addBtn).toBeVisible();
   });
 
-  test('空白行の Device <select> が enabled (バグ修正確認)', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
 
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-    const selectCount = await deviceSelect.count();
 
-    if (selectCount > 0) {
-      const isDisabled = await deviceSelect.isDisabled();
-      expect(isDisabled).toBe(false);
-
-      const optionCount = await deviceSelect.locator('option').count();
-      expect(optionCount).toBeGreaterThan(1);
-    } else {
-      const deviceInput = lastRow.locator('input').first();
-      await expect(deviceInput).toBeEnabled();
-    }
-  });
-
-  test('空白行で MQSE-4S1-D を選択すると 6 行に展開される', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const initialRows = await page.locator('tbody tr').count();
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-    const selectCount = await deviceSelect.count();
-
-    if (selectCount === 0) {
-      test.fixme(true, 'Device select not found as <select>');
-      return;
-    }
-
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    const newRows = await page.locator('tbody tr').count();
-    expect(newRows).toBe(initialRows + 5);
+  test('Add Device の Cancel と MQSE-4S1-D 追加時の6行展開', async ({ page }) => {
+    await page.locator('.btn-add-row').first().click();
+    const dialog = page.getByRole('dialog', { name: 'Select Device' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: /^Cancel$/ }).click();
+    await expect(page.locator('tbody .device-cell select')).toHaveCount(0);
+    await addDeviceGroup(page);
+    await expect(page.locator('tbody tr')).toHaveCount(6);
+    await expect(page.locator('tbody .device-cell select')).toHaveCount(1);
   });
 
   // R30 対応: rowSpan 化により 2 行目以降に Device <td> 自体が存在しない
   test('[R30-existing] 展開グループの 2 行目以降に Device <select> 要素が存在しない (rowSpan 化)', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
+    await addDeviceGroup(page);
     const rows = page.locator('tbody tr');
-    const rowCount = await rows.count();
-
-    // MQSE-4S1-D は 6 行展開。先頭行のみ Device td が rowSpan="6" で存在し、
-    // 2〜6 行目には Device <select> (td 自体) が存在しないことを確認する。
-    expect(rowCount).toBeGreaterThanOrEqual(6);
-
-    // 2 行目以降 (rowCount-5 〜 rowCount-1) に Device select がないこと
-    for (let i = rowCount - 5; i < rowCount; i++) {
-      const row = rows.nth(i);
-      // Device select が td ごと存在しない場合と、td はあるが select がない場合の両方に対応
-      const selectsInRow = row.locator('select[class*="input"], select.input-select').count();
-      // select 要素の総数が 1 以下 (combobox-trigger のみ) であること
-      // rowSpan 化で Device td が先頭行に吸収されているため行内に Device select がない
-      const devSelectCount = await row.locator('td select').count();
-      // 2行目以降は Device 列の td がないため select が含まれないか、
-      // 含まれても circuit number の combobox のみ
-      // ここでは select 数が先頭行より少ないことを確認（0 または combobox のみ）
-      // 厳密には: Device select は先頭行にのみ存在するので 2 行目以降は 0
-      const deviceSelects = await row.locator('td:first-of-type select, td select[size]').count();
-      // 行全体の select 要素からcombobox 以外（= native select）を数える
-      // DeviceAssignView では Device 列は <select> タグ、Circuit 列は .combobox-input
-      // 2 行目以降の native select は 0 であるべき
-      const nativeSelects = await row.locator('select:not(.combobox-input)').count();
-      expect(nativeSelects).toBe(0);
-    }
+    await expect(rows).toHaveCount(6);
+    await expect(rows.first().locator('.device-cell select')).toHaveCount(1);
+    for (let i = 1; i < 6; i++) await expect(rows.nth(i).locator('.device-cell select')).toHaveCount(0);
   });
 
   // ---- R3: Circuit # ヘッダ確認 (再掲・詳細確認) ----
@@ -634,150 +572,53 @@ test.describe('06 - Room Type → Device Assign タブ [R1〜R6]', () => {
   });
 
   test('[R6] トグル切り替えで入力済み circuit 番号が対応する番号に変換される', async ({ page }) => {
-    // combobox は device が設定された行でしか enabled にならないため、
-    // まず MQSE-4S1-D を選択してグループを展開する。
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    const toggleBtn = page.locator('button.header-toggle, .th-with-toggle button').first();
-    await expect(toggleBtn).toBeVisible({ timeout: 5000 });
-
-    const before = await toggleBtn.textContent();
-
-    // enabled な Combobox input に値を直接入力
-    const comboInput = page.locator('.combobox-input:not([disabled])').first();
-    await expect(comboInput).toBeEnabled({ timeout: 3000 });
-    await comboInput.fill('D-001');
-    await page.waitForTimeout(200);
-
-    // トグルを切り替え
-    await toggleBtn.click();
-    await page.waitForTimeout(300);
-
-    const after = await toggleBtn.textContent();
-    expect(after).not.toBe(before);
-    // 変換ロジックは circuit テーブルの一致がないと変わらないため、
-    // ここでは最低限「トグルが切り替わること」を確認
-    // (Circuit テーブルの一致がなければ変換は起きない仕様)
-    expect(after).toMatch(/Designer#|Internal#/);
+    await registerCircuit(page, 'D-001', 'I-001');
+    await switchTab(page, /^Device Assign$/);
+    await addDeviceGroup(page);
+    await assignAt(page, 0, 'D-001');
+    await page.getByRole('button', { name: 'Designer#', exact: true }).click();
+    await expect(page.locator('tbody tr').first().locator('.combobox-input').first()).toHaveValue('I-001');
+    await page.getByRole('button', { name: 'Internal#', exact: true }).click();
+    await expect(page.locator('tbody tr').first().locator('.combobox-input').first()).toHaveValue('D-001');
   });
 
   test('グループ展開後に ▼ ボタンで折りたたみ → 行数が減る', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    const rowsBefore = await page.locator('tbody tr').count();
-
-    const collapseBtn = page.locator('button.collapse-toggle').filter({ hasText: '▼' }).first();
-    await expect(collapseBtn).toBeVisible({ timeout: 3000 });
-    await collapseBtn.click();
-    await page.waitForTimeout(300);
-
-    const rowsAfter = await page.locator('tbody tr').count();
-    expect(rowsAfter).toBeLessThan(rowsBefore);
+    await addDeviceGroup(page);
+    await expect(page.locator('tbody tr')).toHaveCount(6);
+    await page.getByRole('button', { name: 'Collapse', exact: true }).click();
+    await expect(page.locator('tbody tr')).toHaveCount(1);
+    await page.getByRole('button', { name: 'Expand', exact: true }).click();
+    await expect(page.locator('tbody tr')).toHaveCount(6);
   });
 
   test('グループ削除 → OK でグループ全行が削除される', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    page.once('dialog', (d) => d.accept());
-    const deleteBtn = page.locator('tbody button').filter({ hasText: /削除/ }).first();
-    await deleteBtn.click();
-    await page.waitForTimeout(500);
-
-    const remainInputs = await page.locator('tbody input').count();
-    const emptyMsg = await page.locator('tbody .screen-empty').count();
-    expect(remainInputs === 0 || emptyMsg > 0).toBe(true);
+    await addDeviceGroup(page);
+    await page.getByRole('button', { name: 'Delete Device', exact: true }).click();
+    await expect(page.locator('tbody .device-cell select')).toHaveCount(0);
+    await expect(page.getByText('No devices are registered yet. Add a device below.')).toBeVisible();
+    await expect.poll(async () => (await readNativeDraftProject(page))?.roomTypes[0].deviceAssignments.length).toBe(0);
   });
 
   // ---- R1: グループ間ドラッグ&ドロップ (ベストエフォート) ----
   test('[R1] グループ間ドラッグ&ドロップで行が並び替えられる', async ({ page }) => {
-    // グループ A (MQSE-4S1-D) を追加
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const row1 = page.locator('tbody tr').last();
-    const sel1 = row1.locator('select').first();
-    if (await sel1.count() === 0) {
-      test.fixme(true, 'Device select not found - R1 manual verification needed');
-      return;
-    }
-    await sel1.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    // グループ B (MQSE-4A1-D, 4行) を追加
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const lastRow = page.locator('tbody tr').last();
-    const sel2 = lastRow.locator('select').first();
-    await sel2.selectOption({ label: 'MQSE-4A1-D' });
-    await page.waitForTimeout(500);
-
-    const rowsBefore = await page.locator('tbody tr').count();
-    expect(rowsBefore).toBeGreaterThanOrEqual(2);
-
-    // drag-handle の存在確認
-    const handles = page.locator('.drag-handle');
-    const handleCount = await handles.count();
-    expect(handleCount).toBeGreaterThan(0);
-
-    // ドラッグ操作: グループ B の handle を グループ A 先頭行にドロップ
-    const handleA = handles.first();
-    const handleB = handles.nth(1);
-
-    const fromBox = await handleB.boundingBox();
-    const toBox = await handleA.boundingBox();
-
-    if (!fromBox || !toBox) {
-      test.fixme(true, 'Could not get bounding box for drag handles');
-      return;
-    }
-
-    await page.mouse.move(fromBox.x + fromBox.width / 2, fromBox.y + fromBox.height / 2);
+    await addDeviceGroup(page, 'MQSE-4S1-D');
+    await addDeviceGroup(page, 'MQSE-4A1-D');
+    const handles = page.getByLabel('Group reorder handle');
+    await expect(handles).toHaveCount(2);
+    // Keep both group handles in the viewport and drop in the upper quarter
+    // of the actual target row (a rowspan handle's midpoint is not that row).
+    await page.getByRole('button', { name: 'Collapse', exact: true }).last().click();
+    await page.getByRole('button', { name: 'Collapse', exact: true }).first().click();
+    await expect(page.locator('tbody tr')).toHaveCount(2);
+    const source = await handles.last().boundingBox();
+    const target = await page.locator('tbody tr').first().boundingBox();
+    if (!source || !target) throw new Error('Missing group drag bounds');
+    await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
     await page.mouse.down();
-    await page.waitForTimeout(100);
-    await page.mouse.move(toBox.x + toBox.width / 2, toBox.y + toBox.height / 2, { steps: 10 });
+    await page.mouse.move(target.x + target.width / 2, target.y + target.height / 4, { steps: 15 });
+    await page.mouse.move(target.x + target.width / 2, target.y + target.height / 4);
     await page.mouse.up();
-    await page.waitForTimeout(500);
-
-    // 行数が変わっていないこと (削除されていない)
-    const rowsAfter = await page.locator('tbody tr').count();
-    expect(rowsAfter).toBe(rowsBefore);
+    await expect.poll(() => page.locator('tbody .device-cell select').evaluateAll(nodes => nodes.map(node => (node as HTMLSelectElement).value))).toEqual(['MQSE-4A1-D', 'MQSE-4S1-D']);
   });
 });
 
@@ -900,12 +741,6 @@ async function setupCircuitTab(page: Page): Promise<void> {
   await page.waitForTimeout(300);
 }
 
-// ---- Device Assign タブ共通セットアップ ----
-async function setupDeviceAssignTab(page: Page): Promise<void> {
-  await createAndOpenProject(page, `${PROJECT_NAME}-r16to18-${Date.now()}`);
-  await setupRoomAndSelectDeviceAssign(page, `${ROOM_NAME}-r16to18-${Date.now()}`);
-}
-
 test.describe('10 - R11〜R19 新規要件検証', () => {
   // ---- R11: Fixture 選択時 pcs が空なら 1 が自動入力 ----
   test('[R11] Fixture を選択すると pcs が空なら 1 が自動入力される', async ({ page }) => {
@@ -949,8 +784,7 @@ test.describe('10 - R11〜R19 新規要件検証', () => {
     const options = await fixtureSelect.locator('option').allTextContents();
     const nonEmpty = options.filter((o) => o.trim() !== '—' && o.trim() !== '');
     if (nonEmpty.length === 0) {
-      test.fixme(true, 'Fixture 候補なし - 登録が反映されていない');
-      return;
+      throw new Error('Fixture 候補なし - 登録が反映されていない');
     }
 
     // pcs の combobox-input を確認して空にしておく
@@ -973,138 +807,34 @@ test.describe('10 - R11〜R19 新規要件検証', () => {
 
   // ---- R12: Combobox portal 検証 ----
   test('[R12] Combobox dropdown が table の枠を超えて portal で表示される', async ({ page }) => {
-    // プロジェクト作成 → Circuit タブで circuit 番号を先に登録 → Device Assign でドロップダウンを開く
-    const uniqueSuffix = Date.now();
-    await createAndOpenProject(page, `${PROJECT_NAME}-r12-${uniqueSuffix}`);
-    await createRoomTypeAndSelect(page, `${ROOM_NAME}-r12-${uniqueSuffix}`);
-
-    // Circuit タブで designer# "1" の回路を追加
-    await page.locator('[role="tab"]').filter({ hasText: /Circuit/i }).first().click();
-    await page.waitForTimeout(300);
-
-    const circuitAddBtn = page.locator('.btn-add-row').first();
-    await circuitAddBtn.click();
-    await page.waitForTimeout(300);
-
-    const circuitRow = page.locator('tbody tr').last();
-    const designerInput = circuitRow.locator('.device-cell input').first();
-    await expect(designerInput).toBeVisible({ timeout: 5000 });
-    await designerInput.fill('C-001');
-    await page.waitForTimeout(200);
-
-    // Device Assign タブに移動
-    await page.locator('[role="tab"]').filter({ hasText: /Device Assign/i }).first().click();
-    await page.waitForTimeout(300);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    // enabled な combobox-trigger をクリック
-    const triggerBtn = page.locator('.combobox-trigger:not([disabled])').first();
-    await expect(triggerBtn).toBeVisible({ timeout: 5000 });
-    await triggerBtn.click();
-    await page.waitForTimeout(300);
-
-    // ドロップダウンが存在する場合に portal 確認
-    const portalList = page.locator('.combobox-list-portal');
-    const portalCount = await portalList.count();
-
-    if (portalCount === 0) {
-      // options が空の場合はドロップダウンが出ない仕様のため fixme
-      test.fixme(true, 'combobox-list-portal not visible - circuit options may be empty');
-      return;
-    }
-
-    await expect(portalList.first()).toBeVisible({ timeout: 3000 });
-
-    // z-index が 1000 以上であることを確認
-    const zIndex = await portalList.first().evaluate((el) => {
-      return window.getComputedStyle(el).zIndex;
-    });
-    expect(Number(zIndex)).toBeGreaterThanOrEqual(1000);
-
-    // ドロップダウンが document.body の直接子孫として存在すること (portal)
-    const isDirectBodyChild = await portalList.first().evaluate((el) => {
-      return el.parentElement === document.body;
-    });
-    expect(isDirectBodyChild).toBe(true);
+    await setupAssignments(page, ['D-PORTAL']);
+    await page.locator('.combobox-trigger').first().click();
+    const list = page.getByRole('listbox');
+    await expect(list).toBeVisible();
+    expect(await list.evaluate(el => el.parentElement === document.body)).toBe(true);
+    await expect(list).toHaveCSS('position', 'fixed');
   });
 
   // ---- R13: + ボタンで同じ designerNumber が継承される ----
   test('[R13] Circuit 行追加 + ボタンで同じ designer# が継承される', async ({ page }) => {
     await setupCircuitTab(page);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    // 最後の行の designerNumber 入力欄に値を設定
-    const lastRow = page.locator('tbody tr').last();
-    // Designer # セル内の input (collapse-toggle の隣)
-    const designerInput = lastRow.locator('.device-cell input').first();
-    await expect(designerInput).toBeVisible({ timeout: 5000 });
-    await designerInput.fill('D-Test');
-    await page.waitForTimeout(200);
-
-    const rowsBefore = await page.locator('tbody tr').count();
-
-    // + ボタン (btn-add-circuit) をクリック
-    const addCircuitBtn = lastRow.locator('.btn-add-circuit').first();
-    await expect(addCircuitBtn).toBeVisible({ timeout: 5000 });
-    await addCircuitBtn.click();
-    await page.waitForTimeout(300);
-
-    const rowsAfter = await page.locator('tbody tr').count();
-    expect(rowsAfter).toBeGreaterThan(rowsBefore);
-
-    // R28 以降は rowSpan 化のため、Designer# input はグループ先頭行にのみ存在する。
-    // 先頭行 (グループ開始行) の Designer# input を確認する。
-    const allDesignerInputs = page.locator('.device-cell input');
-    const inputCount = await allDesignerInputs.count();
-    if (inputCount === 0) {
-      test.fixme(true, '.device-cell input not found - R28 rowSpan structure may have changed');
-      return;
-    }
-    // 最初の Designer# input の値が継承されていること
-    const firstInputValue = await allDesignerInputs.first().inputValue();
-    expect(firstInputValue).toBe('D-Test');
+    const row = await registerCircuit(page, 'INHERITED', 'I-1');
+    await row.locator('.btn-add-circuit').click();
+    await expect(page.locator('tbody tr')).toHaveCount(2);
+    await expect(page.locator('tbody .device-cell textarea')).toHaveCount(1);
+    await expect(page.locator('tbody .device-cell textarea')).toHaveValue('INHERITED');
+    await expect.poll(async () => (await readNativeDraftProject(page))?.circuits.map(c => c.designerNumber)).toEqual(['INHERITED', 'INHERITED']);
   });
 
   // ---- R14: Circuit No 列はグループ先頭行のみ番号 ----
   test('[R14] Circuit No 列はグループ先頭行のみ番号表示、以降空欄', async ({ page }) => {
     await setupCircuitTab(page);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const firstRow = page.locator('tbody tr').last();
-    // + ボタンで同グループに 2 行目を追加
-    const addCircuitBtn = firstRow.locator('.btn-add-circuit').first();
-    await expect(addCircuitBtn).toBeVisible({ timeout: 5000 });
-    await addCircuitBtn.click();
-    await page.waitForTimeout(300);
-
-    const rows = page.locator('tbody tr');
-    const rowCount = await rows.count();
-    expect(rowCount).toBeGreaterThanOrEqual(2);
-
-    // 先頭グループの No 列 (2列目 = index 1)
-    const firstNo = await rows.nth(rowCount - 2).locator('td').nth(1).textContent();
-    const secondNo = await rows.nth(rowCount - 1).locator('td').nth(1).textContent();
-
-    expect(firstNo?.trim()).not.toBe('');
-    expect(secondNo?.trim()).toBe('');
+    const row = await registerCircuit(page, 'GROUP', 'I-1');
+    await row.locator('.btn-add-circuit').click();
+    const column = await logicalColumn(page, 'No');
+    expect(column.map(cell => cell.text)).toEqual(['1', '1']);
+    expect(column.map(cell => cell.originRow)).toEqual([0, 0]);
+    expect(column[0].rowSpan).toBe(2);
   });
 
   // ---- R15: Circuit Designer# セル左に折りたたみボタンが先頭行のみ ----
@@ -1143,111 +873,29 @@ test.describe('10 - R11〜R19 新規要件検証', () => {
   // ---- R16: Designer/Internal トグル時にコンソールエラーが出ない ----
   test('[R16] Designer/Internal トグル時に console error が発生しない', async ({ page }) => {
     const errors: string[] = [];
-    page.on('pageerror', (e) => errors.push(e.message));
-    page.on('console', (msg) => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
-
-    await setupDeviceAssignTab(page);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    // circuit 番号入力 (enabled な combobox)
-    const comboInput = page.locator('.combobox-input:not([disabled])').first();
-    if (await comboInput.count() > 0) {
-      await comboInput.fill('1');
-      await page.waitForTimeout(200);
-    }
-
-    // トグルボタンをクリック
-    const toggleBtn = page.locator('button.header-toggle, .th-with-toggle button').first();
-    await expect(toggleBtn).toBeVisible({ timeout: 5000 });
-    await toggleBtn.click();
-    await page.waitForTimeout(500);
-
-    // "Cannot update a component" エラーが含まれないこと
-    const renderingErrors = errors.filter((e) =>
-      e.includes('Cannot update a component')
-    );
-    expect(renderingErrors).toHaveLength(0);
+    page.on('pageerror', error => errors.push(error.message));
+    await setupAssignments(page, ['D-001']);
+    await assignAt(page, 0, 'D-001');
+    await page.getByRole('button', { name: 'Designer#', exact: true }).click();
+    await expect(page.locator('tbody tr').first().locator('.combobox-input').first()).toHaveValue('I-D-001');
+    await page.getByRole('button', { name: 'Internal#', exact: true }).click();
+    await expect(page.locator('tbody tr').first().locator('.combobox-input').first()).toHaveValue('D-001');
+    expect(errors).toEqual([]);
   });
 
   // ---- R17: Device Assign グループ折りたたみでスクロール位置が維持 ----
   test('[R17] Device Assign グループ折りたたみでスクロール位置が維持される', async ({ page }) => {
-    // viewport を縦長にして確実にスクロール可能な状態を作る
-    await page.setViewportSize({ width: 1280, height: 400 });
-
-    await setupDeviceAssignTab(page);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    // 複数グループ追加してページを縦長にする
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const lastRow1 = page.locator('tbody tr').last();
-    const sel1 = lastRow1.locator('select').first();
-    if (await sel1.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await sel1.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(400);
-
-    // 2 つ目のグループを追加してページをさらに縦長に
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const lastRow2 = page.locator('tbody tr').last();
-    const sel2 = lastRow2.locator('select').first();
-    await sel2.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(400);
-
-    // ページの最大スクロール量を確認
-    const maxScroll = await page.evaluate(() =>
-      document.documentElement.scrollHeight - window.innerHeight
-    );
-
-    // collapse ボタンの存在を先に確認する（この時点では auto-scroll が起きる可能性あり）
-    const collapseBtn = page.locator('button.collapse-toggle').filter({ hasText: '▼' }).first();
-    await expect(collapseBtn).toBeVisible({ timeout: 3000 });
-
-    if (maxScroll < 10) {
-      // ページが短すぎてスクロールできない場合: collapse-toggle が存在することを確認して終了
-      return;
-    }
-
-    // collapse ボタンを明示的にビューポート内に scroll-into-view させ、
-    // Playwright auto-scroll が起きない状態を確定させてから beforeY を記録する
-    await collapseBtn.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(200);
-
-    // スクロール可能な場合: collapse ボタンが見えている状態でスクロール位置を記録
-    const beforeY = await page.evaluate(() => window.scrollY);
-
-    // 1 つ目のグループの collapse ボタンをクリック（この時点で auto-scroll は発生しない）
-    await collapseBtn.click();
-    // useLayoutEffect の二段 RAF パターン実行を待つ
-    await page.waitForTimeout(800);
-
-    const afterY = await page.evaluate(() => window.scrollY);
-
-    // R17 の実装: scrollPosRef に保存した beforeY を復元するので差分が小さいはず。
-    // ただし折りたたみでページ高さが減り maxScroll を下回る場合は許容誤差を広くとる。
-    const newMaxScroll = await page.evaluate(() =>
-      document.documentElement.scrollHeight - window.innerHeight
-    );
-    const effectiveExpected = Math.min(beforeY, newMaxScroll);
-    // 実際のスクロール位置が期待値から 150px 以内であること
-    expect(Math.abs(afterY - effectiveExpected)).toBeLessThan(150);
+    await createAndOpenProject(page, PROJECT_NAME + '-scroll');
+    await setupRoomAndSelectDeviceAssign(page, ROOM_NAME);
+    for (let i = 0; i < 8; i++) await addDeviceGroup(page);
+    const scroll = page.locator('.matrix-scroll').first();
+    await scroll.evaluate(el => { el.scrollTop = 160; });
+    const before = await scroll.evaluate(el => el.scrollTop);
+    expect(before).toBeGreaterThan(0);
+    // Use a visible group at the existing scroll offset; do not auto-scroll to the first group.
+    const visibleCollapse = page.getByRole('button', { name: 'Collapse', exact: true }).nth(1);
+    await visibleCollapse.click();
+    await expect.poll(() => scroll.evaluate(el => el.scrollTop)).toBe(before);
   });
 
   // ---- R19: タブ切替でスクロール位置が維持される ----
@@ -1296,50 +944,14 @@ test.describe('11 - R18 Device Assign No 列 (2 デバイスインスタンス)'
   });
 
   test('[R18] デバイス 2 グループ: 先頭行のみ番号、2〜6行は空欄', async ({ page }) => {
-    const addBtn = page.locator('.btn-add-row').first();
-
-    // 1 つ目のデバイスグループ (MQSE-4S1-D #1)
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const row1 = page.locator('tbody tr').last();
-    const sel1 = row1.locator('select').first();
-    if (await sel1.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await sel1.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    // 2 つ目のデバイスグループ (MQSE-4S1-D #2)
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const row2 = page.locator('tbody tr').last();
-    const sel2 = row2.locator('select').first();
-    await sel2.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    // 全行の No 列を取得
-    const rows = page.locator('tbody tr');
-    const rowCount = await rows.count();
-    expect(rowCount).toBeGreaterThanOrEqual(12); // 6 + 6
-
-    const nos: string[] = [];
-    for (let i = 0; i < rowCount; i++) {
-      const noCell = rows.nth(i).locator('td').nth(1);
-      const text = (await noCell.textContent()) ?? '';
-      nos.push(text.trim());
-    }
-
-    // グループ 1: 先頭は "1"、以降 5 行は空欄
-    expect(nos[0]).toBe('1');
-    for (let i = 1; i < 6; i++) {
-      expect(nos[i]).toBe('');
-    }
-    // グループ 2: 先頭は "2"、以降 5 行は空欄
-    expect(nos[6]).toBe('2');
-    for (let i = 7; i < 12; i++) {
-      expect(nos[i]).toBe('');
-    }
+    await addDeviceGroup(page);
+    await addDeviceGroup(page);
+    const column = await logicalColumn(page, 'No');
+    expect(column).toHaveLength(12);
+    expect(column.slice(0, 6).map(c => c.originRow)).toEqual(Array(6).fill(0));
+    expect(column.slice(6).map(c => c.originRow)).toEqual(Array(6).fill(6));
+    expect(column[0].text).toBe('1');
+    expect(column[6].text).toBe('2');
   });
 });
 
@@ -1376,38 +988,6 @@ async function setupCircuitTabWithFixtures(
   await page.waitForTimeout(300);
 }
 
-// ---- Device Assign タブのセットアップ (Circuit も事前登録) ----
-async function setupDeviceAssignWithCircuits(
-  page: Page,
-  circuitDesignerNums: string[],
-  circuitPcs: string[],
-): Promise<void> {
-  const suffix = Date.now();
-  await createAndOpenProject(page, `${PROJECT_NAME}-r22-${suffix}`);
-  await createRoomTypeAndSelect(page, `${ROOM_NAME}-r22-${suffix}`);
-
-  // Circuit タブで回路登録
-  await page.locator('[role="tab"]').filter({ hasText: /Circuit/i }).first().click();
-  await page.waitForTimeout(300);
-  for (let i = 0; i < circuitDesignerNums.length; i++) {
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(200);
-    const lastRow = page.locator('tbody tr').last();
-    const designerInput = lastRow.locator('.device-cell input').first();
-    await designerInput.fill(circuitDesignerNums[i]);
-    if (circuitPcs[i]) {
-      const pcsInput = lastRow.locator('.combobox-input').first();
-      await pcsInput.fill(circuitPcs[i]);
-    }
-    await page.waitForTimeout(100);
-  }
-
-  // Device Assign タブに移動
-  await page.locator('[role="tab"]').filter({ hasText: /Device Assign/i }).first().click();
-  await page.waitForTimeout(300);
-}
-
 test.describe('13 - R20〜R27 新規要件検証', () => {
   // ============================================================
   // R20: Total VA 列が rowSpan で合計表示
@@ -1420,80 +1000,25 @@ test.describe('13 - R20〜R27 新規要件検証', () => {
 
   test('[R20] 単独グループは VA = Total VA', async ({ page }) => {
     await setupCircuitTabWithFixtures(page, [{ name: 'FixA', watt: '100' }]);
-
-    // 1 行追加
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    // Fixture を選択
-    const fixtureSelect = lastRow.locator('select').first();
-    const options = await fixtureSelect.locator('option').allTextContents();
-    const fixAOption = options.find((o) => o.includes('FixA'));
-    if (!fixAOption) {
-      test.fixme(true, 'FixA fixture option not found');
-      return;
-    }
-    await fixtureSelect.selectOption({ label: fixAOption.trim() });
-    await page.waitForTimeout(300);
-
-    // pcs を設定
-    const pcsInput = lastRow.locator('.combobox-input').first();
-    await pcsInput.fill('2');
-    await page.keyboard.press('Tab');
-    await page.waitForTimeout(300);
-
-    // VA 値を確認
-    const vaCell = lastRow.locator('td').filter({ hasText: /^200$/ });
-    // Total VA セルが存在する (rowSpan=1 でも表示される)
-    const totalVaCell = page.locator('td.cell-readonly-merged');
-    await expect(totalVaCell.first()).toBeVisible({ timeout: 5000 });
-    const totalVaText = await totalVaCell.first().textContent();
-    expect(totalVaText?.trim()).toBe('200');
+    const row = await registerCircuit(page, 'VA-1', 'I-1', 'On/Off', '2');
+    await row.locator('select:has(option[value="FixA"])').selectOption('FixA');
+    await expect.poll(async () => (await logicalColumn(page, 'Total VA'))[0]?.text).toBe('200');
+    expect((await logicalColumn(page, 'VA'))[0].text).toBe('200');
   });
 
   test('[R20] 複数行グループで Total VA が合計値を rowSpan で表示', async ({ page }) => {
     await setupCircuitTabWithFixtures(page, [{ name: 'FixB', watt: '50' }]);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const firstRow = page.locator('tbody tr').last();
-    const fixtureSelect = firstRow.locator('select').first();
-    const options = await fixtureSelect.locator('option').allTextContents();
-    const fixBOption = options.find((o) => o.includes('FixB'));
-    if (!fixBOption) {
-      test.fixme(true, 'FixB fixture option not found');
-      return;
-    }
-    await fixtureSelect.selectOption({ label: fixBOption.trim() });
-    const pcsInput = firstRow.locator('.combobox-input').first();
-    await pcsInput.fill('2');
+    const row = await registerCircuit(page, 'VA-GROUP', 'I-1', 'On/Off', '2');
+    await row.locator('select:has(option[value="FixB"])').selectOption('FixB');
+    await row.locator('.btn-add-circuit').click();
+    const second = page.locator('tbody tr').last();
+    await second.locator('select:has(option[value="FixB"])').selectOption('FixB');
+    await second.locator('.combobox-input').first().fill('3');
     await page.keyboard.press('Tab');
-    await page.waitForTimeout(300);
-
-    // + ボタンで同グループに 2 行目追加
-    const addCircuitBtn = firstRow.locator('.btn-add-circuit').first();
-    await addCircuitBtn.click();
-    await page.waitForTimeout(300);
-
-    const secondRow = page.locator('tbody tr').last();
-    const fixtureSelect2 = secondRow.locator('select').first();
-    await fixtureSelect2.selectOption({ label: fixBOption.trim() });
-    const pcsInput2 = secondRow.locator('.combobox-input').first();
-    await pcsInput2.fill('3');
-    await page.keyboard.press('Tab');
-    await page.waitForTimeout(300);
-
-    // Total VA = 2*50 + 3*50 = 250
-    const totalVaCells = page.locator('td.cell-readonly-merged');
-    const count = await totalVaCells.count();
-    // 複数行グループは先頭行に rowSpan セルが 1 つのみ
-    expect(count).toBe(1);
-    const totalText = await totalVaCells.first().textContent();
-    expect(totalText?.trim()).toBe('250');
+    await expect.poll(async () => (await logicalColumn(page, 'Total VA'))[0]?.text).toBe('250');
+    const totals = await logicalColumn(page, 'Total VA');
+    expect(totals.map(c => c.originRow)).toEqual([0, 0]);
+    expect(totals[0].rowSpan).toBe(2);
   });
 
   test('[R20] Total VA セルは input でなく読み取り専用', async ({ page }) => {
@@ -1536,16 +1061,14 @@ test.describe('13 - R20〜R27 新規要件検証', () => {
     const lastTrigger = lastRow.locator('.combobox-trigger').first();
     const triggerCount = await lastTrigger.count();
     if (triggerCount === 0) {
-      test.fixme(true, 'combobox-trigger not found in last row');
-      return;
+      throw new Error('combobox-trigger not found in last row');
     }
     await expect(lastTrigger).toBeEnabled({ timeout: 3000 });
 
     // trigger の bounding box を記録
     const triggerBox = await lastTrigger.boundingBox();
     if (!triggerBox) {
-      test.fixme(true, 'Could not get trigger bounding box');
-      return;
+      throw new Error('Could not get trigger bounding box');
     }
 
     await lastTrigger.click();
@@ -1554,14 +1077,12 @@ test.describe('13 - R20〜R27 新規要件検証', () => {
     const portalList = page.locator('.combobox-list-portal');
     const listCount = await portalList.count();
     if (listCount === 0) {
-      test.fixme(true, 'combobox-list-portal not visible - may have no options');
-      return;
+      throw new Error('combobox-list-portal not visible - may have no options');
     }
 
     const listBox = await portalList.first().boundingBox();
     if (!listBox) {
-      test.fixme(true, 'Could not get list bounding box');
-      return;
+      throw new Error('Could not get list bounding box');
     }
 
     const viewportHeight = 500;
@@ -1582,335 +1103,73 @@ test.describe('13 - R20〜R27 新規要件検証', () => {
   // R22: Zone/Address が readonly span、intra-group ハンドル削除
   // ============================================================
   test('[R22] Device Assign Zone/Address が input でなく readonly span', async ({ page }) => {
-    await setupDeviceAssignWithCircuits(page, ['C1'], ['1']);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    // R30 以降は rowSpan 化のため td インデックスが行によって変わる。
-    // span.cell-readonly を tbody 全体から検索することで列インデックスに依存しない。
-    const rows = page.locator('tbody tr');
-    const rowCount = await rows.count();
-    expect(rowCount).toBeGreaterThanOrEqual(1);
-
-    // テーブル全体で cell-readonly span が存在すること (Zone/Address は span.cell-readonly)
-    const cellReadonlyCount = await page.locator('tbody span.cell-readonly').count();
-    expect(cellReadonlyCount).toBeGreaterThanOrEqual(1);
-
-    // テーブル内に Zone/Address 専用の input が存在しないこと
-    // (Circuit# は combobox-input があるが Zone/Address には input がない)
-    // Zone/Address セルは cell-readonly span のみを含む td なので、
-    // span.cell-readonly を含む td 内に input がないことを確認する
-    const zoneAddressTds = page.locator('td:has(span.cell-readonly)');
-    const zoneAddrCount = await zoneAddressTds.count();
-    expect(zoneAddrCount).toBeGreaterThanOrEqual(1);
-
-    let foundInput = false;
-    for (let i = 0; i < zoneAddrCount; i++) {
-      const inputCount = await zoneAddressTds.nth(i).locator('input').count();
-      if (inputCount > 0) foundInput = true;
-    }
-    expect(foundInput).toBe(false);
+    await setupAssignments(page, ['D-001']);
+    const addresses = await logicalColumn(page, 'Zone / Address');
+    expect(addresses).toHaveLength(6);
+    expect(addresses.every(cell => !cell.editable)).toBe(true);
+    expect(addresses.map(cell => cell.text)).toEqual(['Zn1', 'Zn2', 'Zn3', 'Zn4', 'CCO', 'CCI']);
   });
 
   test('[R22] intra-group 行ハンドル ⋮ (drag-handle-intra) が削除されている', async ({ page }) => {
-    await setupDeviceAssignWithCircuits(page, ['C1'], ['1']);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    // グループ 2 行目以降に intra-group ハンドルがないこと
-    // (.drag-handle-intra または data-testid="intra-handle" 等)
-    const intraHandles = page.locator('.drag-handle-intra, [data-testid="intra-handle"]');
-    expect(await intraHandles.count()).toBe(0);
-
-    // block ハンドル ⋮⋮ (.drag-handle) は先頭行に存在すること
-    const blockHandles = page.locator('.drag-handle');
-    expect(await blockHandles.count()).toBeGreaterThan(0);
+    await setupAssignments(page, ['D-001']);
+    await expect(page.locator('.drag-handle-intra')).toHaveCount(0);
+    await expect(page.getByLabel('Group reorder handle')).toHaveCount(1);
   });
 
   // ============================================================
   // R23: pair-swap ハンドルで Circuit#/Detail を入れ替え
   // ============================================================
-  test('[R23] pair-swap ハンドルが Circuit # セルに存在する', async ({ page }) => {
-    await setupDeviceAssignWithCircuits(page, ['C1', 'C2'], ['1', '1']);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    // 2 行以上のグループに pair-swap-handle が表示されること
-    const swapHandles = page.locator('.pair-swap-handle');
-    const count = await swapHandles.count();
-    expect(count).toBeGreaterThan(0);
+  test('[R23] pair-swap ハンドルが Swap 列に存在する', async ({ page }) => {
+    await setupAssignments(page, ['D-001']);
+    await expect(page.getByLabel('Pair swap handle')).toHaveCount(6);
+    await expect(page.getByLabel('Pair swap handle').first()).toHaveAttribute('draggable', 'true');
   });
 
   test('[R23] Circuit#/Detail を pair-swap ハンドルでドラッグして他行と swap', async ({ page }) => {
-    await setupDeviceAssignWithCircuits(page, ['C1', 'C2'], ['1', '1']);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
+    await setupAssignments(page, ['D-A', 'D-B']);
+    await assignAt(page, 0, 'D-A');
+    await assignAt(page, 1, 'D-B');
     const rows = page.locator('tbody tr');
-    const rowCount = await rows.count();
-    if (rowCount < 2) {
-      test.fixme(true, 'Not enough rows for swap test');
-      return;
-    }
-
-    // 1 行目に C1 入力、2 行目に C2 入力
-    const firstCombo = rows.nth(rowCount - 6).locator('.combobox-input').first();
-    const secondCombo = rows.nth(rowCount - 5).locator('.combobox-input').first();
-    if (await firstCombo.count() === 0 || await secondCombo.count() === 0) {
-      test.fixme(true, 'Combobox inputs not found');
-      return;
-    }
-
-    await firstCombo.fill('C1');
-    await page.waitForTimeout(200);
-    await secondCombo.fill('C2');
-    await page.waitForTimeout(200);
-
-    const val1Before = await firstCombo.inputValue();
-    const val2Before = await secondCombo.inputValue();
-
-    // pair-swap ハンドルの存在確認
-    const swapHandles = page.locator('.pair-swap-handle');
-    if (await swapHandles.count() < 2) {
-      test.fixme(true, 'pair-swap-handle count < 2');
-      return;
-    }
-
-    // ドラッグ: 1 行目のハンドルから 2 行目のハンドルへ
-    const fromHandle = swapHandles.nth(0);
-    const toHandle = swapHandles.nth(1);
-    const fromBox = await fromHandle.boundingBox();
-    const toBox = await toHandle.boundingBox();
-    if (!fromBox || !toBox) {
-      test.fixme(true, 'Could not get bounding boxes for swap handles');
-      return;
-    }
-
-    await page.mouse.move(fromBox.x + fromBox.width / 2, fromBox.y + fromBox.height / 2);
-    await page.mouse.down();
-    await page.waitForTimeout(100);
-    await page.mouse.move(toBox.x + toBox.width / 2, toBox.y + toBox.height / 2, { steps: 10 });
-    await page.mouse.up();
-    await page.waitForTimeout(500);
-
-    const val1After = await firstCombo.inputValue();
-    const val2After = await secondCombo.inputValue();
-
-    // 値が入れ替わっていること
-    expect(val1After).toBe(val2Before);
-    expect(val2After).toBe(val1Before);
+    await rows.nth(0).locator('textarea').fill('Detail A');
+    await rows.nth(1).locator('textarea').fill('Detail B');
+    const handles = page.getByLabel('Pair swap handle');
+    await handles.nth(0).dragTo(handles.nth(1));
+    await expect(rows.nth(0).locator('.combobox-input').first()).toHaveValue('D-B');
+    await expect(rows.nth(1).locator('.combobox-input').first()).toHaveValue('D-A');
+    await expect(rows.nth(0).locator('textarea')).toHaveValue('Detail B');
+    await expect(rows.nth(1).locator('textarea')).toHaveValue('Detail A');
   });
 
   test('[R23] 異 deviceGroupId への swap は無視される', async ({ page }) => {
-    const suffix = Date.now();
-    await createAndOpenProject(page, `${PROJECT_NAME}-r23x-${suffix}`);
-    await createRoomTypeAndSelect(page, `${ROOM_NAME}-r23x-${suffix}`);
-    await page.locator('[role="tab"]').filter({ hasText: /Device Assign/i }).first().click();
-    await page.waitForTimeout(300);
-
-    const addBtn = page.locator('.btn-add-row').first();
-
-    // グループ A (MQSE-4S1-D)
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const rowA = page.locator('tbody tr').last();
-    const selA = rowA.locator('select').first();
-    if (await selA.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await selA.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    // グループ B (MQSE-4A1-D)
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const rowB = page.locator('tbody tr').last();
-    const selB = rowB.locator('select').first();
-    await selB.selectOption({ label: 'MQSE-4A1-D' });
-    await page.waitForTimeout(500);
-
-    const rows = page.locator('tbody tr');
-    const rowCount = await rows.count();
-
-    // グループ A の 1 行目に値を入力
-    const comboA = rows.nth(0).locator('.combobox-input').first();
-    if (await comboA.count() > 0) {
-      await comboA.fill('GroupA-Val');
-      await page.waitForTimeout(200);
-    }
-
-    const valBefore = await comboA.inputValue();
-
-    // グループ A のペアスワップハンドルからグループ B 行へドラッグを試みる
-    const swapHandles = page.locator('.pair-swap-handle');
-    if (await swapHandles.count() === 0) {
-      // swap ハンドルがない場合はスキップ
-      return;
-    }
-
-    const fromHandle = swapHandles.first();
-    // グループ B の先頭行
-    const groupBFirstRow = rows.nth(6); // MQSE-4S1-D が 6 行なので
-    const fromBox = await fromHandle.boundingBox();
-    const toBox = await groupBFirstRow.boundingBox();
-    if (!fromBox || !toBox) return;
-
-    await page.mouse.move(fromBox.x + fromBox.width / 2, fromBox.y + fromBox.height / 2);
-    await page.mouse.down();
-    await page.waitForTimeout(100);
-    await page.mouse.move(toBox.x + toBox.width / 2, toBox.y + toBox.height / 2, { steps: 10 });
-    await page.mouse.up();
-    await page.waitForTimeout(500);
-
-    const valAfter = await comboA.inputValue();
-    // 異グループへの swap は無視されるので値が変わらない
-    expect(valAfter).toBe(valBefore);
+    await setupAssignments(page, ['D-A', 'D-B']);
+    await addDeviceGroup(page);
+    await assignAt(page, 0, 'D-A');
+    await assignAt(page, 6, 'D-B');
+    await page.getByLabel('Pair swap handle').nth(0).dragTo(page.getByLabel('Pair swap handle').nth(6));
+    await expect(page.locator('tbody tr').nth(0).locator('.combobox-input').first()).toHaveValue('D-A');
+    await expect(page.locator('tbody tr').nth(6).locator('.combobox-input').first()).toHaveValue('D-B');
   });
 
   // ============================================================
   // R24: Device Assign Circuit # 重複検出
   // ============================================================
   test('[R24] Device Assign Circuit # 重複時に cell-duplicate と banner 表示', async ({ page }) => {
-    await setupDeviceAssignWithCircuits(page, ['D1', 'D2'], ['1', '1']);
-
-    const addBtn = page.locator('.btn-add-row').first();
-
-    // グループ 1 追加
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const row1 = page.locator('tbody tr').last();
-    const sel1 = row1.locator('select').first();
-    if (await sel1.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await sel1.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    // グループ 2 追加
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const row2 = page.locator('tbody tr').last();
-    const sel2 = row2.locator('select').first();
-    await sel2.selectOption({ label: 'MQSE-4A1-D' });
-    await page.waitForTimeout(500);
-
-    const rows = page.locator('tbody tr');
-    const rowCount = await rows.count();
-
-    // グループ 1 の 1 行目と グループ 2 の 1 行目に同じ circuitNumber を入力
-    const combo1 = rows.nth(0).locator('.combobox-input').first();
-    const combo2 = rows.nth(6).locator('.combobox-input').first();
-    if (await combo1.count() === 0 || await combo2.count() === 0) {
-      test.fixme(true, 'Combobox inputs not found for duplicate test');
-      return;
-    }
-
-    await combo1.fill('DUP-001');
-    await page.waitForTimeout(200);
-    await combo2.fill('DUP-001');
-    await page.waitForTimeout(500);
-
-    // cell-duplicate クラスが付与されること
-    const dupCells = page.locator('td.cell-duplicate');
-    await expect(async () => {
-      const c = await dupCells.count();
-      expect(c).toBeGreaterThanOrEqual(2);
-    }).toPass({ timeout: 5000 });
-
-    // DuplicationBanner が表示されること
-    const banner = page.locator('.duplication-banner');
-    await expect(banner.first()).toBeVisible({ timeout: 5000 });
+    await setupAssignments(page, ['DUP', 'DIFF']);
+    await assignAt(page, 0, 'DUP');
+    await assignAt(page, 1, 'DUP');
+    await expect(page.locator('.duplication-banner')).toBeVisible();
+    await expect(page.locator('td.cell-duplicate').first()).toBeVisible();
   });
 
   test('[R24] 重複解消で banner が非表示になる', async ({ page }) => {
-    await setupDeviceAssignWithCircuits(page, ['D1'], ['1']);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const row1 = page.locator('tbody tr').last();
-    const sel1 = row1.locator('select').first();
-    if (await sel1.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await sel1.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const row2 = page.locator('tbody tr').last();
-    const sel2 = row2.locator('select').first();
-    await sel2.selectOption({ label: 'MQSE-4A1-D' });
-    await page.waitForTimeout(500);
-
-    const rows = page.locator('tbody tr');
-    const combo1 = rows.nth(0).locator('.combobox-input').first();
-    const combo2 = rows.nth(6).locator('.combobox-input').first();
-    if (await combo1.count() === 0 || await combo2.count() === 0) {
-      test.fixme(true, 'Combobox inputs not found');
-      return;
-    }
-
-    await combo1.fill('SAME');
-    await combo2.fill('SAME');
-    await page.waitForTimeout(300);
-    // banner 表示を確認
-    await expect(page.locator('.duplication-banner').first()).toBeVisible({ timeout: 3000 });
-
-    // 重複を解消
-    await combo2.fill('DIFF');
-    await page.waitForTimeout(300);
-    // banner が消えること
-    await expect(async () => {
-      const cnt = await page.locator('.duplication-banner').count();
-      expect(cnt).toBe(0);
-    }).toPass({ timeout: 5000 });
+    await setupAssignments(page, ['DUP', 'DIFF']);
+    await assignAt(page, 0, 'DUP');
+    await assignAt(page, 1, 'DUP');
+    await expect(page.locator('.duplication-banner')).toBeVisible();
+    await expect(page.locator('td.cell-duplicate').first()).toBeVisible();
+    await assignAt(page, 1, 'DIFF');
+    await expect(page.locator('.duplication-banner')).toHaveCount(0);
+    await expect(page.locator('td.cell-duplicate')).toHaveCount(0);
   });
 
   // ============================================================
@@ -1918,88 +1177,32 @@ test.describe('13 - R20〜R27 新規要件検証', () => {
   // ============================================================
   test('[R25] Circuit Designer# が異グループ間で重複時 cell-duplicate と banner', async ({ page }) => {
     await setupCircuitTab(page);
+    await registerCircuit(page, 'DUP', 'I-A');
+    await registerCircuit(page, 'DUP', 'I-B');
 
-    const addBtn = page.locator('.btn-add-row').first();
-
-    // グループ A
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const rowA = page.locator('tbody tr').last();
-    const inputA = rowA.locator('.device-cell input').first();
-    await inputA.fill('DUP-CIRCUIT');
-    await page.waitForTimeout(200);
-
-    // グループ B (別グループ)
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const rowB = page.locator('tbody tr').last();
-    const inputB = rowB.locator('.device-cell input').first();
-    await inputB.fill('DUP-CIRCUIT');
-    await page.waitForTimeout(500);
-
-    // cell-duplicate が 2 つ以上付与されること
-    const dupCells = page.locator('td.cell-duplicate');
-    await expect(async () => {
-      const c = await dupCells.count();
-      expect(c).toBeGreaterThanOrEqual(2);
-    }).toPass({ timeout: 5000 });
-
-    // DuplicationBanner が表示されること
-    const banner = page.locator('.duplication-banner');
-    await expect(banner.first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.duplication-banner')).toBeVisible();
+    await expect(page.locator('td.cell-duplicate').first()).toBeVisible();
   });
 
   test('[R25] 同グループ内の同 designer# は重複扱いしない', async ({ page }) => {
     await setupCircuitTab(page);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const firstRow = page.locator('tbody tr').last();
-    const inputFirst = firstRow.locator('.device-cell input').first();
-    await inputFirst.fill('SAME-GROUP');
-    await page.waitForTimeout(200);
-
-    // + ボタンで同グループに 2 行目追加 (designerNumber が伝播される)
-    const addCircuitBtn = firstRow.locator('.btn-add-circuit').first();
-    await addCircuitBtn.click();
-    await page.waitForTimeout(300);
-
-    // 同グループ内なので cell-duplicate が付与されないこと
-    const dupCells = page.locator('td.cell-duplicate');
-    const count = await dupCells.count();
-    expect(count).toBe(0);
-
-    // banner も表示されないこと
-    const banner = page.locator('.duplication-banner');
-    expect(await banner.count()).toBe(0);
+    const row = await registerCircuit(page, 'SAME-GROUP', 'I-A');
+    await row.locator('.btn-add-circuit').click();
+    await expect(page.locator('tbody tr')).toHaveCount(2);
+    await expect(page.locator('td.cell-duplicate')).toHaveCount(0);
+    await expect(page.locator('.duplication-banner')).toHaveCount(0);
   });
 
   test('[R25] 入力ブロックなし - 重複があっても引き続き入力できる', async ({ page }) => {
     await setupCircuitTab(page);
+    await registerCircuit(page, 'DUP', 'I-A');
+    const second = await registerCircuit(page, 'DUP', 'I-B');
 
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const rowA = page.locator('tbody tr').last();
-    const inputA = rowA.locator('.device-cell input').first();
-    await inputA.fill('BLOCK-TEST');
-    await page.waitForTimeout(200);
-
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const rowB = page.locator('tbody tr').last();
-    const inputB = rowB.locator('.device-cell input').first();
-    await inputB.fill('BLOCK-TEST');
-    await page.waitForTimeout(300);
-
-    // 重複検出後もInputが disabled でないこと
-    await expect(inputB).toBeEnabled();
-    // さらに入力できること
-    await inputB.fill('BLOCK-TEST-2');
-    const newVal = await inputB.inputValue();
-    expect(newVal).toBe('BLOCK-TEST-2');
+    await expect(page.locator('.duplication-banner')).toBeVisible();
+    await expect(page.locator('td.cell-duplicate').first()).toBeVisible();
+    await expect(second.locator('.device-cell textarea')).toBeEnabled();
+    await second.locator('.device-cell textarea').fill('UNIQUE');
+    await expect(page.locator('.duplication-banner')).toHaveCount(0);
   });
 
   // ============================================================
@@ -2007,26 +1210,15 @@ test.describe('13 - R20〜R27 新規要件検証', () => {
   // ============================================================
   test('[R26] DevicesView に Address Mode 列があり select で切替可能', async ({ page }) => {
     await page.goto('/settings/devices');
-    await page.waitForLoadState('networkidle');
-
-    // Address Mode ヘッダが存在すること
-    const addressModeHeader = page.locator('thead th').filter({ hasText: /Address Mode/i });
-    await expect(addressModeHeader.first()).toBeVisible({ timeout: 5000 });
-
-    // Address Mode の select: option value が "fixed" または "dali" (小文字) を持つ select を探す
-    // DevicesView では <option value="fixed">Fixed</option> / <option value="dali">DALI</option>
-    const addressModeSelects = page.locator('tbody select').filter({
-      has: page.locator('option[value="fixed"]'),
-    });
-    const selCount = await addressModeSelects.count();
-    expect(selCount).toBeGreaterThan(0);
-
-    // Fixed と DALI の option value が存在すること
-    const firstSelect = addressModeSelects.first();
-    const fixedOption = firstSelect.locator('option[value="fixed"]');
-    const daliOption = firstSelect.locator('option[value="dali"]');
-    await expect(fixedOption).toBeAttached({ timeout: 3000 });
-    await expect(daliOption).toBeAttached({ timeout: 3000 });
+    await expect(page.getByRole('columnheader', { name: 'Address Mode', exact: true })).toBeVisible();
+    await expect(page.locator('tbody select:has(option[value="fixed"])')).toHaveCount(0);
+    await page.locator('.btn-add-row').click();
+    const select = page.locator('tbody select:has(option[value="fixed"])');
+    await expect(select).toHaveCount(1);
+    await select.selectOption('dali');
+    await expect(select).toHaveValue('dali');
+    await select.selectOption('fixed');
+    await expect(select).toHaveValue('fixed');
   });
 
   test('[R26] DALUNV を含むデバイスは DALI、他は Fixed', async ({ page }) => {
@@ -2061,205 +1253,57 @@ test.describe('13 - R20〜R27 新規要件検証', () => {
     }
   });
 
-  test('[R26] DALI デバイス選択時に初期 1 行のみ展開', async ({ page }) => {
-    await setupDeviceAssignWithCircuits(page, ['A', 'B', 'C'], ['1', '1', '1']);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const rowsBefore = await page.locator('tbody tr').count();
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-
-    // DALI デバイスを選択 (confirm ダイアログが出る場合は accept)
-    page.once('dialog', (d) => d.accept());
-    await deviceSelect.selectOption({ label: 'QSN2-1DALUNV-D' });
-    await page.waitForTimeout(500);
-
-    const rowsAfter = await page.locator('tbody tr').count();
-    // DALI: 初期は 1 行のみ展開 (rowsBefore - 1 + 1 = rowsBefore)
-    expect(rowsAfter).toBe(rowsBefore);
+  test('[R26] DALI デバイス追加時に64アドレスを展開', async ({ page }) => {
+    await createAndOpenProject(page, PROJECT_NAME + '-dali');
+    await setupRoomAndSelectDeviceAssign(page, ROOM_NAME);
+    await addDeviceGroup(page, 'QSN2-1DALUNV-D');
+    await expect(page.locator('tbody tr')).toHaveCount(64);
+    const addresses = await logicalColumn(page, 'Address');
+    expect(addresses.map(c => c.text)).toEqual(Array.from({ length: 64 }, (_, i) => String(i + 1)));
+    await expect.poll(async () => (await readNativeDraftProject(page))?.roomTypes[0].deviceAssignments.length).toBe(64);
   });
 
-  test('[R26] DALI で Circuit # 入力すると pcs 数の行に展開', async ({ page }) => {
-    // Fixture A pcs=3 を Circuit に登録してから Device Assign に移動
-    const suffix = Date.now();
-    await createAndOpenProject(page, `${PROJECT_NAME}-r26dali-${suffix}`);
-
-    // Fixture タブで FixDali を登録
-    await page.locator('[role="tab"]').filter({ hasText: /Fixture/i }).first().click();
-    await page.waitForTimeout(300);
-    const fixtureAddBtn = page.locator('.btn-add-row').first();
-    await fixtureAddBtn.click();
-    await page.waitForTimeout(200);
-    const fixtureRow = page.locator('tbody tr').last();
-    await fixtureRow.locator('input').nth(0).fill('FixDali');
-    await fixtureRow.locator('input[type="number"]').first().fill('50');
-    await page.waitForTimeout(100);
-
-    await createRoomTypeAndSelect(page, `${ROOM_NAME}-r26dali-${suffix}`);
-
-    // Circuit タブで designer# "DALI-A", pcs=3 を登録
-    await page.locator('[role="tab"]').filter({ hasText: /Circuit/i }).first().click();
-    await page.waitForTimeout(300);
-    const circuitAddBtn = page.locator('.btn-add-row').first();
-    await circuitAddBtn.click();
-    await page.waitForTimeout(300);
-    const circuitRow = page.locator('tbody tr').last();
-    const designerInput = circuitRow.locator('.device-cell input').first();
-    await designerInput.fill('DALI-A');
-    const fixtureSelect = circuitRow.locator('select').first();
-    const fxOptions = await fixtureSelect.locator('option').allTextContents();
-    const fixDaliOpt = fxOptions.find((o) => o.includes('FixDali'));
-    if (fixDaliOpt) {
-      await fixtureSelect.selectOption({ label: fixDaliOpt.trim() });
-      await page.waitForTimeout(200);
-    }
-    const pcsInput = circuitRow.locator('.combobox-input').first();
-    await pcsInput.fill('3');
-    await page.waitForTimeout(200);
-
-    // Device Assign タブに移動
-    await page.locator('[role="tab"]').filter({ hasText: /Device Assign/i }).first().click();
-    await page.waitForTimeout(300);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    page.once('dialog', (d) => d.accept());
-    await deviceSelect.selectOption({ label: 'QSN2-1DALUNV-D' });
-    await page.waitForTimeout(500);
-
-    const rowsBefore = await page.locator('tbody tr').count();
-
-    // Circuit # に DALI-A を入力
-    const comboInput = page.locator('.combobox-input:not([disabled])').last();
-    await comboInput.fill('DALI-A');
-    await page.waitForTimeout(500);
-
-    const rowsAfter = await page.locator('tbody tr').count();
-    // pcs=3 なので 3 行に展開 (元 1 行が 3 行に)
-    expect(rowsAfter).toBe(rowsBefore + 2); // +2 because 1 row becomes 3
-
-    // 展開された行の circuitNumber が DALI-A-1, DALI-A-2, DALI-A-3 であること
-    const rows = page.locator('tbody tr');
-    const newRowCount = await rows.count();
-    const circuitNumbers: string[] = [];
-    for (let i = newRowCount - 3; i < newRowCount; i++) {
-      const combo = rows.nth(i).locator('.combobox-input').first();
-      if (await combo.count() > 0) {
-        circuitNumbers.push(await combo.inputValue());
-      }
-    }
-    expect(circuitNumbers).toContain('DALI-A-1');
-    expect(circuitNumbers).toContain('DALI-A-2');
-    expect(circuitNumbers).toContain('DALI-A-3');
+  test('[R26] DALI の既存アドレスに pcs 数分を連続割当', async ({ page }) => {
+    await setupCircuitTabWithFixtures(page, [{ name: 'FixDali', watt: '50' }]);
+    const circuit = await registerCircuit(page, 'DALI-A', 'I-A', 'DALI', '3');
+    await circuit.locator('select:has(option[value="FixDali"])').selectOption('FixDali');
+    await switchTab(page, /^Device Assign$/);
+    await addDeviceGroup(page, 'QSN2-1DALUNV-D');
+    await assignAt(page, 0, 'DALI-A');
+    await expect.poll(async () => (await readNativeDraftProject(page))?.roomTypes[0].deviceAssignments.filter(a => a.circuitNumber === 'DALI-A').length).toBe(3);
+    const assignments = (await readNativeDraftProject(page))!.roomTypes[0].deviceAssignments;
+    expect(assignments).toHaveLength(64);
+    expect(assignments.slice(0, 3).map(a => a.zoneAddress)).toEqual(['1', '2', '3']);
+    expect(new Set(assignments.slice(0, 3).map(a => a.group)).size).toBe(1);
+    expect(assignments[0].group).not.toBe('');
+    expect(assignments.slice(3).every(a => a.circuitNumber === 'Reserved')).toBe(true);
   });
 
   // ============================================================
-  // R27: deviceNum が全デバイス通し連番
+  // R27: deviceNum は同一機種内で連番、別機種は1から
   // ============================================================
-  test('[R27] deviceNum が全デバイス通し連番', async ({ page }) => {
-    const suffix = Date.now();
-    await createAndOpenProject(page, `${PROJECT_NAME}-r27-${suffix}`);
-    await createRoomTypeAndSelect(page, `${ROOM_NAME}-r27-${suffix}`);
-    await page.locator('[role="tab"]').filter({ hasText: /Device Assign/i }).first().click();
-    await page.waitForTimeout(300);
-
-    const addBtn = page.locator('.btn-add-row').first();
-
-    // MQSE-4S1-D を 1 つ目として追加 → deviceNum = 1
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const row1 = page.locator('tbody tr').last();
-    const sel1 = row1.locator('select').first();
-    if (await sel1.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await sel1.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    // MQSE-4S1-D を 2 つ目として追加 → deviceNum = 2
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const row2 = page.locator('tbody tr').last();
-    const sel2 = row2.locator('select').first();
-    await sel2.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    // QSN2-1DALUNV-D を追加 → deviceNum = 3 (モデルが違っても通し番号)
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const row3 = page.locator('tbody tr').last();
-    const sel3 = row3.locator('select').first();
-    page.once('dialog', (d) => d.accept());
-    await sel3.selectOption({ label: 'QSN2-1DALUNV-D' });
-    await page.waitForTimeout(500);
-
-    // No 列 (2列目 = index 1) を取得
-    const rows = page.locator('tbody tr');
-    const rowCount = await rows.count();
-
-    // グループ 1 の先頭行 → No = "1"
-    const no1 = await rows.nth(0).locator('td').nth(1).textContent();
-    expect(no1?.trim()).toBe('1');
-
-    // グループ 2 の先頭行 → No = "2"
-    const no2 = await rows.nth(6).locator('td').nth(1).textContent();
-    expect(no2?.trim()).toBe('2');
-
-    // グループ 3 (QSN2-1DALUNV-D DALI) の先頭行 → No = "3"
-    const no3 = await rows.nth(12).locator('td').nth(1).textContent();
-    expect(no3?.trim()).toBe('3');
+  test('[R27] deviceNum は同一機種内で連番、別機種は1から', async ({ page }) => {
+    await createAndOpenProject(page, PROJECT_NAME + '-number-2174');
+    await setupRoomAndSelectDeviceAssign(page, ROOM_NAME);
+    await addDeviceGroup(page, 'MQSE-4S1-D');
+    await addDeviceGroup(page, 'MQSE-4S1-D');
+    await addDeviceGroup(page, 'QSN2-1DALUNV-D');
+    await expect.poll(async () => {
+      const rows = (await readNativeDraftProject(page))?.roomTypes[0].deviceAssignments ?? [];
+      return [...new Map(rows.map(a => [a.deviceGroupId, [a.device, a.deviceNum]])).values()];
+    }).toEqual([['MQSE-4S1-D', '1'], ['MQSE-4S1-D', '2'], ['QSN2-1DALUNV-D', '1']]);
   });
 
-  test('[R27] MQSE-4A1-D 追加後に QSN2-1DALUNV-D 追加で deviceNum が連番', async ({ page }) => {
-    const suffix = Date.now();
-    await createAndOpenProject(page, `${PROJECT_NAME}-r27b-${suffix}`);
-    await createRoomTypeAndSelect(page, `${ROOM_NAME}-r27b-${suffix}`);
-    await page.locator('[role="tab"]').filter({ hasText: /Device Assign/i }).first().click();
-    await page.waitForTimeout(300);
+  test('[R27] 異なる機種の deviceNum はそれぞれ1から', async ({ page }) => {
+    await createAndOpenProject(page, PROJECT_NAME + '-number-2229');
+    await setupRoomAndSelectDeviceAssign(page, ROOM_NAME);
+    await addDeviceGroup(page, 'MQSE-4A1-D');
 
-    const addBtn = page.locator('.btn-add-row').first();
-
-    // MQSE-4A1-D を追加 → deviceNum = 1
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const row1 = page.locator('tbody tr').last();
-    const sel1 = row1.locator('select').first();
-    if (await sel1.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-    await sel1.selectOption({ label: 'MQSE-4A1-D' });
-    await page.waitForTimeout(500);
-
-    // QSN2-1DALUNV-D を追加 → deviceNum = 2
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const row2 = page.locator('tbody tr').last();
-    const sel2 = row2.locator('select').first();
-    page.once('dialog', (d) => d.accept());
-    await sel2.selectOption({ label: 'QSN2-1DALUNV-D' });
-    await page.waitForTimeout(500);
-
-    const rows = page.locator('tbody tr');
-    // MQSE-4A1-D は 4 行 → グループ 2 は index 4 から
-    const noGroup2 = await rows.nth(4).locator('td').nth(1).textContent();
-    expect(noGroup2?.trim()).toBe('2');
+    await addDeviceGroup(page, 'QSN2-1DALUNV-D');
+    await expect.poll(async () => {
+      const rows = (await readNativeDraftProject(page))?.roomTypes[0].deviceAssignments ?? [];
+      return [...new Map(rows.map(a => [a.deviceGroupId, [a.device, a.deviceNum]])).values()];
+    }).toEqual([['MQSE-4A1-D', '1'], ['QSN2-1DALUNV-D', '1']]);
   });
 });
 
@@ -2268,51 +1312,17 @@ test.describe('13 - R20〜R27 新規要件検証', () => {
 // ============================================================
 test.describe('12 - 新規プロジェクト Room Type 一覧 [R10]', () => {
   test('[R10] 新規プロジェクト作成直後 Room Type 一覧が空', async ({ page }) => {
-    await page.goto('/');
-    await clearStorage(page);
-    await page.reload({ waitUntil: 'networkidle' });
-
-    const uniqueName = `R10-Test-${Date.now()}`;
-    const input = projectNameInput(page);
-    await expect(input).toBeVisible({ timeout: 8000 });
-    await input.fill(uniqueName);
-
-    const createBtn = createProjectButton(page);
-    await createBtn.click();
-
-    // プロジェクトを開く
-    await page.locator('button, a').filter({ hasText: uniqueName }).first().click();
-    await expect(page.locator('[role="tablist"]').first()).toBeVisible({ timeout: 8000 });
-
+    await createAndOpenProject(page, PROJECT_NAME + '-empty-2270');
     await roomTypeParentTab(page).click();
-    await page.waitForTimeout(300);
-
-    // ルームタイプ一覧が空のメッセージが表示されること
-    const emptyMsg = page.locator('text=ルームタイプがありません');
-    await expect(emptyMsg).toBeVisible({ timeout: 5000 });
-
-    // roomTypes 配列が空 → デフォルトタイプが入っていないこと
-    const roomCards = page.locator('button.screen-card');
-    expect(await roomCards.count()).toBe(0);
+    await expect(page.getByText('No room types yet. Create one from the form above.')).toBeVisible();
+    await expect(page.locator('button.screen-card')).toHaveCount(0);
   });
 
   test('[R10] Room Type 一覧に Default という名前のルームタイプが存在しない', async ({ page }) => {
-    await page.goto('/');
-    await clearStorage(page);
-    await page.reload({ waitUntil: 'networkidle' });
-
-    const uniqueName = `R10b-Test-${Date.now()}`;
-    const input = projectNameInput(page);
-    await input.fill(uniqueName);
-    await createProjectButton(page).click();
-    await page.locator('button, a').filter({ hasText: uniqueName }).first().click();
-    await expect(page.locator('[role="tablist"]').first()).toBeVisible({ timeout: 8000 });
-
+    await createAndOpenProject(page, PROJECT_NAME + '-empty-2299');
     await roomTypeParentTab(page).click();
-    await page.waitForTimeout(300);
-
-    const defaultCard = page.locator('button.screen-card').filter({ hasText: /^Default$/i });
-    expect(await defaultCard.count()).toBe(0);
+    await expect(page.getByText('No room types yet. Create one from the form above.')).toBeVisible();
+    await expect(page.locator('button.screen-card')).toHaveCount(0);
   });
 });
 
@@ -2461,39 +1471,13 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
   });
 
   test('[R28] Circuit Designer# 重複ハイライトは先頭行の rowSpan セルに付与される', async ({ page }) => {
-    await setupCircuitTabR28(page);
-
-    const addBtn = page.locator('.btn-add-row').first();
-
-    // グループ A
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const rowA = page.locator('tbody tr').last();
-    const inputA = rowA.locator('.device-cell input').first();
-    await inputA.fill('DUP-R28');
-    await page.waitForTimeout(200);
-
-    // グループ B
-    await addBtn.click();
-    await page.waitForTimeout(300);
-    const rowB = page.locator('tbody tr').last();
-    const inputB = rowB.locator('.device-cell input').first();
-    await inputB.fill('DUP-R28');
-    await page.waitForTimeout(500);
-
-    // cell-duplicate が付与されること
-    const dupCells = page.locator('td.cell-duplicate');
-    await expect(async () => {
-      const c = await dupCells.count();
-      expect(c).toBeGreaterThanOrEqual(2);
-    }).toPass({ timeout: 5000 });
-
-    // cell-duplicate は rowSpan td に付与されていること（td が rowspan 属性を持つ）
-    const dupRowSpanTds = page.locator('td.cell-duplicate[rowspan]');
-    const dupRowSpanCount = await dupRowSpanTds.count();
-    // 少なくとも 1 つ以上の rowSpan 付き cell-duplicate が存在すること
-    // （単一行グループの場合は rowspan=1 の場合もあるため、cell-duplicate 数を優先確認）
-    expect(await dupCells.count()).toBeGreaterThanOrEqual(2);
+    await setupCircuitTab(page);
+    await registerCircuit(page, 'DUP', 'I-A');
+    const second = await registerCircuit(page, 'DUP', 'I-B');
+    await second.locator('.btn-add-circuit').click();
+    await expect(page.locator('.duplication-banner')).toBeVisible();
+    await expect(page.locator('td.cell-duplicate').first()).toBeVisible();
+    expect(await page.locator('td.cell-duplicate').evaluateAll(cells => cells.every(cell => Number(cell.getAttribute('rowspan')) >= 1))).toBe(true);
   });
 
   // ============================================================
@@ -2508,21 +1492,21 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
     await addBtn.click();
     await page.waitForTimeout(200);
     const rowA = page.locator('tbody tr').last();
-    const inputA = rowA.locator('.device-cell input').first();
+    const inputA = rowA.locator('.device-cell textarea').first();
     await inputA.fill('ROW-A');
     await page.waitForTimeout(100);
 
     await addBtn.click();
     await page.waitForTimeout(200);
     const rowB = page.locator('tbody tr').last();
-    const inputB = rowB.locator('.device-cell input').first();
+    const inputB = rowB.locator('.device-cell textarea').first();
     await inputB.fill('ROW-B');
     await page.waitForTimeout(100);
 
     await addBtn.click();
     await page.waitForTimeout(200);
     const rowC = page.locator('tbody tr').last();
-    const inputC = rowC.locator('.device-cell input').first();
+    const inputC = rowC.locator('.device-cell textarea').first();
     await inputC.fill('ROW-C');
     await page.waitForTimeout(100);
 
@@ -2533,8 +1517,7 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
     const handles = page.locator('.drag-handle');
     const handleCount = await handles.count();
     if (handleCount < 3) {
-      test.fixme(true, 'drag-handle count < 3 - R29 DnD test skipped');
-      return;
+      throw new Error('drag-handle count < 3');
     }
 
     // 行 A (先頭) のハンドルを行 C (末尾) の下半分にドロップ
@@ -2545,8 +1528,7 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
     const targetBox = await targetRowC.boundingBox();
 
     if (!fromBox || !targetBox) {
-      test.fixme(true, 'Could not get bounding boxes');
-      return;
+      throw new Error('Could not get bounding boxes');
     }
 
     // ターゲット行の下半分 (75% の位置) にドロップ
@@ -2566,7 +1548,7 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
     expect(rowsAfter).toBe(rowCount);
 
     // 順序確認: ROW-A が ROW-C の後に来ること (B, C, A)
-    const inputs = page.locator('tbody tr .device-cell input');
+    const inputs = page.locator('tbody tr .device-cell textarea');
     const inputCount = await inputs.count();
     if (inputCount >= 3) {
       const val1 = await inputs.nth(0).inputValue();
@@ -2587,17 +1569,17 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
     // 3 行追加 (A, B, C)
     await addBtn.click();
     await page.waitForTimeout(200);
-    await page.locator('tbody tr').last().locator('.device-cell input').first().fill('ROW-A');
+    await page.locator('tbody tr').last().locator('.device-cell textarea').first().fill('ROW-A');
     await page.waitForTimeout(100);
 
     await addBtn.click();
     await page.waitForTimeout(200);
-    await page.locator('tbody tr').last().locator('.device-cell input').first().fill('ROW-B');
+    await page.locator('tbody tr').last().locator('.device-cell textarea').first().fill('ROW-B');
     await page.waitForTimeout(100);
 
     await addBtn.click();
     await page.waitForTimeout(200);
-    await page.locator('tbody tr').last().locator('.device-cell input').first().fill('ROW-C');
+    await page.locator('tbody tr').last().locator('.device-cell textarea').first().fill('ROW-C');
     await page.waitForTimeout(100);
 
     const rows = page.locator('tbody tr');
@@ -2606,8 +1588,7 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
 
     const handles = page.locator('.drag-handle');
     if (await handles.count() < 3) {
-      test.fixme(true, 'drag-handle count < 3');
-      return;
+      throw new Error('drag-handle count < 3');
     }
 
     // 行 C (末尾) のハンドルを行 A (先頭) の上半分にドロップ
@@ -2618,8 +1599,7 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
     const targetBox = await targetRowA.boundingBox();
 
     if (!fromBox || !targetBox) {
-      test.fixme(true, 'Could not get bounding boxes');
-      return;
+      throw new Error('Could not get bounding boxes');
     }
 
     // ターゲット行の上半分 (25% の位置) にドロップ
@@ -2638,7 +1618,7 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
     expect(rowsAfter).toBe(rowCount);
 
     // 順序確認: C が先頭に来ること (C, A, B)
-    const inputs = page.locator('tbody tr .device-cell input');
+    const inputs = page.locator('tbody tr .device-cell textarea');
     const inputCount = await inputs.count();
     if (inputCount >= 3) {
       const val1 = await inputs.nth(0).inputValue();
@@ -2650,7 +1630,7 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
     }
   });
 
-  test('[R29] DnD 視覚フィードバック .row-drop-before/.row-drop-after が付与される', async ({ page }) => {
+  test('[R29] DnD 視覚フィードバックの挿入位置行が表示される', async ({ page }) => {
     await setupCircuitTabR28(page);
 
     const addBtn = page.locator('.btn-add-row').first();
@@ -2662,14 +1642,12 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
     const rows = page.locator('tbody tr');
     const rowCount = await rows.count();
     if (rowCount < 2) {
-      test.fixme(true, 'Not enough rows for DnD feedback test');
-      return;
+      throw new Error('Not enough rows for DnD feedback test');
     }
 
     const handles = page.locator('.drag-handle');
     if (await handles.count() < 2) {
-      test.fixme(true, 'drag-handle count < 2');
-      return;
+      throw new Error('drag-handle count < 2');
     }
 
     const handleA = handles.nth(0);
@@ -2679,8 +1657,7 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
     const targetBox = await targetRowB.boundingBox();
 
     if (!fromBox || !targetBox) {
-      test.fixme(true, 'Could not get bounding boxes');
-      return;
+      throw new Error('Could not get bounding boxes');
     }
 
     // ドラッグ開始
@@ -2693,8 +1670,8 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
     await page.mouse.move(targetBox.x + targetBox.width / 2, hoverY, { steps: 10 });
     await page.waitForTimeout(200);
 
-    // .row-drop-before または .row-drop-after のいずれかが付与されていること
-    const dropFeedback = page.locator('tr.row-drop-before, tr.row-drop-after');
+    // 現行の挿入位置インジケーター行が表示されていること
+    const dropFeedback = page.locator('tr.drop-indicator-row');
     const feedbackCount = await dropFeedback.count();
     // ドラッグオーバー中はフィードバッククラスが付与される
     expect(feedbackCount).toBeGreaterThanOrEqual(1);
@@ -2712,194 +1689,54 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
   // ============================================================
   test('[R30] Device Assign Device 列が rowSpan で 1 セル化（MQSE-4S1-D で 6 行→1 セル）', async ({ page }) => {
     await setupDeviceAssignTabR30(page);
+    await addDeviceGroup(page);
 
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    const rows = page.locator('tbody tr');
-    const rowCount = await rows.count();
-    expect(rowCount).toBeGreaterThanOrEqual(6);
-
-    const groupStartIdx = rowCount - 6;
-    const firstTr = rows.nth(groupStartIdx);
-
-    // 先頭行に rowspan="6" の td が存在すること
-    const rowSpanTd = firstTr.locator('td[rowspan="6"]');
-    const rsCount = await rowSpanTd.count();
-    expect(rsCount).toBeGreaterThanOrEqual(1);
-
-    // グループ内に Device select を含む td が 1 つだけ存在すること
-    let deviceSelectTotalCount = 0;
-    for (let i = groupStartIdx; i < rowCount; i++) {
-      const row = rows.nth(i);
-      const selCount = await row.locator('select').count();
-      deviceSelectTotalCount += selCount;
-    }
-    // 先頭行の Device select のみ存在するため合計は少なくとも 1 以上、
-    // 2 行目以降には select がないため合計は 1 のはず
-    // combobox-input は select ではないので実際の <select> 要素のみカウント
-    const nativeSelectsInGroup: number[] = [];
-    for (let i = groupStartIdx; i < rowCount; i++) {
-      const row = rows.nth(i);
-      const cnt = await row.locator('select').count();
-      nativeSelectsInGroup.push(cnt);
-    }
-    // 先頭行: 1 (Device select)、2〜6 行目: 0
-    expect(nativeSelectsInGroup[0]).toBeGreaterThanOrEqual(1);
-    for (let i = 1; i < 6; i++) {
-      expect(nativeSelectsInGroup[i]).toBe(0);
-    }
+    const column = await logicalColumn(page, 'Device');
+    expect(column).toHaveLength(6);
+    expect(column[0].rowSpan).toBe(6);
+    expect(new Set(column.map(cell => cell.originRow)).size).toBe(1);
   });
 
   test('[R30] Device Assign Device# 列が rowSpan で 1 セル化', async ({ page }) => {
     await setupDeviceAssignTabR30(page);
+    await addDeviceGroup(page);
 
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    const rows = page.locator('tbody tr');
-    const rowCount = await rows.count();
-    expect(rowCount).toBeGreaterThanOrEqual(6);
-
-    const groupStartIdx = rowCount - 6;
-    const firstTr = rows.nth(groupStartIdx);
-    const secondTr = rows.nth(groupStartIdx + 1);
-
-    // 先頭行の td 数 > 2 行目の td 数 (rowSpan で吸収された td がある)
-    const firstTdCount = await firstTr.locator('td').count();
-    const secondTdCount = await secondTr.locator('td').count();
-    expect(firstTdCount).toBeGreaterThan(secondTdCount);
-
-    // rowspan="6" の td が先頭行に 2 つ以上存在する (Device 列 + Device# 列)
-    const rowSpan6Tds = firstTr.locator('td[rowspan="6"]');
-    const rs6Count = await rowSpan6Tds.count();
-    expect(rs6Count).toBeGreaterThanOrEqual(2);
+    const column = await logicalColumn(page, 'Device #');
+    expect(column).toHaveLength(6);
+    expect(column[0].rowSpan).toBe(6);
+    expect(new Set(column.map(cell => cell.originRow)).size).toBe(1);
   });
 
   test('[R30] グループ 2 行目以降に Device <select> 要素が存在しない', async ({ page }) => {
     await setupDeviceAssignTabR30(page);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
+    await addDeviceGroup(page);
     const rows = page.locator('tbody tr');
-    const rowCount = await rows.count();
-    expect(rowCount).toBeGreaterThanOrEqual(6);
-
-    const groupStartIdx = rowCount - 6;
-
-    // 2〜6 行目 (groupStartIdx+1 〜 groupStartIdx+5) に Device select がないこと
-    for (let i = groupStartIdx + 1; i < groupStartIdx + 6; i++) {
-      const row = rows.nth(i);
-      const selectCount = await row.locator('select').count();
-      // rowSpan 化により Device td ごと存在しないため select は 0
-      expect(selectCount).toBe(0);
-    }
+    await expect(rows).toHaveCount(6);
+    await expect(rows.first().locator('.device-cell select')).toHaveCount(1);
+    for (let i = 1; i < 6; i++) await expect(rows.nth(i).locator('.device-cell select')).toHaveCount(0);
   });
 
   test('[R30] Device Assign 折りたたみ時は rowSpan が 1 に縮退する', async ({ page }) => {
     await setupDeviceAssignTabR30(page);
-
-    const addBtn = page.locator('.btn-add-row').first();
-    await addBtn.click();
-    await page.waitForTimeout(300);
-
-    const lastRow = page.locator('tbody tr').last();
-    const deviceSelect = lastRow.locator('select').first();
-
-    if (await deviceSelect.count() === 0) {
-      test.fixme(true, 'Device select not found');
-      return;
-    }
-
-    await deviceSelect.selectOption({ label: 'MQSE-4S1-D' });
-    await page.waitForTimeout(500);
-
-    const rows = page.locator('tbody tr');
-    const rowCountBefore = await rows.count();
-    expect(rowCountBefore).toBeGreaterThanOrEqual(6);
-
-    const groupStartIdx = rowCountBefore - 6;
-    const firstTr = rows.nth(groupStartIdx);
-
-    // 展開時 rowspan="6"
-    const rs6Before = await firstTr.locator('td[rowspan="6"]').count();
-    expect(rs6Before).toBeGreaterThanOrEqual(1);
-
-    // 折りたたみ
-    const collapseBtn = page.locator('button.collapse-toggle').filter({ hasText: '▼' }).first();
-    await expect(collapseBtn).toBeVisible({ timeout: 3000 });
-    await collapseBtn.click();
-    await page.waitForTimeout(300);
-
-    const rowCountAfter = await rows.count();
-    expect(rowCountAfter).toBeLessThan(rowCountBefore);
-
-    // 折りたたみ後: rowspan は 1 になるか属性が消える
-    const collapsedFirstTr = rows.nth(rowCountAfter - 1);
-    const rs6After = await collapsedFirstTr.locator('td[rowspan="6"]').count();
-    // rowspan="6" が消えていること
-    expect(rs6After).toBe(0);
+    await addDeviceGroup(page);
+    await page.getByRole('button', { name: 'Collapse', exact: true }).click();
+    const column = await logicalColumn(page, 'Device');
+    expect(column).toHaveLength(1);
+    expect(column[0].rowSpan).toBe(1);
+    expect(new Set(column.map(cell => cell.originRow)).size).toBe(1);
+    await page.getByRole('button', { name: 'Expand', exact: true }).click();
+    expect((await logicalColumn(page, 'Device'))[0].rowSpan).toBe(6);
   });
 
   // ============================================================
   // R31: 入力欄の文字入力時の背景色を削除
   // ============================================================
-  test('[R31] 入力欄フォーカス時の背景が transparent', async ({ page }) => {
-    // /settings/devices ページには .cell-input が存在するため、そこで確認
+  test('[R31] 入力欄フォーカス時に現行の teal 背景と枠線', async ({ page }) => {
     await page.goto('/settings/devices');
-    await page.waitForLoadState('networkidle');
-
-    // .cell-input に focus
-    const cellInput = page.locator('.cell-input').first();
-    await expect(cellInput).toBeVisible({ timeout: 5000 });
-    await cellInput.focus();
-    await page.waitForTimeout(200);
-
-    // focus 時の background-color が transparent / rgba(0,0,0,0) であること
-    // CSS: .cell-input:focus-visible { background: transparent; }
-    const bgColor = await cellInput.evaluate((el) => {
-      return window.getComputedStyle(el).backgroundColor;
-    });
-
-    // transparent = rgba(0, 0, 0, 0)
-    expect(bgColor).toMatch(/rgba\(0,\s*0,\s*0,\s*0\)|transparent/);
+    const input = page.locator('.cell-input').first();
+    await input.focus();
+    await expect(input).toHaveCSS('background-color', 'rgba(0, 123, 126, 0.08)');
+    await expect(input).toHaveCSS('border-color', 'rgb(0, 123, 126)');
   });
 
   test('[R31] :root に color-scheme: light が設定されている', async ({ page }) => {
@@ -2956,20 +1793,11 @@ test.describe('14 - R28〜R31 新規要件検証', () => {
     }
   });
 
-  test('[R31] .cell-input の CSS で background が transparent になっている', async ({ page }) => {
-    // /settings/devices ページには .cell-input が存在するため、そこで確認
+  test('[R31] .cell-input の通常背景が現行の薄灰色', async ({ page }) => {
     await page.goto('/settings/devices');
-    await page.waitForLoadState('networkidle');
-
-    // .cell-input の通常状態の background が transparent であること (R31 の要件)
-    const cellInput = page.locator('.cell-input').first();
-    await expect(cellInput).toBeVisible({ timeout: 5000 });
-
-    const bgColor = await cellInput.evaluate((el) => {
-      return window.getComputedStyle(el).backgroundColor;
-    });
-
-    // 通常状態: background: transparent
-    expect(bgColor).toMatch(/rgba\(0,\s*0,\s*0,\s*0\)|transparent/);
+    const input = page.locator('.cell-input').first();
+    await expect(input).toBeVisible();
+    await page.mouse.move(0, 0);
+    await expect(input).toHaveCSS('background-color', 'rgb(240, 241, 243)');
   });
 });

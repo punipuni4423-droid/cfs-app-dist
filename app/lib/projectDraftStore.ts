@@ -1,4 +1,5 @@
 import type { ProjectData, TrashData } from '../types';
+import { capturedProjectBase, validProjectBase, type ProjectBase, type RestoreSource } from './projectBase';
 import { canonicalJson } from './canonicalJson';
 import { createAppId } from './id';
 import { confirmedImportBatch, deferredImportSubset, importBatches, isImportRecovery, validImportRecovery, verifyImportBatch, type ImportRecovery } from './projectImportRecovery';
@@ -9,10 +10,11 @@ export interface ProjectDraftRecord {
   scope: DraftScope;
   project: ProjectData;
   baseUpdatedAt: string | null;
+  base?: ProjectBase;
   generation: number;
   savedAt: string;
   importRecovery?: ImportRecovery;
-  intent?: { before: ProjectData; project: ProjectData; expectedUpdatedAt: string; operationId: string; forceOverwriteUpdatedAt?: string;
+  intent?: { before: ProjectData; project: ProjectData; expectedUpdatedAt: string; operationId: string; forceOverwriteUpdatedAt?: string; base?: ProjectBase; restoreSource?: RestoreSource;
     restore?: { trashItemId: string; deletedAt: string; expectedUpdatedAt: null; original: TrashData['projects'][number]; confirmedProject?: ProjectData } };
 }
 export interface DraftStatus { state: 'unconfirmed' | 'saving' | 'saved' | 'failed'; message: string; projectId?: string }
@@ -29,6 +31,8 @@ const FALLBACK_PREFIX = 'cfs-draft-project-v3:';
 let lastArchivedRaw: string | null = null;
 const unresolvedInheritance = new WeakSet<ProjectDraftRecord>();
 const uncertainImportBatches = new Set<string>();
+// A discarded generation must not be resurrected by an older async checkpoint.
+const discardedGenerations = new Map<string, number>();
 async function bounded<T>(work: Promise<T>, milliseconds = 20_000): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try { return await Promise.race([work, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('The local draft could not be verified in time. Export a backup.')), milliseconds); })]); }
@@ -112,10 +116,12 @@ export function validDraftRecord(value: unknown): value is ProjectDraftRecord {
   return Boolean(record.scope && ['workspace', 'owner', 'tab'].every(key => typeof (record.scope as unknown as Record<string, unknown>)[key] === 'string'))
     && validProject(record.project) && record.key === keyFor(record.scope, record.project.id) && Number.isFinite(record.generation)
     && (record.baseUpdatedAt === null || typeof record.baseUpdatedAt === 'string')
+    && (record.base === undefined || validProjectBase(record.base) && record.base.updatedAt === record.baseUpdatedAt)
     && (!isImportRecovery(record) || validImportRecovery(record))
     && (!record.intent || (validProject(record.intent.before) && (record.intent.restore ? validRestoreProject(record.intent.project) : validProject(record.intent.project))
       && record.intent.before.id === record.project.id && record.intent.project.id === record.project.id
       && typeof record.intent.expectedUpdatedAt === 'string' && record.intent.operationId === record.intent.project.lastSaveOperation?.id
+      && (record.intent.base === undefined || validProjectBase(record.intent.base) && record.intent.base.updatedAt === record.intent.expectedUpdatedAt)
       && (!record.intent.restore || (typeof record.intent.restore.trashItemId === 'string' && Boolean(record.intent.restore.trashItemId)
         && typeof record.intent.restore.deletedAt === 'string' && record.intent.restore.expectedUpdatedAt === null
         && record.intent.restore.original?.id === record.intent.restore.trashItemId
@@ -204,6 +210,7 @@ export async function checkpointProject(project: ProjectData, baseUpdatedAt: str
   const knownPrevious = previous && !unresolvedInheritance.has(previous) ? previous : undefined;
   const record: ProjectDraftRecord = {
     key, scope: { ...owner }, project: structuredClone(project), baseUpdatedAt: baseUpdatedAt ?? previous?.baseUpdatedAt ?? null,
+    base: intent?.base ?? capturedProjectBase(project.id, baseUpdatedAt) ?? (previous?.baseUpdatedAt === baseUpdatedAt ? previous.base : undefined),
     generation: ++generation, savedAt: new Date().toISOString(), intent: intent === null ? undefined : intent ?? knownPrevious?.intent,
   };
   if (importRecovery) record.importRecovery = structuredClone(importRecovery);
@@ -237,15 +244,18 @@ export async function checkpointProject(project: ProjectData, baseUpdatedAt: str
         try { inheritIntent(existing, intent === undefined ? readFallback() : null); }
         catch { store.transaction.abort(); return; }
         const latest = cached.find(item => item.key === key);
-        if ((!existing || existing.generation < record.generation) && (!latest || latest.generation <= record.generation)) store.put(record);
+        if (record.generation > (discardedGenerations.get(key) ?? -1)
+          && (!existing || existing.generation < record.generation) && (!latest || latest.generation <= record.generation)) store.put(record);
         result(undefined);
       };
     });
     const verified = (await readAll()).find(item => item.key === key);
+    if (record.generation <= (discardedGenerations.get(key) ?? -1)) return null;
     if (!verified || verified.generation !== record.generation || canonicalJson(verified) !== canonicalJson(record)) throw new Error('The contents of this draft generation could not be verified.');
     if (scope === owner && cached.find(item => item.key === key)?.generation === record.generation) publish({ projectId: project.id, state: 'saved', message: 'Draft stored on this device (not saved to shared data)' });
     return record;
   })()).catch(error => {
+    if (record.generation <= (discardedGenerations.get(key) ?? -1)) return null;
     // One project per key. setItem is atomic: a quota error keeps the previous copy.
     try {
       const fallbackKey = FALLBACK_PREFIX + key;
@@ -276,6 +286,40 @@ export async function removeConfirmedDraft(record: ProjectDraftRecord): Promise<
   const fallbackKey = FALLBACK_PREFIX + key;
   try { if (JSON.parse(localStorage.getItem(fallbackKey) ?? 'null')?.generation === record.generation) localStorage.removeItem(fallbackKey); } catch { /* Keep unreadable copies. */ }
   cached = cached.filter(item => item.key !== key || item.generation !== record.generation);
+}
+
+/** Explicit discard affects only this owner/tab. Pending save/import evidence is never discarded. */
+export async function discardCurrentTabDraft(projectId: string, owner: DraftScope): Promise<void> {
+  if (scope !== owner) throw new Error('The draft owner has changed.');
+  const key = keyFor(owner, projectId);
+  const barrier = ++generation;
+  const safe = (record: unknown): void => {
+    if (!record) return;
+    if (!validDraftRecord(record) || record.key !== key || record.intent || record.importRecovery) {
+      throw new Error('Resolve the pending save or import before discarding this draft.');
+    }
+    if (record.generation > barrier) throw new Error('The draft changed while discarding. Keep the newer changes.');
+  };
+  safe(cached.find(record => record.key === key));
+  const fallbackKey = FALLBACK_PREFIX + key;
+  safe(JSON.parse(localStorage.getItem(fallbackKey) ?? 'null'));
+  discardedGenerations.set(key, barrier);
+  await bounded(transaction<void>('readwrite', (store, result) => {
+    const request = store.get(key);
+    request.onsuccess = () => {
+      try {
+        if (scope !== owner) throw new Error('The draft owner has changed.');
+        safe(request.result);
+        store.delete(key);
+        result(undefined);
+      } catch { store.transaction.abort(); }
+    };
+  }));
+  if (scope !== owner) throw new Error('The draft owner has changed.');
+  safe(JSON.parse(localStorage.getItem(fallbackKey) ?? 'null'));
+  localStorage.removeItem(fallbackKey);
+  cached = cached.filter(record => record.key !== key || record.generation > barrier);
+  publish({ projectId, state: 'saved', message: 'This tab’s unsaved draft was discarded.' });
 }
 
 /** A read-only confirmation must not replace the currently edited tab's draft. */

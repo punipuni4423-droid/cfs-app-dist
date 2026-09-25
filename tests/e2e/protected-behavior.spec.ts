@@ -12,6 +12,7 @@ import { OTHER_AREA_ID } from "../../app/lib/cfsTableModel";
 import { formatProgrammingName, normalizeProgrammingNameSettings } from "../../app/lib/programmingNameSettings";
 import { ensureRoomScenes, isPmsScene } from "../../app/lib/roomScenes";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
+import { readNativeDraftRecords } from "./support/native-project-drafts";
 
 type LocalEditingMockState = Awaited<ReturnType<typeof installLocalEditingMocks>>;
 
@@ -1442,6 +1443,10 @@ test.describe("Protected CFS behaviors", () => {
     const roomTypeName = `Room-Conflict-${Date.now()}`;
     await createRoomType(page, roomTypeName);
 
+    let projectPosts = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/projects") projectPosts += 1;
+    });
     await page.context().route("**/api/projects**", async (route) => {
       if (route.request().method() === "POST") {
         await route.fulfill({
@@ -1461,9 +1466,9 @@ test.describe("Protected CFS behaviors", () => {
     const conflictPrompt = page.waitForEvent("dialog");
     await dialog.getByRole("button", { name: "Save Revision", exact: true }).click();
     const prompt = await conflictPrompt;
-    expect(prompt.type()).toBe("prompt");
-    expect(prompt.message()).toContain("この画面を開いた後に、他のユーザーがこのプロジェクトを保存しました。");
-    await prompt.accept("B");
+    expect(prompt.type()).toBe("confirm");
+    expect(prompt.message()).toContain("Your changes are retained in Recovery.");
+    await prompt.dismiss();
 
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("The revisions could not be saved. Keep editing and try again.");
@@ -1474,9 +1479,12 @@ test.describe("Protected CFS behaviors", () => {
     const savedRoomType = roomTypes.find((rt) => rt.name === roomTypeName) as Record<string, unknown> | undefined;
     expect(savedRoomType?.revision).not.toBe("1.01");
     expect((savedRoomType?.revisions as unknown[] | undefined)?.length ?? 0).toBe(0);
+    expect(projectPosts).toBe(1);
+    const recovery = (await readNativeDraftRecords(page)).filter((record) => record.scope.tab.startsWith("recovery:"));
+    expect(JSON.stringify(recovery)).toContain(roomTypeName);
   });
 
-  test("save current project conflict can overwrite the confirmed server version", async ({ page }) => {
+  test("save current project conflict retains Recovery and requires an explicit save after reloading", async ({ page }) => {
     const projectName = `Protected-ConflictOverwrite-${Date.now()}`;
     await createProject(page, projectName);
     const roomTypeName = `Room-Overwrite-${Date.now()}`;
@@ -1485,7 +1493,7 @@ test.describe("Protected CFS behaviors", () => {
     await page.context().unroute("**/api/projects**").catch(() => undefined);
     const serverUpdatedAt = "2099-01-01T00:00:00.000Z";
     let firstSave = true;
-    let retryPayload: Record<string, unknown> | null = null;
+    const payloads: Record<string, unknown>[] = [];
 
     await page.context().route("**/api/projects**", async (route) => {
       if (route.request().method() !== "POST") {
@@ -1498,6 +1506,7 @@ test.describe("Protected CFS behaviors", () => {
       }
 
       const payload = route.request().postDataJSON() as Record<string, unknown>;
+      payloads.push(payload);
       const project = payload.project as Record<string, unknown> | undefined;
       if (!project) {
         await route.fulfill({
@@ -1510,14 +1519,14 @@ test.describe("Protected CFS behaviors", () => {
 
       if (firstSave) {
         firstSave = false;
-        const serverProject = { ...mockState.projects[0], updatedAt: serverUpdatedAt };
+        const serverProject = { ...mockState.projects[0], updatedAt: serverUpdatedAt, lastUpdatedBy: { userId: "synthetic-editor-b", displayName: "Synthetic Editor B", updatedAt: serverUpdatedAt } };
         mockState.projects = [serverProject];
         await route.fulfill({
           status: 409,
           contentType: "application/json",
           body: JSON.stringify({
             ok: false,
-            code: "PROJECT_CONFLICT",
+            code: "STALE_BASE",
             error: "Project was updated by another user. Reload before saving.",
             project: serverProject,
             serverUpdatedAt,
@@ -1526,7 +1535,6 @@ test.describe("Protected CFS behaviors", () => {
         return;
       }
 
-      retryPayload = payload;
       mockState.projects = [project];
       await route.fulfill({
         status: 200,
@@ -1536,24 +1544,38 @@ test.describe("Protected CFS behaviors", () => {
     });
 
     const conflictPrompt = page.waitForEvent("dialog");
-    const downloadPromise = page.waitForEvent("download");
     await saveCurrentProjectTopButton(page).click();
     const prompt = await conflictPrompt;
-    expect(prompt.type()).toBe("prompt");
-    await prompt.accept("O");
-    const download = await downloadPromise;
-    await Promise.race([
-      download.delete().catch(() => undefined),
-      new Promise<void>((resolve) => setTimeout(resolve, 500)),
-    ]);
+    expect(prompt.type()).toBe("confirm");
+    expect(prompt.message()).toContain("Synthetic Editor B");
+    expect(prompt.message()).toContain(serverUpdatedAt);
+    expect(prompt.message()).toContain("Your changes are retained in Recovery.");
+    await prompt.accept();
+    await expect(page.getByRole("tab", { name: "Room Type", exact: true })).toBeVisible();
+    await page.waitForTimeout(600);
+    expect(payloads).toHaveLength(1);
+    expect(mockState.projects[0].updatedAt).toBe(serverUpdatedAt);
+    expect(JSON.stringify(mockState.projects[0])).not.toContain(roomTypeName);
+    const readRecovery = async () => (await readNativeDraftRecords(page)).filter((record) => record.scope.tab.startsWith("recovery:"));
+    expect(JSON.stringify(await readRecovery())).toContain(roomTypeName);
+
+    const freshRoomName = "Explicit-After-Recovery";
+    await createRoomType(page, freshRoomName);
+    expect(payloads).toHaveLength(1);
+    await saveCurrentProjectTopButton(page).click();
 
     await expect(page.locator(".revision-save-status-label")).toHaveText("Saved", { timeout: 10000 });
-    const savedRetryPayload = retryPayload as Record<string, unknown> | null;
-    expect(savedRetryPayload?.forceOverwrite).toBe(true);
-    expect(savedRetryPayload?.forceOverwriteUpdatedAt).toBe(serverUpdatedAt);
+    expect(payloads).toHaveLength(2);
+    expect(payloads[1].expectedUpdatedAt).toBe(serverUpdatedAt);
+    for (const payload of payloads) {
+      expect(payload.forceOverwrite).toBe(false);
+      expect(payload.forceOverwriteUpdatedAt).toBe("");
+    }
     const savedProject = mockState.projects[0] as Record<string, unknown>;
     const roomTypes = Array.isArray(savedProject.roomTypes) ? savedProject.roomTypes as Record<string, unknown>[] : [];
-    expect(roomTypes.some((roomType) => roomType.name === roomTypeName)).toBe(true);
+    expect(roomTypes.some((roomType) => roomType.name === freshRoomName)).toBe(true);
+    expect(roomTypes.some((roomType) => roomType.name === roomTypeName)).toBe(false);
+    expect(JSON.stringify(await readRecovery())).toContain(roomTypeName);
   });
 
   test("project creation stays available while another project is locked", async ({ page }) => {
@@ -1882,7 +1904,7 @@ test.describe("Protected CFS behaviors", () => {
       });
     });
     await priorityChecks.nth(2).click();
-    expect(await dialogMessagePromise).toContain("少なくとも1つのFunctionを未チェック");
+    expect(await dialogMessagePromise).toContain("Leave at least one Function unchecked within the same button.");
     await expect(priorityChecks.nth(0)).toBeChecked();
     await expect(priorityChecks.nth(1)).toBeChecked();
     await expect(priorityChecks.nth(2)).not.toBeChecked();
@@ -2142,7 +2164,8 @@ test.describe("Protected CFS behaviors", () => {
 
     const rows = page.locator("tbody tr");
     await expect(rows.first().locator(".drag-handle")).toHaveText("::");
-    await rows.nth(2).locator(".drag-handle").dragTo(rows.nth(0));
+    // Drop above the target midpoint to request insertion before the first row.
+    await rows.nth(2).locator(".drag-handle").dragTo(rows.nth(0), { targetPosition: { x: 120, y: 2 } });
     await expect.poll(async () =>
       rows.evaluateAll((rowEls) =>
         rowEls.map((row) => (row.querySelector("input.combobox-input") as HTMLInputElement | null)?.value ?? ""),
@@ -2552,7 +2575,7 @@ test.describe("Protected CFS behaviors", () => {
     expect(JSON.stringify(mockState.projects.find((project) => project.name === projectName))).toBe(persistedProjectBeforeRowsChange);
   });
 
-  test("Back to Project List prompts for a draft and can restore the latest revision", async ({ page }) => {
+  test("Back to Project List discards only unsaved changes and preserves the latest saved current project", async ({ page }) => {
     const projectName = `Protected-DraftBack-${Date.now()}`;
     const roomName = `Room-${Date.now()}`;
     await createProject(page, projectName);
@@ -2564,6 +2587,14 @@ test.describe("Protected CFS behaviors", () => {
     await saveDialog.getByRole("button", { name: "Save Revision", exact: true }).click();
     await expect(saveDialog).toBeHidden({ timeout: 10000 });
 
+    await addCircuitRowWithDesigner(page, "SAVED-AFTER-REVISION");
+    await saveCurrentProjectTopButton(page).click();
+    await expect(page.locator(".revision-save-status-label")).toHaveText("Saved", { timeout: 10000 });
+    const serverBeforeDiscard = JSON.stringify(mockState.projects);
+    let projectPosts = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/projects") projectPosts += 1;
+    });
     await enableLocalCollaboration(page);
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: /Start editing/i }).click();
@@ -2573,10 +2604,17 @@ test.describe("Protected CFS behaviors", () => {
     await page.getByRole("button", { name: "Back to Project List", exact: true }).click();
     const finishDialog = page.getByRole("dialog", { name: "Finish editing with draft changes?" });
     await expect(finishDialog).toBeVisible({ timeout: 10000 });
-    await finishDialog.getByRole("button", { name: "Discard Draft & Restore Latest Rev", exact: true }).click();
+    let sharedReloadGets = 0;
+    page.on("response", (response) => {
+      if (response.request().method() === "GET" && new URL(response.url()).pathname === "/api/projects" && response.status() === 200) sharedReloadGets += 1;
+    });
+    await finishDialog.getByRole("button", { name: "Discard my unsaved changes", exact: true }).click();
     await expect(page.getByRole("heading", { name: "CFS Project Selection", exact: true })).toBeVisible({ timeout: 10000 });
+    expect(sharedReloadGets).toBeGreaterThan(0);
     const persistedProjectText = JSON.stringify(mockState.projects.find((candidate) => candidate.name === projectName));
     expect(persistedProjectText).not.toContain("DRAFT-BACK");
+    expect(projectPosts).toBe(0);
+    expect(JSON.stringify(mockState.projects)).toBe(serverBeforeDiscard);
 
     await page.locator("button.screen-card").filter({ hasText: projectName }).first().click();
     const roomTypeTab = page.getByRole("tab", { name: roomName, exact: true });
@@ -2588,6 +2626,9 @@ test.describe("Protected CFS behaviors", () => {
     }
     await page.getByRole("tab", { name: "Circuit", exact: true }).click();
     await expect(page.locator(".circuits-table")).not.toContainText("DRAFT-BACK");
+    await expect.poll(() => page.locator(".circuits-table textarea").evaluateAll((inputs) => inputs.map((input) => (input as HTMLTextAreaElement).value))).toContain("SAVED-AFTER-REVISION");
+    const actualValues = await page.locator(".circuits-table textarea").evaluateAll((inputs) => inputs.map((input) => (input as HTMLTextAreaElement).value));
+    expect(actualValues).not.toContain("DRAFT-BACK");
   });
 
   test("Back to Project List detects a draft in another room type", async ({ page }) => {
@@ -2604,6 +2645,11 @@ test.describe("Protected CFS behaviors", () => {
     await saveDialog.getByRole("button", { name: "Save Revision", exact: true }).click();
     await expect(saveDialog).toBeHidden({ timeout: 10000 });
 
+    const serverBeforeDiscard = JSON.stringify(mockState.projects);
+    let projectPosts = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/projects") projectPosts += 1;
+    });
     await enableLocalCollaboration(page);
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: /Start editing/i }).click();
@@ -2614,14 +2660,16 @@ test.describe("Protected CFS behaviors", () => {
     await page.getByRole("button", { name: "Back to Project List", exact: true }).click();
     const finishDialog = page.getByRole("dialog", { name: "Finish editing with draft changes?" });
     await expect(finishDialog).toBeVisible({ timeout: 10000 });
-    await finishDialog.getByRole("button", { name: "Discard Draft & Restore Latest Rev", exact: true }).click();
+    await finishDialog.getByRole("button", { name: "Discard my unsaved changes", exact: true }).click();
     await expect(page.getByRole("heading", { name: "CFS Project Selection", exact: true })).toBeVisible({ timeout: 10000 });
 
     const persistedProjectText = JSON.stringify(mockState.projects.find((candidate) => candidate.name === projectName));
     expect(persistedProjectText).not.toContain("DRAFT-OTHER-ROOM");
+    expect(projectPosts).toBe(0);
+    expect(JSON.stringify(mockState.projects)).toBe(serverBeforeDiscard);
   });
 
-  test("idle editing auto-saves the draft as a new revision and returns to view mode", async ({ page }) => {
+  test("idle editing prompts without saving and retains the draft and existing revision", async ({ page }) => {
     const projectName = `Protected-IdleAutoSave-${Date.now()}`;
     const roomName = `Room-${Date.now()}`;
     await createProject(page, projectName);
@@ -2633,27 +2681,35 @@ test.describe("Protected CFS behaviors", () => {
     await saveDialog.getByRole("button", { name: "Save Revision", exact: true }).click();
     await expect(saveDialog).toBeHidden({ timeout: 10000 });
 
+    const serverBeforeIdle = JSON.stringify(mockState.projects);
+    let projectPosts = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/projects") projectPosts += 1;
+    });
     await enableLocalCollaboration(page, { idleMs: 250 });
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: /Start editing/i }).click();
     await addCircuitRowWithDesigner(page, "IDLE-AUTO");
     await expect(page.locator(".revision-save-status-label")).toHaveText("Draft", { timeout: 10000 });
 
-    await expect.poll(async () => {
-      const project = mockState.projects.find((candidate) => candidate.name === projectName) as {
-        roomTypes?: Array<{ name?: string; revisions?: Array<{ note?: string; snapshot?: unknown }> }>;
-      } | undefined;
-      const roomType = project?.roomTypes?.find((candidate) => candidate.name === roomName);
-      return roomType?.revisions?.length ?? 0;
-    }, { timeout: 12000 }).toBe(2);
+    const finishDialog = page.getByRole("dialog", { name: "Finish editing with draft changes?" });
+    await expect(finishDialog).toBeVisible({ timeout: 15000 });
+    await page.waitForTimeout(600);
+    expect(projectPosts).toBe(0);
+    expect(JSON.stringify(mockState.projects)).toBe(serverBeforeIdle);
 
     const persistedProject = mockState.projects.find((candidate) => candidate.name === projectName) as {
       roomTypes?: Array<{ name?: string; revisions?: Array<{ note?: string; snapshot?: unknown }> }>;
     } | undefined;
     const persistedRoomType = persistedProject?.roomTypes?.find((candidate) => candidate.name === roomName);
-    expect(persistedRoomType?.revisions?.at(-1)?.note).toBe("Automatic save");
-    expect(JSON.stringify(persistedRoomType?.revisions?.at(-1)?.snapshot)).toContain("IDLE-AUTO");
-    await expect(page.locator("section.collaboration-bar")).toContainText("View Only", { timeout: 12000 });
+    expect(persistedRoomType?.revisions).toHaveLength(1);
+    expect(JSON.stringify(persistedRoomType?.revisions?.at(-1)?.snapshot)).not.toContain("IDLE-AUTO");
+    await expect.poll(async () => JSON.stringify(await readNativeDraftRecords(page))).toContain("IDLE-AUTO");
+    await expect(page.locator("section.collaboration-bar")).not.toContainText("View Only");
+    await finishDialog.getByRole("button", { name: "Continue Editing", exact: true }).click();
+    await expect(finishDialog).toBeHidden();
+    expect(JSON.stringify(await readNativeDraftRecords(page))).toContain("IDLE-AUTO");
+    expect(projectPosts).toBe(0);
   });
 
   test("programming name settings preserve the legacy default and custom separators", () => {

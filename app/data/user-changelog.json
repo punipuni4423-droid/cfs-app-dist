@@ -1,6 +1,19 @@
 {
   "entries": [
     {
+      "id": "2026-09-24-2",
+      "date": "2026-09-24",
+      "title": "Scene settings, connection and reinstall fixes ／ Scene 設定・接続・再インストールの修正",
+      "items": [
+        "Discard my unsaved changes now removes only this tab's local edits and loads the latest shared project. Finishing an editing session never saves a revision automatically. ／ 未保存変更の破棄は、このタブのローカル編集だけを削除し、共有先の最新版を読み直します。編集終了時にRevisionを自動保存しません。",
+        "Shared saves keep automatic server history and reject stale bases, suspicious rollbacks and saves without edit access. Restore Revision previews the contents and saves a new version; admins can restore Server History from Save and Recovery. ／ 共有保存では変更前の自動履歴を残し、古い版からの保存・巻き戻りの疑い・編集権限のない保存を拒否します。Restore Revisionは内容を確認して新しい版として保存します。管理者はSave and RecoveryのServer Historyからも復元できます。",
+        "In the CFS tab, clicking a Scene cell now opens the same setting window as Switch cells: pick the Area Scene for each area, adjust Individual Override values, and set Backlight on the Backlight tab. Area Scene definitions are still edited from the Area Scene tab (or the 'Edit Area Scene definitions' link). ／ CFS タブで Scene のセルをクリックすると、Switch と同じ設定画面が開きます（エリアごとの Area Scene の選択、Individual Override の調整、Backlight タブでのバックライト設定）。Area Scene の定義そのものは従来どおり Area Scene タブ（または「Edit Area Scene definitions」リンク）で編集します。",
+        "Opening two CFS instances (for example ports 3014 and 3064) in the same browser no longer signs the other one out. Update and editing keep working in both. ／ 同じブラウザで 2 つの CFS（例: ポート 3014 と 3064）を開いても、もう一方の接続が切れなくなりました。どちらでも Update と編集がそのまま使えます。",
+        "This update list now appears right after an update, even on the first visit. Press Close to mark it as read. ／ この更新リストは、更新後の最初の表示でも出るようになりました。Close を押すと既読になります。",
+        "Clean reinstall now stops the previous app folder's server and helper reliably, so the new folder starts on the same port instead of moving to the next one. ／ クリーン再インストール時に、前のフォルダーのサーバーと補助プロセスを確実に停止するようになり、新しいフォルダーが同じポートで起動します（次のポートへ逃げません）。"
+      ]
+    },
+    {
       "id": "2026-09-24-1",
       "date": "2026-09-24",
       "title": "Update notices and shared editing awareness",

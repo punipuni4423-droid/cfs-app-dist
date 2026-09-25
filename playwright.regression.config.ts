@@ -14,6 +14,11 @@ if (!/^\.next-[A-Za-z0-9_-]+$/.test(process.env.NEXT_DIST_DIR ?? '')) throw new 
 
 const regressionProjects: PlaywrightTestConfig["projects"] = [
   {
+    name: 'smoke-and-bulk',
+    testMatch: ['**/cfs-smoke.spec.ts', '**/switch_bulk_setting.spec.ts', '**/command_bulk_setting.spec.ts', '**/room_scene_bulk_setting.spec.ts', '**/backlight_byscene_retention.spec.ts'],
+    use: { ...devices['Desktop Chrome'] },
+  },
+  {
     name: 'edit-mode-links',
     testMatch: ['**/cfs_setting_link_*.spec.ts', '**/cfs_setting_overlay_entry.spec.ts', '**/switch_setting_link.spec.ts', '**/cfs_low_high_inline_edit.spec.ts', '**/device_assign_low_high_end.spec.ts', '**/device_assign_zone_multi_circuit.spec.ts', '**/cfs_zone_columns.spec.ts'],
     use: { ...devices['Desktop Chrome'] },

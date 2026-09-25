@@ -1,9 +1,11 @@
 import { test, expect, type Page } from "./support/safe-test";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
+import { readNativeDraftProjects, readNativeDraftRecords } from "./support/native-project-drafts";
+import { openSaveRecovery } from "./support/save-recovery-ui";
 
 // Regression: Palladiom "By Scene" un-setting itself during consecutive edits
 // (stale prop-snapshot clobber) and unsaved Backlight edits vanishing on tab
-// switches / reloads (2026-08-21 reports). Runs against an isolated
+// switches, and explicitly saved edits surviving reload (2026-08-21 reports). Runs against an isolated
 // local-mode server; the code paths under test are shared with supabase mode.
 
 const BY_SCENE = "__byScene";
@@ -74,13 +76,14 @@ function assignmentSelect(page: Page) {
 }
 
 test.describe("Backlight By-Scene retention", () => {
+  let state: Awaited<ReturnType<typeof installLocalEditingMocks>>;
   test.beforeEach(async ({ page }) => {
     await page.context().route('**/api/**', (route) => route.fulfill({ json: {} }));
-    await installLocalEditingMocks(page);
+    state = await installLocalEditingMocks(page);
   });
   test.setTimeout(180000);
 
-  test("By-Scene and level edits survive bursts, tab switches, and reload", async ({ page }) => {
+  test("By-Scene and level edits survive bursts, tab switches, explicit Recovery and Save/reload", async ({ page }) => {
     await isolate(page);
     await createAndOpenProject(page, `BL-QA-${Date.now()}`);
     await createRoomTypeAndSelect(page, `BL-Room-${Date.now()}`);
@@ -119,13 +122,12 @@ test.describe("Backlight By-Scene retention", () => {
     await subTab(page, /^Backlight$/);
     await expect(assignmentSelect(page)).toHaveValue(BY_SCENE);
 
-    // Let the debounced browser-draft save land, then verify the v2 draft —
+    // Let the debounced browser-draft save land, then verify native IndexedDB —
     // the layer that must survive reloads (server only receives explicit
     // saves by design).
     await page.waitForTimeout(1800);
-    const draftAssignment = await page.evaluate(() => {
+    const draftAssignment = await readNativeDraftProjects(page).then(drafts => {
       try {
-        const drafts = JSON.parse(localStorage.getItem("cfs-project-drafts-v2") || "[]");
         const sw = (drafts?.[0]?.roomTypes?.[0]?.switches ?? []).find(
           (item: { kind?: string }) => item.kind === "lutronPd",
         );
@@ -138,7 +140,41 @@ test.describe("Backlight By-Scene retention", () => {
     });
     expect(draftAssignment).toBe("");
 
-    // Reload and re-open: the value must still be there.
+    // Drafts are not automatically merged on reload. Only explicit Save sends
+    // the current editor to the server; recovery contracts have dedicated specs.
+    expect(state.projects[0].roomTypes).toEqual([]);
+    const beforeSave = (await readNativeDraftProjects(page))[0].roomTypes[0];
+    const serverBeforeRecovery = structuredClone(state.projects);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    const roomTab = page.getByRole('tab', { name: 'Room Type', exact: true });
+    const projectCard = page.locator('button.screen-card').first();
+    await expect(roomTab.or(projectCard).first()).toBeVisible();
+    if (!await roomTab.isVisible()) await projectCard.click();
+    await roomTab.click();
+    await expect(page.locator('input[placeholder="New room type name"]')).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Backlight', exact: true })).toHaveCount(0);
+    expect((await readNativeDraftRecords(page)).some(record =>
+      record.project.roomTypes?.some(room => room.id === beforeSave.id &&
+        JSON.stringify(room.switches) === JSON.stringify(beforeSave.switches)))).toBe(true);
+    expect(state.projects).toEqual(serverBeforeRecovery);
+    await openSaveRecovery(page);
+    const restore = page.getByTestId('recovery-return-to-editor');
+    await expect(restore).toHaveCount(1);
+    await expect(restore).toBeEnabled();
+    page.once('dialog', dialog => dialog.accept());
+    await restore.click();
+    await page.getByRole('button', { name: 'Close Save and Recovery', exact: true }).click();
+    await page.locator('button.screen-card').filter({ hasText: beforeSave.name }).click();
+    await subTab(page, /^Backlight$/);
+    await expect(assignmentSelect(page)).toHaveValue(BY_SCENE);
+    expect(state.projects).toEqual(serverBeforeRecovery);
+    await page.getByRole('button', { name: 'Save current project without a new revision' }).click();
+    await expect(page.locator('.revision-save-status-label')).toHaveText('Saved');
+    expect(state.projects[0].roomTypes).toEqual([expect.objectContaining({
+      switches: beforeSave.switches, backlightLevels: beforeSave.backlightLevels,
+    })]);
+
+    // Reload and re-open the explicitly saved project.
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForFunction(
       () => !document.body.textContent?.includes("Loading projects"),
@@ -156,6 +192,9 @@ test.describe("Backlight By-Scene retention", () => {
     }
     await subTab(page, /^Backlight$/);
     await expect(assignmentSelect(page)).toHaveValue(BY_SCENE);
+    expect(state.projects[0].roomTypes).toEqual([expect.objectContaining({
+      switches: beforeSave.switches, backlightLevels: beforeSave.backlightLevels,
+    })]);
   });
 
   test("per-row action edits never break the group's By-Scene assignment", async ({ page }) => {
@@ -186,9 +225,8 @@ test.describe("Backlight By-Scene retention", () => {
     // The INDIVIDUAL panel edit must stay scoped to its own row: the second
     // row's condition and both rows' targets are untouched.
     await page.waitForTimeout(1800);
-    const afterIndividual = await page.evaluate(() => {
+    const afterIndividual = await readNativeDraftProjects(page).then(drafts => {
       try {
-        const drafts = JSON.parse(localStorage.getItem("cfs-project-drafts-v2") || "[]");
         return (drafts?.[0]?.roomTypes?.[0]?.switches ?? [])
           .filter((item: { kind?: string }) => item.kind === "lutronPd")
           .map((item: { backlightCondition?: string; backlightTarget?: string }) => ({
@@ -218,9 +256,8 @@ test.describe("Backlight By-Scene retention", () => {
     await expect(select).toHaveValue(BY_SCENE);
 
     const readRows = () =>
-      page.evaluate(() => {
-        try {
-          const drafts = JSON.parse(localStorage.getItem("cfs-project-drafts-v2") || "[]");
+      readNativeDraftProjects(page).then(drafts => {
+      try {
           return (drafts?.[0]?.roomTypes?.[0]?.switches ?? [])
             .filter((item: { kind?: string }) => item.kind === "lutronPd")
             .map((item: { backlightCondition?: string; backlightAssignment?: string }) => ({

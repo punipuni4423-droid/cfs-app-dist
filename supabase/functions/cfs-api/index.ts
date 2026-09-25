@@ -416,9 +416,13 @@ function readableProjects(membership: Membership, columns: string) {
 }
 
 async function readProjects(membership: Membership) {
-  const result = await readableProjects(membership, 'payload').order("updated_at", { ascending: false });
-  if (result.error) throw result.error;
-  return (result.data || []).map((row) => row.payload);
+  // The payload and its optimistic-concurrency base must share one DB snapshot.
+  // A later metadata query could otherwise attach a newer base to an old body.
+  const result = await admin.rpc('read_cfs_projects', { p_user_id: membership.auth_user_id });
+  if (result.error) throwSaveContractError(result.error);
+  const snapshot = asRecord(result.data);
+  if (!snapshot || !Array.isArray(snapshot.projects) || !asRecord(snapshot.bases)) throw new Error('Project read response was incomplete.');
+  return snapshot;
 }
 
 async function readProject(projectId: string): Promise<unknown | null> {
@@ -461,8 +465,40 @@ function requireSaveProtocol(body: Record<string, unknown>) {
   if (body.saveProtocol !== 2) throw Object.assign(new Error('Upgrade the app before saving.'), { status: 409, code: 'SAVE_PROTOCOL_REQUIRED' });
 }
 
+function projectWriteEnvelope(project: Record<string, unknown>, baseValue: unknown, operation: string, restoreSource?: unknown) {
+  const base = asRecord(baseValue);
+  // Always overwrite untrusted transient properties from the project body.
+  // SQL strips this envelope before hashing, history capture and persistence.
+  const envelope: Record<string, unknown> = {
+    ...project,
+    _cfsWriteProtocol: 2,
+    _cfsBaseVersion: base?.version ?? null,
+    _cfsBaseHash: base?.hash ?? null,
+    _cfsOperation: operation,
+  };
+  // An absent source must stay absent: JSON null is not SQL NULL when using ->.
+  // Strip any payload-supplied source before adding the explicit transport one.
+  delete envelope._cfsRestoreSource;
+  if (restoreSource != null) envelope._cfsRestoreSource = restoreSource;
+  return envelope;
+}
+
 function throwSaveContractError(error: { message?: string; code?: string; details?: string }): never {
   const message = [error.message, error.code, error.details].filter(Boolean).join(' ');
+  const conflicts: Record<string, string> = {
+    STALE_BASE: 'The server has a newer save. Reload the latest project and keep your changes in Recovery.',
+    ROLLBACK_SUSPECTED: 'This save matches older contents after another user saved. Use Restore Revision explicitly.',
+    ROOM_HISTORY_PROTECTED: 'Existing room type revision history cannot be deleted or changed.',
+    RESTORE_HISTORY_PROTECTED: 'This version cannot be restored without losing existing named revision history.',
+    RESTORE_SOURCE_INVALID: 'The restore source is invalid or no longer matches. Preview it again.',
+    RESTORE_SOURCE_MISMATCH: 'The restore contents do not match the selected source. Preview it again.',
+    RESTORE_REFERENCE_CONFLICT: 'The selected revision refers to data that is no longer available. Check the restore preview.',
+  };
+  for (const [code, text] of Object.entries(conflicts)) {
+    if (message.includes(`CFS_${code}`)) throw Object.assign(new Error(text), { status: 409, code });
+  }
+  if (/CFS_(ADMIN_REQUIRED|MEMBERSHIP_REQUIRED|PERMISSION_DENIED)/.test(message)) throw Object.assign(new Error('The required membership is not available.'), { status: 403 });
+  if (/CFS_(HISTORY_NOT_FOUND|PROJECT_NOT_FOUND)/.test(message)) throw Object.assign(new Error('The project or history entry was not found.'), { status: 404 });
   if (/CFS_(SAVE_PROTOCOL_REQUIRED|PROJECT_LIST_UPGRADE_REQUIRED)/.test(message)) throw Object.assign(new Error('Upgrade the app before saving.'), { status: 409, code: 'SAVE_PROTOCOL_REQUIRED' });
   if (message.includes('CFS_COMMON_HISTORY_PROTECTED')) throw Object.assign(new Error('Existing common revision history must be preserved.'), { status: 409, code: 'COMMON_HISTORY_PROTECTED' });
   if (message.includes('CFS_PROJECT_RESTORE_REQUIRED')) throw Object.assign(new Error('Restore the original project explicitly from Trash.'), { status: 409, code: 'PROJECT_RESTORE_REQUIRED' });
@@ -486,7 +522,7 @@ async function saveProjects(body: Record<string, unknown>, membership: Membershi
     p_user_id: membership.auth_user_id,
     p_session_id: sessionId,
     p_user_name: membership.display_name || membership.email,
-    p_projects: projects.map(project => ({ ...project, _cfsWriteProtocol: 2 })),
+    p_projects: projects.map(project => projectWriteEnvelope(project, asRecord(body.bases)?.[String(project.id)], restoreProjectIds.includes(project.id) ? 'trash-restore' : 'import')),
     p_expected_updated_ats: body.expectedUpdatedAts,
     p_restore_project_ids: restoreProjectIds,
   });
@@ -517,23 +553,18 @@ async function saveProject(body: Record<string, unknown>, membership: Membership
   if (expectedUpdatedAt.startsWith('__CFS_') || forceOverwriteUpdatedAt.startsWith('__CFS_')) {
     throw Object.assign(new Error('Reserved update tokens are not accepted.'), { status: 400 });
   }
-  if (!createOnly && !expectedUpdatedAt && !forceOverwrite) {
+  if (forceOverwrite) throw Object.assign(new Error('Overwrite is unavailable. Reload the latest project and keep your changes in Recovery.'), { status: 409, code: 'STALE_BASE' });
+  if (createOnly && body.restoreSource != null) throw Object.assign(new Error('Restoring requires an existing project and its edit lock.'), { status: 400 });
+  if (!createOnly && !expectedUpdatedAt) {
     throw Object.assign(new Error("Project save requires an update token. Reload before saving."), { status: 409 });
   }
-  let expectedForRpc = createOnly ? "__CFS_CREATE_ONLY__" : expectedUpdatedAt;
-  if (forceOverwrite) {
-    const currentProject = await readProject(projectId);
-    if (!currentProject || !forceOverwriteUpdatedAt || projectUpdatedAt(currentProject) !== forceOverwriteUpdatedAt) {
-      throw projectConflictError(currentProject);
-    }
-    expectedForRpc = forceOverwriteUpdatedAt;
-  }
+  const expectedForRpc = createOnly ? "__CFS_CREATE_ONLY__" : expectedUpdatedAt;
   const saved = await admin.rpc("save_cfs_project", {
     p_state_id: stateId,
     p_user_id: membership.auth_user_id,
     p_session_id: sessionId,
     p_user_name: membership.display_name || membership.email,
-    p_project: { ...project, _cfsWriteProtocol: 2 },
+    p_project: projectWriteEnvelope(project, body.base, body.restoreSource != null ? 'restore' : String(asRecord(project.lastSaveOperation)?.kind || 'current'), body.restoreSource),
     p_expected_updated_at: expectedForRpc,
   });
   if (saved.error) {
@@ -551,6 +582,38 @@ async function saveProject(body: Record<string, unknown>, membership: Membership
     lastUpdatedBy: { userId: membership.auth_user_id, displayName: membership.display_name || membership.email, updatedAt: new Date().toISOString() },
     result: saved.data,
   };
+}
+
+async function projectHistory(action: string, body: Record<string, unknown>, membership: Membership) {
+  const projectId = normalizeIdentifier(body.projectId, 'Project ID');
+  if (action === 'projects.history.preview') {
+    const source = asRecord(body.source);
+    if (!source || !['history', 'room-type-revision', 'common-revision'].includes(String(source.kind))) throw Object.assign(new Error('A valid restore source is required.'), { status: 400 });
+    requireRole(membership, source.kind === 'history' ? 'admin' : 'editor');
+    const preview = await admin.rpc('preview_cfs_project_restore', { p_user_id: membership.auth_user_id, p_project_id: projectId, p_source: source });
+    if (preview.error) throwSaveContractError(preview.error);
+    const data = asRecord(preview.data);
+    if (!data?.project || !data.base || !data.restoreSource) throw new Error('Restore preview response was incomplete.');
+    return { ok: true, ...data };
+  }
+  requireRole(membership, 'admin');
+  if (action === 'projects.history.get') {
+    const id = normalizeIdentifier(body.id, 'History ID');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw Object.assign(new Error('History ID is invalid.'), { status: 400 });
+    const result = await admin.rpc('get_cfs_project_history', { p_user_id: membership.auth_user_id, p_project_id: projectId, p_history_id: id });
+    if (result.error) throwSaveContractError(result.error);
+    const data = asRecord(result.data);
+    if (!data?.item || !data.snapshot || !data.base || !data.restoreSource) throw new Error('History entry response was incomplete.');
+    return { ok: true, ...data };
+  }
+  const limit = body.limit ?? 50;
+  const before = body.beforeVersion ?? null;
+  if (!Number.isSafeInteger(limit) || Number(limit) < 1 || Number(limit) > 100 || (before !== null && (!Number.isSafeInteger(before) || Number(before) < 1))) throw Object.assign(new Error('History pagination is invalid.'), { status: 400 });
+  const result = await admin.rpc('list_cfs_project_history', { p_user_id: membership.auth_user_id, p_project_id: projectId, p_limit: limit, p_before_version: before });
+  if (result.error) throwSaveContractError(result.error);
+  const data = asRecord(result.data);
+  if (!Array.isArray(data?.items)) throw new Error('History list response was incomplete.');
+  return { ok: true, ...data };
 }
 
 function emptyTrash() {
@@ -577,9 +640,12 @@ async function renameProject(body: Record<string, unknown>, membership: Membersh
   });
   if (saved.error) {
     if (saved.error.message?.includes('CFS_PROJECT_CONFLICT')) throw projectConflictError(null);
-    throwTrashMutationError(saved.error);
+    throwSaveContractError(saved.error);
   }
-  return saved.data;
+  const snapshot = await readProjects(membership);
+  const project = (snapshot.projects as unknown[]).find(candidate => asRecord(candidate)?.id === projectId);
+  if (!project) throw new Error('Renamed project could not be confirmed. Reload before retrying.');
+  return { ...asRecord(saved.data), project, base: asRecord(snapshot.bases)?.[projectId], bases: snapshot.bases };
 }
 
 function throwTrashMutationError(error: { message?: string; code?: string; details?: string }): never {
@@ -610,7 +676,9 @@ async function deleteProject(body: Record<string, unknown>, membership: Membersh
     if (message.includes("CFS_PROJECT_CONFLICT")) throw projectConflictError(await readProject(projectId).catch(() => null));
     throwTrashMutationError(saved.error);
   }
-  return saved.data;
+  // Return surviving payloads and their bases from the same snapshot, rather
+  // than combining the mutation receipt's older list with a later base query.
+  return { ...asRecord(saved.data), ...await readProjects(membership) };
 }
 
 function stableJson(value: unknown): string {
@@ -738,7 +806,8 @@ async function memberUpsert(body: Record<string, unknown>, membership: Membershi
 async function handleAction(action: string, body: Record<string, unknown>, membership: Membership) {
   if (action === "auth.me") return { ok: true, membership: publicMembership(membership) };
   if (action === "status") return status(body, membership);
-  if (action === "projects.read") return { ok: true, projects: await readProjects(membership) };
+  if (action === "projects.read") return { ok: true, ...await readProjects(membership) };
+  if (['projects.history.list', 'projects.history.get', 'projects.history.preview'].includes(action)) return projectHistory(action, body, membership);
   if (action === "projects.save") throw Object.assign(new Error('Legacy project list saves are disabled. Reload or upgrade the app.'), { status: 409, code: 'PROJECT_LIST_UPGRADE_REQUIRED' });
   if (action === "projects.merge") return saveProjects(body, membership);
   if (action === "project.rename") return renameProject(body, membership);

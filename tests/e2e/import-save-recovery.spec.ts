@@ -187,6 +187,8 @@ test('import defer retains exact batch, refuses failed GET, adopts authoritative
   await page.reload(); await expect(page.locator('.screen-card')).toHaveCount(0);
   expect(await archives(page)).toEqual(retained);
   // Explicit normal import uses the fixed prepared ID, not a hidden retry/new copy.
+  // An empty card list can be observed before reload finishes verifying edit access.
+  await expect(page.getByRole('button', { name: 'Import Data', exact: true })).toBeEnabled();
   success = true; emptyRead = false; state.projects = [];
   await importFile(page, sent);
   await expect.poll(() => posts).toBe(2);

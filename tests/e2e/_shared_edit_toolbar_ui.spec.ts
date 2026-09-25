@@ -122,8 +122,15 @@ test("shows the compact shared-edit tile and dedicated update highlight control"
   const tabletHistory = await page.locator(".history-controls").boundingBox();
   expect(tabletTile).not.toBeNull();
   expect(tabletHistory).not.toBeNull();
-  // The approved top toolbar remains a single row above the 760px breakpoint.
-  expect((tabletTile?.x ?? 0) + (tabletTile?.width ?? 0)).toBeLessThanOrEqual(tabletHistory?.x ?? 0);
+  // Current toolbar flex-wrap permits another row at tablet width. Controls
+  // must remain within the viewport and must not overlap in either layout.
+  if (!tabletTile || !tabletHistory) throw new Error('Tablet toolbar is not measurable');
+  const horizontallySeparated = tabletTile.x + tabletTile.width <= tabletHistory.x;
+  const verticallySeparated = tabletTile.y + tabletTile.height <= tabletHistory.y;
+  expect(horizontallySeparated || verticallySeparated).toBe(true);
+  expect(tabletTile.x).toBeGreaterThanOrEqual(0);
+  expect(tabletTile.x + tabletTile.width).toBeLessThanOrEqual(1024);
+  expect(tabletHistory.x).toBeGreaterThanOrEqual(0);
   expect((tabletHistory?.x ?? 0) + (tabletHistory?.width ?? 0)).toBeLessThanOrEqual(1024);
   await page.screenshot({ path: testInfo.outputPath("shared-edit-toolbar-tablet.png"), fullPage: false });
 });

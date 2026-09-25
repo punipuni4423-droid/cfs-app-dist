@@ -24,14 +24,15 @@ export function selectUnreadChangelog(
   const latestId = entries[0]?.id ?? null;
   const empty = { latestId, initialize: false, visible: [], remaining: 0 };
   if (!latestId) return empty;
+  if (stored === null) return { ...empty, visible: entries.slice(0, 1) };
   let lastSeenId: string | null = null;
   try {
-    const value: unknown = stored === null ? null : JSON.parse(stored);
+    const value: unknown = JSON.parse(stored);
     if (value && typeof value === 'object' && !Array.isArray(value)
       && 'lastSeenId' in value && typeof value.lastSeenId === 'string' && value.lastSeenId.trim()) {
       lastSeenId = value.lastSeenId;
     }
-  } catch { /* Invalid data is treated like a first visit, never project recovery. */ }
+  } catch { /* Invalid state is silently reset; it is not a missing key or project recovery. */ }
   if (lastSeenId === null) return { ...empty, initialize: true };
   const seenIndex = entries.findIndex(entry => entry.id === lastSeenId);
   // A valid unknown ID may have aged out of the retained history.

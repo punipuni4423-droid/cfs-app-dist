@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createGrant, readAuthKeys } from '../../app/lib/apiAuthCore.mjs';
+import { createGrant, exchangeGrant, readAuthKeys, readSession } from '../../app/lib/apiAuthCore.mjs';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -30,18 +30,22 @@ test('PC launch and tablet invitation establish persistent sessions with distinc
     return route.fulfill({ json: { projects: [], trash: { projects: [], roomTypes: [] }, mode: 'local', enabled: false, ownsLock: true, locks: [], lock: null } });
   });
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'CFS に接続', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Connect to CFS', exact: true })).toBeVisible();
   await page.screenshot({ path: test.info().outputPath('entry.png') });
   const keys = await readAuthKeys();
-  await page.goto(`/#cfs_access=${createGrant(keys)}`);
-  await page.reload();
-  await expect(page.getByRole('heading', { name: 'CFS に接続', exact: true })).toHaveCount(0);
+  await page.goto('about:blank');
+  await page.goto(`${baseURL}/#cfs_access=${createGrant(keys)}`);
+  await expect(page.getByRole('heading', { name: 'CFS Project Selection' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Connect to CFS', exact: true })).toHaveCount(0);
   const identity = await (await context.request.get('/auth/connect')).json();
   expect(identity.role).toBe('admin');
   expect(page.url()).not.toContain('cfs_access');
-  const cookie = (await context.cookies()).find(c => c.name === 'cfs-access-v1')!;
+  const cookie = (await context.cookies()).find(c => c.name === `cfs-access-v2-p${new URL(baseURL!).port}`)!;
   expect(cookie.httpOnly).toBe(true);
   expect(cookie.expires).toBeGreaterThan(Date.now() / 1000 + 86400);
+  expect(cookie.expires).toBeLessThanOrEqual(Date.now() / 1000 + 90 * 86400);
+  expect(cookie.sameSite).toBe('Strict');
+  expect(cookie.path).toBe('/');
   const savedState = await context.storageState();
   await page.screenshot({ path: test.info().outputPath('pc-authenticated.png') });
   const invite = await (await context.request.get('/api/tablet-url')).json();
@@ -50,8 +54,9 @@ test('PC launch and tablet invitation establish persistent sessions with distinc
   const tablet = await browser.newContext({ baseURL, storageState: { cookies: [], origins: [] }, viewport: { width: 820, height: 1180 } });
   await tablet.route('**/api/**', route => route.fulfill({ json: { projects: [], trash: { projects: [], roomTypes: [] }, mode: 'local', enabled: false, ownsLock: true, locks: [] } }));
   const tabletPage = await tablet.newPage();
-  await tabletPage.goto(`/#cfs_access=${grant}`);
-  await expect(tabletPage.getByRole('heading', { name: 'CFS に接続', exact: true })).toHaveCount(0);
+  await tabletPage.goto(`${baseURL}/#cfs_access=${grant}`);
+  await expect(tabletPage.getByRole('heading', { name: 'CFS Project Selection' })).toBeVisible();
+  await expect(tabletPage.getByRole('heading', { name: 'Connect to CFS', exact: true })).toHaveCount(0);
   const editor = await (await tablet.request.get('/auth/connect')).json();
   expect(editor.role).toBe('editor');
   expect(editor.userId).not.toBe(identity.userId);
@@ -68,6 +73,47 @@ test('PC launch and tablet invitation establish persistent sessions with distinc
   const bookmark = await reopened.newPage();
   await bookmark.goto('/');
   await expect(bookmark.getByRole('heading', { name: 'CFS Project Selection' })).toBeVisible();
-  await expect(bookmark.getByRole('heading', { name: 'CFS に接続', exact: true })).toHaveCount(0);
+  await expect(bookmark.getByRole('heading', { name: 'Connect to CFS', exact: true })).toHaveCount(0);
   await reopened.close(); await tablet.close(); await context.close();
+});
+
+test('other port and legacy cookies signed by a different key cannot overwrite this connection', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ baseURL, storageState: { cookies: [], origins: [] } });
+  try {
+    const page = await context.newPage();
+    const keys = await readAuthKeys();
+    await page.goto(`${baseURL}/#cfs_access=${createGrant(keys)}`);
+    await expect(page.getByRole('heading', { name: 'CFS Project Selection' })).toBeVisible();
+    const before = await (await context.request.get('/auth/connect')).json();
+    const foreignKeys = { version: 1, secret: 'b'.repeat(43) };
+    const foreign = exchangeGrant(createGrant(foreignKeys), foreignKeys)!;
+    const otherPort = new URL(baseURL!).port === '3088' ? '3089' : '3088';
+    await context.addCookies(['cfs-access-v1', `cfs-access-v2-p${otherPort}`].map(name => ({ name, value: foreign, url: baseURL!, httpOnly: true, sameSite: 'Strict' as const })));
+    const connected = await context.request.get('/auth/connect');
+    expect(connected.status()).toBe(200);
+    expect(await connected.json()).toEqual(before);
+    expect((await context.request.get('/api/app-update/status?fetchRemote=0')).status()).toBe(200);
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'CFS Project Selection' })).toBeVisible();
+  } finally { await context.close(); }
+});
+
+test('legacy-only browser promotes the same session without extending its expiry', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ baseURL, storageState: { cookies: [], origins: [] } });
+  try {
+    const keys = await readAuthKeys();
+    const token = exchangeGrant(createGrant(keys), keys)!;
+    const before = readSession(token, keys)!;
+    await context.addCookies([{ name: 'cfs-access-v1', value: token, url: baseURL!, httpOnly: true, sameSite: 'Strict' }]);
+    const response = await context.request.get('/auth/connect');
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toEqual({ userId: before.userId, sessionId: before.sessionId, role: before.role });
+    const cookies = await context.cookies();
+    const promoted = cookies.find(cookie => cookie.name === `cfs-access-v2-p${new URL(baseURL!).port}`)!;
+    expect(promoted.value === token).toBe(true);
+    expect(readSession(promoted.value, keys)).toEqual(before);
+    expect(promoted.expires).toBeLessThanOrEqual(before.exp / 1000);
+    expect(cookies.some(cookie => cookie.name === 'cfs-access-v1' && cookie.value === token)).toBe(true);
+    expect((await context.request.get('/api/app-update/status?fetchRemote=0')).status()).toBe(200);
+  } finally { await context.close(); }
 });

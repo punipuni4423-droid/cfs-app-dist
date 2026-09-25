@@ -28,8 +28,8 @@ export default function UpdateHighlights() {
       </div>
       {selection.visible.map(entry => (
         <article className="update-highlights-entry" key={entry.id}>
-          <h3><time dateTime={entry.date}>{entry.date}</time><span>{entry.title}</span></h3>
-          <ul>{entry.items.map((item, index) => <li key={index}>{item}</li>)}</ul>
+          <h3><time dateTime={entry.date}>{entry.date}</time><span>{entry.title.split(' ／ ').map((line, index) => <span key={index} lang={index ? 'ja' : 'en'} style={{ display: 'block' }}>{line}</span>)}</span></h3>
+          <ul>{entry.items.map((item, index) => <li key={index}>{item.split(' ／ ').map((line, part) => <span key={part} lang={part ? 'ja' : 'en'} style={{ display: 'block' }}>{line}</span>)}</li>)}</ul>
         </article>
       ))}
       {selection.remaining > 0 && <p className="update-highlights-more">{selection.remaining} more earlier update{selection.remaining === 1 ? '' : 's'} not shown.</p>}

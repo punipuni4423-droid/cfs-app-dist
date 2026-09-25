@@ -297,8 +297,7 @@ test.describe("T-57 Uneffected active display on dimming rows", () => {
     const rsDimControl = overlay.locator(".switch-individual-table .switch-override-control").first();
     await expect(rsDimControl).toBeVisible({ timeout: 5000 });
     const rsDimUneffected = rsDimControl
-      .locator(".scene-quick-buttons button")
-      .filter({ hasText: /^Uneffected$/ });
+      .getByRole("button", { name: "Uneffected", exact: true });
     const rsDimInput = rsDimControl.locator(".scene-level-input");
 
     await expect(rsDimUneffected).toHaveClass(/is-active/);

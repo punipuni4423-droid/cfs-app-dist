@@ -2,6 +2,7 @@ import { test, expect, type Page } from "./support/safe-test";
 import { openSaveRecovery } from './support/save-recovery-ui';
 import type { ProjectData } from "../../app/types";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
+import { readNativeDraftProject } from "./support/native-project-drafts";
 
 const currentSave = (page: Page) => page.getByRole("button", { name: "Save current project without a new revision" });
 const title = (page: Page) => page.getByLabel("Title for remark 1", { exact: true });
@@ -216,7 +217,7 @@ for (const tab of ["Area", "Fixture"] as const) {
   });
 }
 
-test("Save Current & Finish stays in editing when keyboard Redo adds a change during POST", async ({ page }, testInfo) => {
+test("Explicit Current save retains keyboard Redo during POST and Finish keeps the later draft", async ({ page }, testInfo) => {
   const state = await setup(page, true);
   // An unsaved room also opens the old revision-only guard, so this case
   // specifically detects the later exit race rather than the missing guard.
@@ -231,10 +232,12 @@ test("Save Current & Finish stays in editing when keyboard Redo adds a change du
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(body(page)).toHaveValue("Original body");
   let submitted: ProjectData | undefined;
+  let projectPosts = 0;
   let release = () => {};
   const gate = new Promise<void>((resolve) => { release = resolve; });
   await page.context().route("**/api/projects**", async (route) => {
     if (route.request().method() !== "POST") { await route.fallback(); return; }
+    projectPosts += 1;
     submitted = (route.request().postDataJSON() as { project: ProjectData }).project;
     await gate;
     const saved = { ...submitted, updatedAt: new Date().toISOString() };
@@ -242,22 +245,31 @@ test("Save Current & Finish stays in editing when keyboard Redo adds a change du
     await route.fulfill({ json: { ok: true, project: saved, projects: state.projects } });
   });
   try {
-    await page.getByRole("button", { name: "Finish editing", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Finish editing with draft changes?" });
-    await dialog.getByRole("button", { name: "Save Current & Finish", exact: true }).click();
+    await currentSave(page).click();
     await expect.poll(() => submitted?.remarks?.[0]?.title).toBe("Finish submitted title");
-    await dialog.getByRole("heading").click();
+    expect(submitted?.remarks?.[0]?.body).toBe("Original body");
+    await page.locator(".revision-save-status-label").click();
     await page.keyboard.press("Control+y");
     await expect(body(page)).toHaveValue("Redo while finishing");
     const response = page.waitForResponse((candidate) => candidate.url().includes("/api/projects") && candidate.request().method() === "POST");
     release();
     await (await response).finished();
-    await expect(dialog.getByRole("button", { name: "Continue Editing", exact: true })).toBeEnabled();
-    await expect(dialog).toBeVisible();
+    await expect(currentSave(page)).toBeEnabled();
+    await expect(page.locator(".revision-save-status-label")).toHaveText("Draft");
     await expect(body(page)).toHaveValue("Redo while finishing");
+    expect((state.projects[0] as unknown as ProjectData).remarks?.[0]?.body).toBe("Original body");
+    await expect.poll(async () => (await readNativeDraftProject(page))?.remarks?.[0]?.body).toBe("Redo while finishing");
+    expect(projectPosts).toBe(1);
+    await page.getByRole("button", { name: "Finish editing", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Finish editing with draft changes?" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: /Save.*Finish/ })).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath("finish-stays-with-later-edit.png"), fullPage: true });
     await dialog.getByRole("button", { name: "Continue Editing", exact: true }).click();
     await expect(page.getByRole("button", { name: "Finish editing", exact: true })).toBeEnabled();
+    await expect(body(page)).toHaveValue("Redo while finishing");
+    expect((await readNativeDraftProject(page))?.remarks?.[0]?.body).toBe("Redo while finishing");
+    expect(projectPosts).toBe(1);
   } finally {
     release();
   }

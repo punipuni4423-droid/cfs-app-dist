@@ -6,7 +6,7 @@ import ts from 'typescript';
 test('unverified account B never uses account A owner with B credential or resumes editing through status poll', async ({ page }) => {
   await page.route('**/auth-harness', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>synthetic auth harness</title>' }));
   await page.goto('/auth-harness');
-  const sources = Object.fromEntries(['useCollaboration', 'apiAccessClient', 'projectSaveProtocol', 'canonicalJson', 'id'].map(name => [name,
+  const sources = Object.fromEntries(['useCollaboration', 'apiAccessClient', 'projectSaveProtocol', 'canonicalJson', 'id', 'remoteProjectUpdates'].map(name => [name,
     ts.transpileModule(fs.readFileSync(path.resolve(`app/lib/${name}.ts`), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText]));
   const result = await page.evaluate(async sources => {
     // Hook scheduler replaces only React/SDK plumbing; production hook and

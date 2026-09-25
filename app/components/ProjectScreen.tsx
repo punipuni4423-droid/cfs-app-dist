@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { appendCommonRevision, commonRevisions, commonSnapshot, commonRestoreProblem } from '../lib/projectCommonHistory';
-import { checkpointProject, draftScope } from '../lib/projectDraftStore';
+import { appendCommonRevision, commonRevisions, commonSnapshot } from '../lib/projectCommonHistory';
 import { usePendingCfsAction, type PendingCfsGuard } from "../lib/usePendingCfsAction";
 import { rebaseProjectSave, type ProjectSaveReceipt } from "../lib/projectSaveState";
 import type {
@@ -80,12 +79,12 @@ import AppVersionBadge from "./AppVersionBadge";
 import ActionIconButton, { ActionIcon } from "./ActionIconButton";
 import SaveRecoveryPanel, { SaveRecoveryNotice, useDisclosurePanel, type SaveRecoveryUi } from './SaveRecoveryPanel';
 import { createAppId } from '../lib/id';
+import type { RestoreSource } from "../lib/projectBase";
 import type { CollaborationController } from "../lib/useCollaboration";
 
 const ROOM_TYPE_MANAGE_ID = "__manage__";
 const HISTORY_LIMIT = 50;
 const PROJECT_NAV_STORAGE_PREFIX = "cfs-project-navigation-v1:";
-const IDLE_AUTO_SAVE_REVISION_NOTE = "Automatic save";
 
 const VALID_PROJECT_TABS: readonly ProjectTab[] = ["area", "fixture", "rooms", "remarks"];
 const VALID_ROOM_SUB_TABS: readonly RoomsSubTab[] = [
@@ -302,6 +301,8 @@ interface ProjectScreenProps {
   onBackToProjects: () => void;
   onUpdateProject: (mutate: (project: ProjectData) => ProjectData) => void;
   onSaveProjectDraft: (mutate: (project: ProjectData) => ProjectData | null) => Promise<boolean>;
+  onDiscardMyUnsavedChanges: () => Promise<boolean>;
+  onRequestRestore: (source: RestoreSource) => void;
   onSaveProjectRevision: (mutate: (project: ProjectData) => ProjectData | null) => Promise<boolean>;
   onMoveRoomTypeToTrash: (project: ProjectData, roomType: RoomType) => void;
   saveStatus:
@@ -330,6 +331,8 @@ export default function ProjectScreen({
   onBackToProjects,
   onUpdateProject,
   onSaveProjectDraft,
+  onDiscardMyUnsavedChanges,
+  onRequestRestore,
   onSaveProjectRevision,
   onMoveRoomTypeToTrash,
   saveStatus,
@@ -342,8 +345,6 @@ export default function ProjectScreen({
   const recoveryPanel = useDisclosurePanel(reliabilityUi.scopeKey, 'save-recovery-panel');
   const commonHistoryPanel = useDisclosurePanel(reliabilityUi.scopeKey, 'common-history-panel');
   const pendingCfsGuardRef = useRef<PendingCfsGuard | null>(null);
-  const recoveryContextRef = useRef({ project, canEdit });
-  recoveryContextRef.current = { project, canEdit };
   const registerPendingCfsGuard = useCallback((guard: PendingCfsGuard | null) => {
     pendingCfsGuardRef.current = guard;
   }, []);
@@ -397,7 +398,6 @@ export default function ProjectScreen({
   const [finishRevisionExitAction, setFinishRevisionExitAction] = useState<FinishRevisionExitAction>("stay");
   const [isFinishingRevision, setIsFinishingRevision] = useState(false);
   const [finishRevisionError, setFinishRevisionError] = useState("");
-  const [finishRevisionNote, setFinishRevisionNote] = useState("");
   const [batchRevisionDialogOpen, setBatchRevisionDialogOpen] = useState(false);
   const [batchRevisionDrafts, setBatchRevisionDrafts] = useState<BatchRevisionDraft[]>([]);
   const [batchRevisionError, setBatchRevisionError] = useState("");
@@ -1590,11 +1590,6 @@ export default function ProjectScreen({
     return roomTypeHasRevisionDraftInProject(project, rt);
   }, [project, roomTypeHasRevisionDraftInProject]);
 
-  const revisionDraftRoomTypes = useMemo(
-    () => project.roomTypes.filter((rt) => roomTypeHasRevisionDraftInProject(project, rt)),
-    [project, roomTypeHasRevisionDraftInProject],
-  );
-
   const handleSaveRevision = useCallback(async (options: SaveRevisionOptions = {}): Promise<boolean> => {
     if (!canEdit) {
       onReadOnlyAction?.();
@@ -1604,44 +1599,6 @@ export default function ProjectScreen({
       return saveRoomTypeRevision(rt, circuitsForRoomType(project, rt), options);
     });
   }, [project, saveActiveRoomTypeRevision, saveRoomTypeRevision, canEdit, onReadOnlyAction]);
-
-  const saveDraftRoomTypeRevisions = useCallback(async (options: SaveRevisionOptions = {}): Promise<boolean> => {
-    if (!canEdit) {
-      onReadOnlyAction?.();
-      return false;
-    }
-    return onSaveProjectRevision((current) => {
-      current = appendCommonRevision(current, options.note ?? '', collaboration.user?.displayName ?? '');
-      const draftIds = new Set(
-        current.roomTypes
-          .filter((rt) => roomTypeHasRevisionDraftInProject(current, rt))
-          .map((rt) => rt.id),
-      );
-      if (draftIds.size === 0) return syncProjectRoomTypeLinks(current, { devices });
-      return syncProjectRoomTypeLinks(
-        {
-          ...current,
-          roomTypes: current.roomTypes.map((rt) =>
-            draftIds.has(rt.id)
-              ? {
-                  ...saveRoomTypeRevision(rt, circuitsForRoomType(current, rt), options),
-                  updatedAt: new Date().toISOString(),
-                }
-              : rt,
-          ),
-        },
-        { devices },
-      );
-    });
-  }, [
-    canEdit,
-    devices,
-    onReadOnlyAction,
-    onSaveProjectRevision,
-    roomTypeHasRevisionDraftInProject,
-    saveRoomTypeRevision,
-    collaboration.user?.displayName,
-  ]);
 
   const handleSaveCurrentProject = useCallback(async (): Promise<boolean> => {
     if (!canEdit) {
@@ -1919,81 +1876,6 @@ export default function ProjectScreen({
     saveRoomTypeRevision,
   ]);
 
-  const buildProjectWithRestoredRoomType = useCallback((
-    sourceProject: ProjectData,
-    sourceRoomType: RoomType,
-    targetRevision: RoomTypeRevision,
-  ): ProjectData | null => {
-    const snapshot = parseRevisionSnapshot(targetRevision.snapshot);
-    if (!snapshot) return null;
-    const scopedIds = sourceRoomType.circuitIds;
-    const snapshotCircuits = snapshot.circuits;
-    let circuits = snapshotCircuits ?? sourceProject.circuits;
-    let restoredCircuitIds = sourceRoomType.circuitIds;
-    if (snapshotCircuits && Array.isArray(scopedIds)) {
-      const currentScopedIds = new Set(scopedIds);
-      const nextById = new Map(snapshotCircuits.map((circuit) => [circuit.id, circuit]));
-      circuits = sourceProject.circuits.flatMap((circuit) => {
-        if (!currentScopedIds.has(circuit.id)) return [circuit];
-        const replacement = nextById.get(circuit.id);
-        nextById.delete(circuit.id);
-        return replacement ? [replacement] : [];
-      });
-      circuits.push(...nextById.values());
-      restoredCircuitIds = snapshotCircuits.map((circuit) => circuit.id);
-    }
-    return {
-      ...sourceProject,
-      circuits,
-      roomTypes: sourceProject.roomTypes.map((rt) =>
-        rt.id === sourceRoomType.id
-          ? {
-              ...rt,
-              circuitIds: restoredCircuitIds,
-              revision: targetRevision.revision,
-              updatedAt: new Date().toISOString(),
-              revisions: rt.revisions,
-              rows: snapshot.rows ?? rt.rows,
-              dryContacts: snapshot.dryContacts ?? rt.dryContacts ?? [],
-              deviceAssignments: snapshot.deviceAssignments ?? rt.deviceAssignments,
-              hvacAssignments: snapshot.hvacAssignments ?? rt.hvacAssignments,
-              hvacSeasons: snapshot.hvacSeasons ?? rt.hvacSeasons,
-              curtainAssignments: snapshot.curtainAssignments ?? rt.curtainAssignments ?? [],
-              cfsRowDisplay: snapshot.cfsRowDisplay ?? rt.cfsRowDisplay,
-              backlightLevels: snapshot.backlightLevels ?? rt.backlightLevels ?? backlightLevelsFromSwitches(snapshot.switches ?? rt.switches),
-              scenes: snapshot.scenes ?? rt.scenes,
-              roomScenes: snapshot.roomScenes ?? rt.roomScenes,
-              switches: snapshot.switches ?? rt.switches,
-              pduDeviceCounts: snapshot.pduDeviceCounts ?? rt.pduDeviceCounts,
-              inspectionMarks: snapshot.inspectionMarks ?? rt.inspectionMarks ?? [],
-            }
-          : rt,
-      ),
-    };
-  },
-    [],
-  );
-
-  const restoreActiveRoomTypeToRevision = useCallback(
-    (targetRevision: RoomTypeRevision): boolean => {
-      if (!activeRoomType) return false;
-      let restored = false;
-      updateProject((p) => {
-        const nextProject = buildProjectWithRestoredRoomType(p, activeRoomType, targetRevision);
-        if (!nextProject) return p;
-        restored = true;
-        return nextProject;
-      });
-      if (!restored) {
-        window.alert("This revision snapshot could not be restored.");
-        return false;
-      }
-      setShowRevisionChanges(false);
-      return true;
-    },
-    [activeRoomType, buildProjectWithRestoredRoomType, updateProject],
-  );
-
   const completeFinishFlow = useCallback(
     async (exitAction: FinishRevisionExitAction): Promise<void> => {
       await collaboration.finishEditing({ bypassGuard: true });
@@ -2009,95 +1891,28 @@ export default function ProjectScreen({
     setFinishRevisionExitAction(exitAction);
     setFinishRevisionDialogIdle(idle);
     setFinishRevisionError("");
-    setFinishRevisionNote("");
     setFinishRevisionDialogOpen(true);
   }, []);
 
-  const canFinishAfterSave = useCallback((): boolean => {
-    if (!hasUnsavedDatabaseChangesNow()) return true;
-    setFinishRevisionError("Changes made while saving are still unsaved. Save again or continue editing.");
-    setIsFinishingRevision(false);
-    return false;
-  }, [hasUnsavedDatabaseChangesNow]);
-
-  const handleFinishWithRevision = useCallback(async (): Promise<void> => {
-    const exitAction = finishRevisionExitAction;
-    setIsFinishingRevision(true);
-    setFinishRevisionError("");
-    const saved = await saveDraftRoomTypeRevisions({ clearInspectionMarks: false, note: finishRevisionNote });
-    if (!saved) {
-      setFinishRevisionError("The revision could not be saved. Keep editing and try again.");
-      setIsFinishingRevision(false);
-      return;
-    }
-    if (!canFinishAfterSave()) return;
-    setFinishRevisionDialogOpen(false);
-    setFinishRevisionNote("");
-    setIsFinishingRevision(false);
-    await completeFinishFlow(exitAction);
-  }, [completeFinishFlow, finishRevisionExitAction, finishRevisionNote, saveDraftRoomTypeRevisions, canFinishAfterSave]);
-
-  const handleFinishWithCurrentProject = useCallback(async (): Promise<void> => {
-    const exitAction = finishRevisionExitAction;
-    setIsFinishingRevision(true);
-    setFinishRevisionError("");
-    const saved = await handleSaveCurrentProject();
-    if (!saved) {
-      setFinishRevisionError("The current project could not be saved. Keep editing and try again.");
-      setIsFinishingRevision(false);
-      return;
-    }
-    if (!canFinishAfterSave()) return;
-    setFinishRevisionDialogOpen(false);
-    setFinishRevisionNote("");
-    setIsFinishingRevision(false);
-    await completeFinishFlow(exitAction);
-  }, [completeFinishFlow, finishRevisionExitAction, handleSaveCurrentProject, canFinishAfterSave]);
-
   const handleDiscardDraftAndFinish = useCallback(async (): Promise<void> => {
     const exitAction = finishRevisionExitAction;
-    if (revisionDraftRoomTypes.some((rt) => !rt.revisions?.length)) {
-      setFinishRevisionError("There is no saved revision to restore.");
-      return;
-    }
     setIsFinishingRevision(true);
     setFinishRevisionError("");
-    const saved = await onSaveProjectDraft((current) => {
-      const draftIds = current.roomTypes
-        .filter((rt) => roomTypeHasRevisionDraftInProject(current, rt))
-        .map((rt) => rt.id);
-      let restoredProject: ProjectData = current;
-      for (const roomTypeId of draftIds) {
-        const roomType = restoredProject.roomTypes.find((rt) => rt.id === roomTypeId);
-        const latestRevision = roomType?.revisions?.at(-1);
-        if (!roomType || !latestRevision) return null;
-        const nextProject = buildProjectWithRestoredRoomType(restoredProject, roomType, latestRevision);
-        if (!nextProject) return null;
-        restoredProject = nextProject;
-      }
-      return syncProjectRoomTypeLinks(restoredProject, { devices });
-    });
-    if (!saved) {
-      setFinishRevisionError("The latest revision could not be restored. Keep editing and try again.");
+    const discarded = await onDiscardMyUnsavedChanges();
+    if (!discarded) {
+      setFinishRevisionError("Your changes were kept. Check Save and Recovery before trying again.");
       setIsFinishingRevision(false);
       return;
     }
-    if (!canFinishAfterSave()) return;
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    lastHistoryPushRef.current = 0;
+    setHistoryVersion((value) => value + 1);
     setShowRevisionChanges(false);
     setFinishRevisionDialogOpen(false);
-    setFinishRevisionNote("");
     setIsFinishingRevision(false);
     await completeFinishFlow(exitAction);
-  }, [
-    buildProjectWithRestoredRoomType,
-    completeFinishFlow,
-    devices,
-    finishRevisionExitAction,
-    onSaveProjectDraft,
-    canFinishAfterSave,
-    revisionDraftRoomTypes,
-    roomTypeHasRevisionDraftInProject,
-  ]);
+  }, [completeFinishFlow, finishRevisionExitAction, onDiscardMyUnsavedChanges]);
 
   useLayoutEffect(() => {
     collaboration.setFinishGuard(async ({ idle }) => {
@@ -2106,34 +1921,18 @@ export default function ProjectScreen({
         if (await pendingGuard()) window.setTimeout(() => { collaboration.resumeIdleAfterSave?.(); void collaboration.finishEditing({ idle }); }, 0);
         return false;
       }
-      if (revisionDraftRoomTypes.length === 0 && !hasUnsavedDatabaseChangesNow()) return true;
-      if (idle) {
-        setIsFinishingRevision(true);
-        setFinishRevisionError("");
-        const saved = await saveDraftRoomTypeRevisions({
-          clearInspectionMarks: false,
-          note: IDLE_AUTO_SAVE_REVISION_NOTE,
-        });
-        setIsFinishingRevision(false);
-        if (saved && !hasUnsavedDatabaseChangesNow()) return true;
-        openFinishRevisionDialog(true, "stay");
-        setFinishRevisionError(saved
-          ? "Changes made while saving are still unsaved. Save again or continue editing."
-          : "Idle auto-save failed. Choose how to finish this editing session.");
-        return false;
-      }
-      openFinishRevisionDialog(false, "stay");
+      if (!hasUnsavedDatabaseChangesNow()) return true;
+      openFinishRevisionDialog(idle, "stay");
       return false;
     });
     return () => collaboration.setFinishGuard(null);
-  }, [collaboration, openFinishRevisionDialog, revisionDraftRoomTypes.length, saveDraftRoomTypeRevisions, hasUnsavedDatabaseChangesNow]);
+  }, [collaboration, openFinishRevisionDialog, hasUnsavedDatabaseChangesNow]);
 
   // Closing the window/tab while editing with draft changes: the browser only
   // allows its generic leave-confirmation during beforeunload, so when the
-  // user cancels the close we surface the finish dialog (save as new revision
-  // / save current / discard draft) instead of losing the choice.
+  // user cancels the close we surface the finish dialog without saving data.
   useEffect(() => {
-    if (!hasUnsavedDatabaseChanges && (collaboration.mode !== "edit" || revisionDraftRoomTypes.length === 0)) return;
+    if (!hasUnsavedDatabaseChanges) return;
     const onBeforeUnload = (event: BeforeUnloadEvent): void => {
       if (pendingCfsGuardRef.current) return;
       event.preventDefault();
@@ -2148,7 +1947,7 @@ export default function ProjectScreen({
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [collaboration.mode, revisionDraftRoomTypes.length, openFinishRevisionDialog, hasUnsavedDatabaseChanges]);
+  }, [openFinishRevisionDialog, hasUnsavedDatabaseChanges]);
 
   const handleBackToProjectList = usePendingCfsAction((): void => {
     if (hasUnsavedDatabaseChangesNow()) {
@@ -2157,10 +1956,6 @@ export default function ProjectScreen({
     }
     if (collaboration.mode !== "edit") {
       onBackToProjects();
-      return;
-    }
-    if (revisionDraftRoomTypes.length > 0) {
-      openFinishRevisionDialog(false, "back");
       return;
     }
     void (async () => {
@@ -2397,11 +2192,7 @@ export default function ProjectScreen({
       const targetRevision = activeRoomType?.revisions?.[revisionIndex];
       if (!targetRevision) return;
 
-      const message =
-        `Load revision ${targetRevision.revision}? Revision history will be kept, but current draft changes will be replaced.`;
-      if (!window.confirm(message)) return;
-
-      restoreActiveRoomTypeToRevision(targetRevision);
+      if (activeRoomType) onRequestRestore({ kind: 'room-type-revision', roomTypeId: activeRoomType.id, revisionId: targetRevision.id });
     },
     pendingCfsGuardRef,
   );
@@ -2672,8 +2463,6 @@ export default function ProjectScreen({
     : hasUnsavedDatabaseChanges ? 'Unshared draft changes' : draftStatusTime ? `Current project saved at ${draftStatusTime}` : 'Current project matches the saved data';
   const draftStatusAria =
     draftStatusTime ? `${draftStatusLabel} ${draftStatusTime}. ${draftStatusTitle}` : draftStatusTitle;
-  const canRestoreLatestRevisionOnFinish =
-    revisionDraftRoomTypes.length > 0 && revisionDraftRoomTypes.every((rt) => Boolean(rt.revisions?.length));
 
   useEffect(() => {
     if (!batchRevisionSelectAllRef.current) return;
@@ -2690,25 +2479,11 @@ export default function ProjectScreen({
           <span>{revision.revision} / {revision.savedAt} / {revision.savedBy} / {revision.note} </span>
           <details><summary>Preview Restore Contents</summary><pre style={{ whiteSpace: 'pre-wrap', maxHeight: 260, overflow: 'auto' }}>{JSON.stringify({ Current: commonSnapshot(project), Restore: revision.snapshot }, null, 2)}</pre></details>
           <button className="btn btn-secondary" disabled={!canEdit} onClick={() => {
-            const problem = commonRestoreProblem(project, revision.snapshot);
-            if (problem) { window.alert(problem); return; }
-            const details = `Restore common revision ${revision.revision} to editing.\nProject: ${revision.snapshot.name}\nArea: ${revision.snapshot.locations.length} / Fixture: ${revision.snapshot.fixtures.length} / Remarks: ${revision.snapshot.remarks?.length ?? 0}\nRoom values and history will remain unchanged. Saving to shared data is a separate action.`;
-            if (!window.confirm(details)) return;
             void (async () => {
-              const owner = draftScope();
               if (pendingCfsGuardRef.current && !await pendingCfsGuardRef.current()) return;
-              const current = recoveryContextRef.current;
-              if (owner !== draftScope() || !current.canEdit || current.project.id !== project.id) return;
-              const problem = commonRestoreProblem(current.project, revision.snapshot);
-              if (problem) { window.alert(problem); return; }
-              const original = canonicalJson(current.project);
-              if (!await checkpointProject(current.project, null, undefined, owner)) { window.alert('The contents before restore could not be stored locally. Export a JSON backup, then retry.'); return; }
-              if (owner !== draftScope() || !recoveryContextRef.current.canEdit || original !== canonicalJson(recoveryContextRef.current.project)) { window.alert('The editing target or contents changed while storing the draft. Review the restore contents again.'); return; }
-              updateProject(latest => ({ ...latest, name: revision.snapshot.name,
-                settings: structuredClone(revision.snapshot.settings), remarks: structuredClone(revision.snapshot.remarks),
-                locations: structuredClone(revision.snapshot.locations), fixtures: structuredClone(revision.snapshot.fixtures) }));
+              onRequestRestore({ kind: 'common-revision', id: revision.id });
             })();
-          }}>Review and Restore</button>
+          }}>Restore Revision…</button>
         </div>)}
       </SaveRecoveryPanel>}
       {isTopUiCollapsed ? (
@@ -2860,20 +2635,9 @@ export default function ProjectScreen({
             <h2 id="finishRevisionTitle">Finish editing with draft changes?</h2>
             <p>
               {finishRevisionDialogIdle
-                ? "This editing session is idle and has unsaved project changes or unpublished revision changes. Choose how to save the draft before returning to View Only."
-                : "This editing session has unsaved project changes or unpublished revision changes. Choose how to save the draft before returning to View Only."}
+                ? "This editing session is idle. Continue editing to save, or discard only this tab's unsaved changes and load the latest shared project."
+                : "Continue editing to save, or discard only this tab's unsaved changes and load the latest shared project."}
             </p>
-            <label className="revision-note-field">
-              <span>Note</span>
-              <textarea
-                className="revision-note-input"
-                value={finishRevisionNote}
-                onChange={(event) => setFinishRevisionNote(event.target.value)}
-                placeholder="Revision note"
-                rows={4}
-                disabled={isFinishingRevision}
-              />
-            </label>
             {finishRevisionError ? <p className="edit-finish-error" role="alert">{finishRevisionError}</p> : null}
             <div className="edit-finish-actions">
               <button
@@ -2881,7 +2645,6 @@ export default function ProjectScreen({
                 className="btn btn-secondary"
                 onClick={() => {
                   setFinishRevisionDialogOpen(false);
-                  setFinishRevisionNote("");
                 }}
                 disabled={isFinishingRevision}
               >
@@ -2891,30 +2654,10 @@ export default function ProjectScreen({
                 type="button"
                 className="btn btn-secondary"
                 onClick={() => void handleDiscardDraftAndFinish()}
-                disabled={isFinishingRevision || !canRestoreLatestRevisionOnFinish}
-                title={
-                  canRestoreLatestRevisionOnFinish
-                    ? "Discard draft changes and restore the latest saved revision"
-                    : "No saved revision is available"
-                }
-              >
-                {isFinishingRevision ? "Restoring..." : "Discard Draft & Restore Latest Rev"}
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => void handleFinishWithCurrentProject()}
                 disabled={isFinishingRevision}
+                title="Discard only this tab's unsaved changes and load the latest shared project"
               >
-                {isFinishingRevision ? "Saving..." : "Save Current & Finish"}
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => void handleFinishWithRevision()}
-                disabled={isFinishingRevision}
-              >
-                {isFinishingRevision ? "Saving revision..." : "Save Revision & Finish"}
+                {isFinishingRevision ? "Loading latest..." : "Discard my unsaved changes"}
               </button>
             </div>
           </section>
@@ -3162,9 +2905,9 @@ export default function ProjectScreen({
                           className="btn btn-secondary btn-sm"
                           onClick={() => handleRestoreRevision(index)}
                           disabled={!canEdit}
-                          title="Load this revision while keeping revision history"
+                          title="Preview this revision and save it as a new version"
                         >
-                          Restore
+                          Restore Revision…
                         </button>
                       </td>
                     </tr>

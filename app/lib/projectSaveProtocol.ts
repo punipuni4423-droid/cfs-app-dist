@@ -66,3 +66,14 @@ export function commonHistoryPreserved(before: ProjectData | undefined, incoming
   if ((before?.commonRevisions !== undefined && !Array.isArray(before.commonRevisions)) || (incoming.commonRevisions !== undefined && !Array.isArray(incoming.commonRevisions))) return false;
   return (before?.commonRevisions ?? []).every(old => (incoming.commonRevisions ?? []).some(item => item.id === old.id && canonicalJson(item) === canonicalJson(old)));
 }
+
+export function roomHistoryPreserved(before: ProjectData | undefined, incoming: ProjectData): boolean {
+  const valid = (project: ProjectData | undefined) => !project || Array.isArray(project.roomTypes)
+    && project.roomTypes.every(room => room && typeof room.id === 'string' && room.id && (room.revisions === undefined
+      || Array.isArray(room.revisions) && new Set(room.revisions.map(revision => revision?.id)).size === room.revisions.length
+        && room.revisions.every(revision => revision && typeof revision.id === 'string' && revision.id && typeof revision.snapshot === 'string')))
+    && new Set(project.roomTypes.map(room => room.id)).size === project.roomTypes.length;
+  if (!valid(before) || !valid(incoming)) return false;
+  return (before?.roomTypes ?? []).every(room => (room.revisions ?? []).every(revision =>
+    incoming.roomTypes.find(candidate => candidate.id === room.id)?.revisions?.some(candidate => candidate.id === revision.id && candidate.snapshot === revision.snapshot)));
+}

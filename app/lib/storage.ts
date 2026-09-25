@@ -1,3 +1,4 @@
+import { capturedProjectBase, registerProjectBases, type ProjectBase, type RestoreSource } from './projectBase';
 import type {
   CfsCircuit,
   CfsRowDisplaySettings,
@@ -1427,7 +1428,7 @@ function acknowledgeConfirmedMigration(): void {
 }
 
 export async function loadProjectsFromDatabase(
-  options: { signal?: AbortSignal; throwOnError?: boolean; accessToken?: string; secureSharing?: boolean } = {},
+  options: { signal?: AbortSignal; throwOnError?: boolean; accessToken?: string; secureSharing?: boolean; ignoreDrafts?: boolean } = {},
 ): Promise<ProjectData[]> {
   if (typeof window === 'undefined') return [];
   try {
@@ -1449,13 +1450,14 @@ export async function loadProjectsFromDatabase(
     const savedProjects = serverReport?.issues?.length && Array.isArray(reportedProjects) && reportedProjects.every(isProjectData)
       ? reportedProjects
       : migrateProjectsPayload(payload);
+    registerProjectBases(savedProjects, payload);
     if (pendingMigrationReport) return savedProjects;
     if (savedProjects.length === 0) {
       clearLocalProjectDrafts();
       if (!options.secureSharing) saveLocalProjects([], { notifyOnError: false });
       return [];
     }
-    const projects = mergeSavedProjectsWithLocalDrafts(savedProjects, options.secureSharing ? [] : loadLocalProjectDrafts());
+    const projects = mergeSavedProjectsWithLocalDrafts(savedProjects, options.secureSharing || options.ignoreDrafts ? [] : loadLocalProjectDrafts());
     if (!options.secureSharing) saveLocalProjects(projects, { notifyOnError: false });
     return projects;
   } catch (error) {
@@ -1508,6 +1510,8 @@ export async function saveProjectToDatabase(
   allProjects: ReadonlyArray<ProjectData>,
   options: {
     expectedUpdatedAt?: string;
+    base?: ProjectBase;
+    restoreSource?: RestoreSource;
     createOnly?: boolean;
     forceOverwrite?: boolean;
     forceOverwriteUpdatedAt?: string;
@@ -1516,12 +1520,14 @@ export async function saveProjectToDatabase(
   } = {},
 ): Promise<ProjectData> {
   if (typeof window === 'undefined') return project;
-  project = await projectSaveSubmission(project);
+  if (!options.restoreSource) project = await projectSaveSubmission(project);
   const notifyOnError = options.notifyOnError ?? true;
   void allProjects;
   try {
     const response = await postProjectsWithConfirmation({
         project,
+        base: Object.hasOwn(options, 'base') ? options.base : capturedProjectBase(project.id, options.expectedUpdatedAt),
+        restoreSource: options.restoreSource,
         expectedUpdatedAt: options.expectedUpdatedAt ?? '',
         createOnly: options.createOnly === true,
         forceOverwrite: options.forceOverwrite === true,
@@ -1551,7 +1557,7 @@ export async function saveProjectToDatabase(
       || !await matchesSaveIntent(project, record.project)) {
       throw new SaveProtocolError('SAVE_RESPONSE_INVALID', 'The save response contents could not be verified. Check Save Status.', response.status, true);
     }
-    const confirmed = await confirmProjectSave(project, options.collaboration);
+    const confirmed = options.restoreSource ? await confirmProjectRestore(project, options.collaboration) : await confirmProjectSave(project, options.collaboration);
     acknowledgeConfirmedMigration();
     return confirmed;
   } catch (error) {
@@ -1575,6 +1581,7 @@ export async function confirmProjectSave(sent: ProjectData, collaboration?: Coll
   if (!project || !Array.isArray(project.roomTypes) || !await matchesSaveIntent(sent, project)) {
     throw new SaveProtocolError('SAVE_RESULT_UNKNOWN', 'The submitted contents could not be verified at the destination. Do not resend automatically; check the save status.', undefined, true);
   }
+  registerProjectBases([project], body);
   return project;
 }
 
@@ -1596,6 +1603,7 @@ export async function confirmProjectRestore(sent: ProjectData, collaboration?: C
   if (!valid || (!confirmedReceipt && !await matchesSaveIntent(sent, matches[0]))) {
     throw new SaveProtocolError('RESTORE_RESULT_UNKNOWN', 'The restored project could not be verified. The original data and restore request are retained.', undefined, true);
   }
+  registerProjectBases([matches[0]], body);
   return matches[0];
 }
 
@@ -1625,12 +1633,13 @@ export async function readImportSharedProjects(collaboration?: CollaborationSave
   if (projects.length !== payload.projects.length || new Set(projects.map(project => project.id)).size !== projects.length) {
     throw new SaveProtocolError('IMPORT_SHARED_RESPONSE_INVALID', 'Shared data could not be verified. Import recovery is retained.');
   }
+  registerProjectBases(projects, payload);
   return projects;
 }
 
 export async function saveProjectsToDatabase(
   projects: ReadonlyArray<ProjectData>,
-  options: { notifyOnError?: boolean; collaboration?: CollaborationSaveIdentity; expectedUpdatedAts?: Record<string, string | null>; restoreProjectIds?: string[]; requirePreparedImport?: boolean } = {},
+  options: { notifyOnError?: boolean; collaboration?: CollaborationSaveIdentity; expectedUpdatedAts?: Record<string, string | null>; bases?: Record<string, ProjectBase | undefined>; restoreProjectIds?: string[]; requirePreparedImport?: boolean } = {},
 ): Promise<ProjectData[]> {
   if (typeof window === 'undefined') return [...projects];
   const notifyOnError = options.notifyOnError ?? true;
@@ -1640,7 +1649,8 @@ export async function saveProjectsToDatabase(
   }
   projects = await Promise.all(projects.map(project => projectSaveSubmission(project)));
   try {
-    const response = await postProjectsWithConfirmation({ projects, expectedUpdatedAts: options.expectedUpdatedAts, restoreProjectIds: options.restoreProjectIds },
+    const bases = options.bases ?? Object.fromEntries(projects.map(project => [project.id, capturedProjectBase(project.id, options.expectedUpdatedAts?.[project.id])]));
+    const response = await postProjectsWithConfirmation({ projects, bases, expectedUpdatedAts: options.expectedUpdatedAts, restoreProjectIds: options.restoreProjectIds },
       { 'Content-Type': 'application/json', ...collaborationSaveHeaders(options.collaboration) });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
@@ -1673,6 +1683,7 @@ export async function renameProjectInDatabase(projectId: string, name: string, e
   if (!response.ok) throw new Error(body.error || `Rename failed: ${response.status}`);
   const project = migrateProjectsPayload([body.project])[0];
   if (!project || project.id !== projectId) throw new Error('Rename response was incomplete. Reload before retrying.');
+  registerProjectBases([project], body);
   return project;
 }
 
@@ -1693,6 +1704,7 @@ export async function deleteProjectToTrash(
     throw new Error('Deletion response was incomplete. Reload to check the project and Trash.');
   }
   const projects = migrateProjectsPayload(result.projects);
+  registerProjectBases(projects, result);
   const trash = migrateTrashPayload(result);
   trashServerUpdatedAt = result.updatedAt;
   if (!collaboration?.accessToken) saveLocalProjects(projects, { notifyOnError: false });

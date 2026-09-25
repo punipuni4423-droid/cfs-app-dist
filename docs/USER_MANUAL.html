@@ -176,7 +176,13 @@
     </section>
 
     <section>
-      <h2>8. 標準ガイドライン</h2>
+      <h2>8. 保存・破棄・復元（2026-09-24更新）</h2>
+      <p>Save Currentは現在の編集内容を保存し、Save Revisionは名前付きRevisionも追加します。編集終了時やアイドル時に自動保存しません。未保存ならContinue Editingで戻って保存するか、Discard my unsaved changesでこのタブの未保存分だけを捨てて最新版を読み込みます。破棄による共有データの書き戻しはありません。</p>
+      <p>Restore Revision…は内容をプレビューし、Confirm Restore as New Versionで新しい版として保存します。編集権が必要で、確認中に共有先が更新されれば保存を拒否します。管理者はSave and Recovery内のServer Historyから自動履歴も復元できます。自動履歴は90日以内または直近50版の多い方、名前付きRevisionは無期限で保持します。</p>
+      <p>409の保存競合では、自分の変更をRecoveryへ退避して最新を読み直すか、中止します。結果不明の保存はCheck Save Statusで確認してください。詳しくは<a href="SAVE_AND_RECOVERY_JA.md">保存・Recoveryの手引き</a>を参照してください。</p>
+    </section>
+    <section>
+      <h2>9. 標準ガイドライン</h2>
       <p>入力順序、命名、アップデート時のデータ保護については、同梱の <code>docs/CFS_STANDARD_GUIDELINES_2026-06-22.md</code> を確認してください。</p>
     </section>
   </main>

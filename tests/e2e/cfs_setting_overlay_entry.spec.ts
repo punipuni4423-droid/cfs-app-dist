@@ -292,7 +292,8 @@ test("T99 Room Scene individual override keeps its color after Area Scene overla
   await closeOverlay(page);
   await page.getByRole("tab", { name: "CFS", exact: true }).click();
   await page.getByRole("button", { name: "Edit", exact: true }).click();
-  await page.getByRole("button", { name: /Open Area Scene Setting Overlay for Scene.*Welcome Scene/i }).first().click();
+  await page.getByRole("button", { name: /Open Scene Setting Overlay for Scene.*Welcome Scene/i }).first().click();
+  await overlay.getByRole("button", { name: "Edit Area Scene definitions", exact: true }).click();
   await overlay.locator(".scene-table tbody .scene-level-input").first().fill("70");
   await closeOverlay(page);
   const cell = page.locator("td.cfs-function-cell").filter({ hasText: /^55%$/ }).first();
@@ -418,13 +419,16 @@ test("Area Scene-backed Scene column Edit opens the reused area scene overlay an
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await openProjectCfs(page, "T80 Area Scene Overlay");
 
-  const editButton = page.getByRole("button", { name: /Open Area Scene Setting Overlay for Scene.*Welcome Scene/i }).first();
+  const editButton = page.getByRole("button", { name: /Open Scene Setting Overlay for Scene.*Welcome Scene/i }).first();
   await checkNameEntry(editButton);
   await expect(editButton).toBeEnabled();
   await editButton.click();
 
   const overlay = page.locator(".setting-overlay-panel");
   await expect(overlay).toBeVisible({ timeout: 5000 });
+  await expect(overlay.locator(".switch-scene-table")).toBeVisible();
+  await expect(overlay.getByRole("button", { name: "Backlight", exact: true })).toBeVisible();
+  await overlay.getByRole("button", { name: "Edit Area Scene definitions", exact: true }).click();
   await expect(overlay).toContainText("Area Scene Setting / Welcome");
   await expect(overlay.locator(".scene-view-setting-overlay-content")).toBeVisible();
   const bulkPanel = overlay.locator(".scene-bulk-panel");
@@ -488,10 +492,10 @@ test("CFS setting Edit is disabled in view-only and InspectionMode states", asyn
   await page.getByRole("button", { name: "InspectionMode", exact: true }).click();
   await page.getByRole("button", { name: "Start Current Revision", exact: true }).click();
 
-  await expect(page.getByRole("button", { name: /Open Area Scene Setting Overlay/i }).first()).toBeDisabled();
+  await expect(page.getByRole("button", { name: /Open Scene Setting Overlay/i }).first()).toBeDisabled();
   await expect(page.getByRole("button", { name: /Open Switch Setting Overlay/i }).first()).toBeDisabled();
   await expect(page.getByRole("button", { name: /Open Command Setting Overlay/i }).first()).toBeDisabled();
-  for (const kind of ["Area Scene", "Switch", "Command"]) {
+  for (const kind of ["Scene", "Switch", "Command"]) {
     await expect(page.getByRole("button", { name: new RegExp(`Edit ${kind} Setting Overlay`, "i") }).first()).toBeDisabled();
   }
   await expect(page.locator(".setting-overlay-panel")).toHaveCount(0);
@@ -688,7 +692,7 @@ test("T98 last-row pencils open each setting independently of link selection and
     { name: /Edit Switch Setting Overlay for SW1.*Bedside.*Press/i, sceneId: first.buttonSetting.sceneId, title: "Bedside" },
     { name: /Edit Switch Setting Overlay for SW1.*Bedside.*Double Tap/i, sceneId: second.buttonSetting.sceneId, title: "Bedside" },
     { name: /Edit Command Setting Overlay for Command.*Command Recall/i, sceneId: "", title: "Command Recall" },
-    { name: /Edit Area Scene Setting Overlay for Scene.*Welcome Scene/i, sceneId: null, title: "Area Scene Setting / Welcome" },
+    { name: /Edit Scene Setting Overlay for Scene.*Welcome Scene/i, sceneId: "t98-pencil-scene-welcome", title: "Welcome Scene" },
   ];
   for (const key of ["Enter", "Space"]) {
     for (const target of targets) {

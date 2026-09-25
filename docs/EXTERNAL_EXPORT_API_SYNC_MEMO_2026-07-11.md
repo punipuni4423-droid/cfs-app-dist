@@ -107,7 +107,7 @@ For future CFS changes that touch data, API, or export behavior, include this li
 - 2026-09-09 T-107追記: 上記の仕様確認待ちはMaster裁定で解消。当該読込中の除外後空Sceneだけ保持し、正常空配列の既定生成は維持。形式変更なし、最終34spec PASS。独立V-71未実施・未配布。
 
 ## 2026-09-09 T-108 全APIの接続認証
-- XC/LDを含む全APIクライアントはCFS接続cookieまたはx-cfs-access-tokenが必要。localhostも免除なし。Supabase Authorizationは引き続き併用する。自己更新/強制ロック解除/タブレット招待発行はPC管理者セッションに限定。
+- XC/LDを含む全APIクライアントはCFS接続cookie（T-144: `cfs-access-v2-p<port>`、旧名読取は固定期限まで）またはx-cfs-access-tokenが必要。localhostも免除なし。Supabase Authorizationは引き続き併用する。自己更新/強制ロック解除/タブレット招待発行はPC管理者セッションに限定。
 - ランチャーは資格情報を初期リンクからcookieへ交換する。詳細とCLI連携はAPI_ACCESS_JA.md。既存のExcel/Project・Share JSON/XC/LD出力のデータ形式は不変。
 - ローカルTrash GETのupdatedAtをPOSTのexpectedUpdatedAtで返す。古い/欠けた世代は409/TRASH_CONFLICT。Supabase Trashは既存Edge Functionに委譲。
 

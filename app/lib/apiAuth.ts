@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
-import { readAuthKeys, readSession, sessionToken } from './apiAuthCore.mjs';
+import { readAuthKeys, readRequestSession } from './apiAuthCore.mjs';
 import { isSecureSharingEnabled } from './secureSharingServer';
 
 export async function requireApiAccess(request: Request, admin = false): Promise<NextResponse | null> {
-  const session = readSession(sessionToken(request), await readAuthKeys());
+  const session = readRequestSession(request, await readAuthKeys())?.session;
   if (!session) return NextResponse.json({ error: 'Authentication is required. Reopen CFS using the PC launcher or connection link.' }, { status: 401 });
   if (admin && session.role !== 'admin') return NextResponse.json({ error: 'This action requires the PC administrator.' }, { status: 403 });
   const url = new URL(request.url);

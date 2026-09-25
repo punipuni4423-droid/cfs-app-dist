@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./support/safe-test";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
+import { readNativeDraftProjects } from "./support/native-project-drafts";
 
 // Bulk setting on the Scene tab (2026-08-21): checkbox column + top-right
 // Scene Setting / Backlight Setting buttons, mirroring the Switch tab bulk
@@ -97,9 +98,8 @@ test.describe("Scene tab bulk setting", () => {
     await expect(overlay).toBeHidden({ timeout: 5000 });
 
     await page.waitForTimeout(1800);
-    const conditions = await page.evaluate(() => {
+    const conditions = await readNativeDraftProjects(page).then(drafts => {
       try {
-        const drafts = JSON.parse(localStorage.getItem("cfs-project-drafts-v2") || "[]");
         return (drafts?.[0]?.roomTypes?.[0]?.roomScenes ?? []).map(
           (scene: { backlightCondition?: string }) => scene.backlightCondition ?? "",
         );
@@ -146,9 +146,8 @@ test.describe("Scene tab bulk setting", () => {
     await page.locator(".toolbar button").filter({ hasText: /^Apply$/ }).click();
     await page.waitForTimeout(1800);
 
-    const rows = await page.evaluate(() => {
+    const rows = await readNativeDraftProjects(page).then(drafts => {
       try {
-        const drafts = JSON.parse(localStorage.getItem("cfs-project-drafts-v2") || "[]");
         return (drafts?.[0]?.roomTypes?.[0]?.switches ?? [])
           .filter((item: { kind?: string }) => item.kind === "lutronPd")
           .map((item: { backlightAssignment?: string; backlightCondition?: string }) => ({

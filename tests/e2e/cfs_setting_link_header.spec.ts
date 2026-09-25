@@ -143,8 +143,11 @@ async function openProject(page: Page, projectName: string): Promise<void> {
     // T114 requires an explicit save decision for its unsaved draft.
     const finish = page.getByRole("dialog", { name: "Finish editing with draft changes?" });
     if (await finish.isVisible()) {
-      await finish.getByRole("button", { name: "Save Current & Finish", exact: true }).click();
+      await finish.getByRole("button", { name: "Continue Editing", exact: true }).click();
       await expect(finish).toBeHidden();
+      await page.getByRole("button", { name: "Save current project without a new revision", exact: true }).click();
+      await expect(page.locator(".revision-save-status-label")).toHaveText("Saved");
+      await back.click();
     }
   }
   const card = page.locator("button.screen-card").filter({ hasText: projectName }).first();
