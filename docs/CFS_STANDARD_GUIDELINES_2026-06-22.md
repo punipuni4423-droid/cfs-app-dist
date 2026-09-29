@@ -1,5 +1,14 @@
 # CFS 標準運用ガイドライン
 
+## 2026-09-29 Current / NewRev の保存と初期選択
+
+- Currentは現在のプロジェクト内容を保存し、RoomTypeのRevision番号と既存Revision snapshotを維持します。
+- NewRevの保存画面では、直近のRevision snapshotと比べて設定・所属回路に差分があるRoomType、およびRevision履歴がまだないRoomTypeを初期選択します。Currentで保存済みでも、直近のRevisionとの差分があれば対象です。差分を元に戻した部屋は対象から外れます。
+- チェックは手動で追加・解除でき、Select allで変更のない部屋も新Revisionにできます。チェックは新Revisionを作る対象の指定です。未選択の部屋の現在内容も、従来どおりプロジェクト保存に含まれます。
+- RoomType名・履歴メモなどsnapshot外の情報だけの変更は自動選択対象に含めません。Remarks・Areas・Fixtures等の共通情報はRoomType Revisionとは別に扱います。
+- 既存の共通履歴と差分がある場合、Current保存後でも部屋を選ばず共通履歴だけをNewRevで保存できます。共通履歴未作成の場合は従来どおり、未保存の共通変更があるか、部屋が選択されている必要があります。
+- 保存後はSavedを確認してからFinish Editingします。
+
 ## 2026-09-09 追加回路とDALI変更
 
 Device Assignの追加回路は機器に適合する候補から選びます。候補外の番号は確定されず、直前の値に戻ります。追加回路として使う回路をDALIへ変更すると、影響するRoomType・機器・ゾーンと解除番号が表示されます。OKで変更と追加割当解除をまとめて適用し、Cancelで保持します。CSV取込も同じ確認を行います。最後の追加回路を外した場合は固定のzoneDetailも解除されます。既存保存データの一括移行は行いません。

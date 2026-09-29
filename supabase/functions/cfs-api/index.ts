@@ -1,5 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.0";
 import { readProjectUpdates } from './projectUpdates.ts';
+import { assembleRecords, ProjectRecordsTruncatedError, validateProjectEnvelope } from './projectRecords.ts';
+import { unwrapRpcEnvelope } from './rpcEnvelope.ts';
 
 type MembershipRole = "viewer" | "editor" | "admin";
 
@@ -418,11 +420,17 @@ function readableProjects(membership: Membership, columns: string) {
 async function readProjects(membership: Membership) {
   // The payload and its optimistic-concurrency base must share one DB snapshot.
   // A later metadata query could otherwise attach a newer base to an old body.
-  const result = await admin.rpc('read_cfs_projects', { p_user_id: membership.auth_user_id });
+  const result = await admin.rpc('read_cfs_project_records', { p_user_id: membership.auth_user_id });
   if (result.error) throwSaveContractError(result.error);
-  const snapshot = asRecord(result.data);
-  if (!snapshot || !Array.isArray(snapshot.projects) || !asRecord(snapshot.bases)) throw new Error('Project read response was incomplete.');
-  return snapshot;
+  try {
+    return assembleRecords(result.data);
+  } catch (error) {
+    if (!(error instanceof ProjectRecordsTruncatedError)) throw error;
+    // Preserve all-project reads above the RPC row limit using one complete snapshot.
+    const complete = await admin.rpc('read_cfs_projects_rows', { p_user_id: membership.auth_user_id });
+    if (complete.error) throwSaveContractError(complete.error);
+    return validateProjectEnvelope(unwrapRpcEnvelope(complete.data));
+  }
 }
 
 async function readProject(projectId: string): Promise<unknown | null> {

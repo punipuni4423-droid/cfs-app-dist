@@ -292,6 +292,7 @@ export default function Home() {
   const initialized = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftCheckpointEpoch = useRef(new Map<string, number>());
+  const conflictLoadedSnapshots = useRef(new WeakSet<ProjectData>());
   const trashSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const trashSavesInFlight = useRef(new Set<Promise<void>>());
   const [notificationTrashRevision, setNotificationTrashRevision] = useState(0);
@@ -561,6 +562,8 @@ export default function Home() {
     saveTimer.current = setTimeout(async () => {
       for (const project of snapshot) {
         if ((checkpointEpochs.get(project.id) ?? 0) !== (draftCheckpointEpoch.current.get(project.id) ?? 0)) continue;
+        // A conflict Reload is a read, not a new edit of this exact snapshot.
+        if (conflictLoadedSnapshots.current.has(project)) continue;
         // Returning to the saved baseline is an edit too. Keep its latest body and any unresolved save intent.
         if (hasProjectChanges(project, persisted.get(project.id)) || checkpointedProjectIds.has(project.id)) {
           await checkpointProject(project, bases.get(project.id) ?? null, undefined, owner);
@@ -709,6 +712,7 @@ export default function Home() {
       }
       draftCheckpointEpoch.current.set(server.id, (draftCheckpointEpoch.current.get(server.id) ?? 0) + 1);
       rememberPersistedProject(server);
+      conflictLoadedSnapshots.current.add(server);
       skipNextSave.current = false;
       setProjects(current => current.map(project => project.id === server.id ? server : project));
       setRecoveryRecords(cachedDraftRecords());

@@ -488,7 +488,7 @@
         <thead><tr><th>領域</th><th>機能</th><th>説明</th></tr></thead>
         <tbody>
           <tr><td>上部履歴</td><td>Undo / Redo</td><td>現在の編集セッション内で戻す、やり直す操作です。Ctrl/Cmd+Z、Ctrl+Y、Ctrl/Cmd+Shift+Zにも対応します。</td></tr>
-          <tr><td>Revision</td><td>Save Revision</td><td>現在のRoom Type状態を新しいRevisionとして保存します。保存時に任意のNoteを入力でき、自動Update Memoと一緒に残ります。</td></tr>
+          <tr><td>Revision</td><td>Current / NewRev</td><td>Currentは内容を保存し、RoomTypeのRevision番号と既存snapshotを維持します。NewRevは直近のRevisionと設定・所属回路に差分がある部屋と履歴未作成の部屋を初期選択します。Current保存後もRevisionとの差分があれば選択されます。手動で選択・解除でき、選択した部屋だけに新Revisionと任意のMemoを残します。未選択の部屋の現在内容もプロジェクト保存に含まれます。RoomType名・履歴メモのみの変更は自動選択対象外で、共通情報は別履歴です。</td></tr>
           <tr><td>Revision</td><td>Revision Management</td><td>保存済みRevision、保存日時、Note、Update Memoを表示し、Restoreで過去Revisionを読み込みます。</td></tr>
           <tr><td>Revision</td><td>Highlight Updates</td><td>直近Revisionとの差分を各タブで強調します。2つ以上のRevisionがあると使えます。</td></tr>
           <tr><td>表示</td><td>Hide top bar / Show Top</td><td>作業領域を広げるために上部UIを折りたたみます。</td></tr>

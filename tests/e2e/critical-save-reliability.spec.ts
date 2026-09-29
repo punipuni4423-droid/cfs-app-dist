@@ -413,6 +413,8 @@ test('New Revision captures normalized new rows and preserves prior snapshot byt
   await page.getByRole('button', { name: 'Create Room Type', exact: true }).click();
   const saveRevision = async () => {
     await page.getByRole('button', { name: 'Save all room types as new revisions' }).click();
+    // This test intentionally creates another revision without editing.
+    await page.getByRole('dialog', { name: 'Save Revision', exact: true }).getByLabel('Save revision for Normalized room', { exact: true }).check();
     await page.getByRole('dialog', { name: 'Save Revision', exact: true }).getByRole('button', { name: 'Save Revision', exact: true }).click();
   };
   await saveRevision();

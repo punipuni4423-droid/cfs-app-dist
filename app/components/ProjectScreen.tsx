@@ -1739,12 +1739,20 @@ export default function ProjectScreen({
         roomTypeId: rt.id,
         revision: nextRoomTypeRevisionValue(rt),
         note: "",
-        selected: true,
+        selected: roomTypeHasRevisionDraft(rt),
       })),
     );
     setBatchRevisionError("");
     setBatchRevisionDialogOpen(true);
-  }, [canEdit, onReadOnlyAction, project.roomTypes]);
+  }, [canEdit, onReadOnlyAction, project.roomTypes, roomTypeHasRevisionDraft]);
+
+  const canSaveCommonRevision = useMemo(() => {
+    if (hasUnsavedCommonChanges) return true;
+    // Current saves do not create history. Keep an existing common-history
+    // difference eligible even when no room needs a new revision.
+    const latest = commonRevisions(project).at(-1);
+    return Boolean(latest && valuesDiffer(latest.snapshot, commonSnapshot(project)));
+  }, [hasUnsavedCommonChanges, project]);
 
   const updateBatchRevisionDraft = useCallback((
     roomTypeId: string,
@@ -1785,7 +1793,7 @@ export default function ProjectScreen({
         selected: draft?.selected ?? true,
       };
     }).filter((draft) => draft.selected);
-    if (normalizedDrafts.length === 0 && !hasUnsavedCommonChanges) {
+    if (normalizedDrafts.length === 0 && !canSaveCommonRevision) {
       setBatchRevisionError("Select at least one room type to save.");
       return;
     }
@@ -1815,7 +1823,7 @@ export default function ProjectScreen({
           selected: Boolean(visibleDraft),
         };
       }).filter((draft) => draft.selected);
-      if (currentDrafts.length === 0 && !hasUnsavedCommonChanges) {
+      if (currentDrafts.length === 0 && !canSaveCommonRevision) {
         saveValidationError = "Select at least one room type to save.";
         return null;
       }
@@ -1867,7 +1875,7 @@ export default function ProjectScreen({
     batchRevisionDrafts,
     canEdit,
     collaboration.user?.displayName,
-    hasUnsavedCommonChanges,
+    canSaveCommonRevision,
     devices,
     onReadOnlyAction,
     onSaveProjectRevision,
@@ -2512,7 +2520,7 @@ export default function ProjectScreen({
             tabIndex={-1}
           >
             <h2 id="revisionBatchTitle">Save Revision</h2>
-            <p>Select the room types to update, then review the next revision number and memo for each selected row.</p>
+            <p>Room types with setting or circuit changes since their latest revision, or no revision history, are selected automatically. Review the selection, next revision number and memo before saving.</p>
             <div className="revision-batch-summary" aria-live="polite">
               <span>{batchRevisionSelectedCount} / {project.roomTypes.length} room types selected</span>
               <div className="revision-batch-bulk-actions">
@@ -2621,7 +2629,7 @@ export default function ProjectScreen({
                 type="button"
                 className="btn btn-primary"
                 onClick={() => void handleSaveAllRevisions()}
-                disabled={isSavingBatchRevision || (batchRevisionSelectedCount === 0 && !hasUnsavedCommonChanges)}
+                disabled={isSavingBatchRevision || (batchRevisionSelectedCount === 0 && !canSaveCommonRevision)}
               >
                 {isSavingBatchRevision ? "Saving revisions..." : "Save Revision"}
               </button>
