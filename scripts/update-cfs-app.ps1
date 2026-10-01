@@ -43,7 +43,8 @@ function Write-UpdateStatus {
     [string]$Step,
     [string]$Message,
     [int]$Progress = -1,
-    [string]$BackupPath = ""
+    [string]$BackupPath = "",
+    [System.Management.Automation.ErrorRecord]$UpdateError
   )
   $payload = [ordered]@{
     state = $State
@@ -58,6 +59,19 @@ function Write-UpdateStatus {
   if ($AttemptId) { $payload['attemptId'] = $AttemptId }
   if ($TargetCommit) { $payload['targetCommit'] = $TargetCommit }
   if ($ExpectedHead) { $payload['expectedHead'] = $ExpectedHead }
+  $logWarning = Get-Variable -Name CfsLogWriteWarning -Scope Script -ErrorAction SilentlyContinue
+  if ($logWarning) { $payload['logWarning'] = [string]$logWarning.Value }
+  if ($UpdateError) {
+    # Keep a shallow diagnostic: serializing ErrorRecord itself traverses large
+    # invocation/session objects and can hide the original failure again.
+    $payload['failure'] = [ordered]@{
+      message = $UpdateError.Exception.Message
+      exceptionType = $UpdateError.Exception.GetType().FullName
+      hResult = $UpdateError.Exception.HResult
+      errorId = $UpdateError.FullyQualifiedErrorId
+      scriptStackTrace = $UpdateError.ScriptStackTrace
+    }
+  }
   if ($State -eq "completed" -or $State -eq "failed") {
     $payload["finishedAt"] = (Get-Date).ToUniversalTime().ToString("o")
   }
@@ -98,8 +112,22 @@ function Write-UpdateStatus {
 
 function Write-Log {
   param([string]$Message)
-  $line = ("[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message)
-  Add-Content -LiteralPath $logPath -Value $line -Encoding UTF8
+  # Logging must never control command execution, terminal status or recovery.
+  # Add-Content in Windows PowerShell opens the content provider for reading as
+  # well: a reader that permits writers can still make that operation fail.
+  # Open only for append/write and allow diagnostic readers to coexist.
+  try {
+    $line = ("[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message)
+    $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($line + [Environment]::NewLine)
+    $stream = [IO.File]::Open($logPath, [IO.FileMode]::Append, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+    try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+  } catch {
+    # No sleeps or command retries on diagnostic I/O failure. Status is an
+    # independent channel; retain the first log warning even if logging resumes.
+    if (-not (Get-Variable -Name CfsLogWriteWarning -Scope Script -ErrorAction SilentlyContinue)) {
+      $script:CfsLogWriteWarning = "Update log is incomplete: " + $_.Exception.Message
+    }
+  }
 }
 
 function Invoke-LoggedCommand {
@@ -553,13 +581,14 @@ try {
   Start-CfsAppServer -RequireFreshBuild
   Wait-CfsUpdatedServer -Commit $TargetCommit
 
-  Write-UpdateStatus -State "completed" -Step "done" -Message "Update completed. Reload the browser." -Progress 100 -BackupPath $backupPath
   Write-Log "CFS self update completed."
+  Write-UpdateStatus -State "completed" -Step "done" -Message "Update completed. Reload the browser." -Progress 100 -BackupPath $backupPath
 } catch {
+  $updateFailure = $_
   $updateFailureMessage = $_.Exception.Message
   Write-Log ("FAILED: " + $updateFailureMessage)
   try {
-    Write-UpdateStatus -State "failed" -Step "failed" -Message $updateFailureMessage -Progress 100 -BackupPath $backupPath
+    Write-UpdateStatus -State "failed" -Step "failed" -Message $updateFailureMessage -Progress 100 -BackupPath $backupPath -UpdateError $updateFailure
   } catch {
     Write-Log "Could not publish failed update status; continuing app recovery."
   }

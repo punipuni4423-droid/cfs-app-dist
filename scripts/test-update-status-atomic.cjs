@@ -55,13 +55,34 @@ async function run(executable, name) {
     const deadline = Date.now() + 10000;
     while (!fs.existsSync(holdReady) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
     assert(fs.existsSync(holdReady));
-    const fault = child(executable, load + `$statusPath=${quote(status)}; $timer=[Diagnostics.Stopwatch]::StartNew(); $failed=$false; try{Write-UpdateStatus -State running -Step test -Message 'must not publish' -Progress 40}catch{$failed=$true}; @{failed=$failed; elapsedMs=$timer.ElapsedMilliseconds}|ConvertTo-Json|Set-Content -LiteralPath ${quote(resultFile)} -Encoding UTF8`);
+    const fault = child(executable, load + `$statusPath=${quote(status)}; $timer=[Diagnostics.Stopwatch]::StartNew(); $failed=$false;$errorId=''; try{Write-UpdateStatus -State running -Step test -Message 'must not publish' -Progress 40}catch{$failed=$true;$errorId=$_.FullyQualifiedErrorId}; @{failed=$failed;errorId=$errorId; elapsedMs=$timer.ElapsedMilliseconds}|ConvertTo-Json|Set-Content -LiteralPath ${quote(resultFile)} -Encoding UTF8`);
     assert.equal(await fault.done, 0);
     const bounded = parse(resultFile);
     assert.equal(bounded.failed, true);
+    assert.equal(bounded.errorId, 'IOException', 'The final error must be the I/O failure, not a retry-handler error.');
+    assert(bounded.elapsedMs >= 900, 'Persistent sharing failure must exercise the bounded retry loop.');
     assert(bounded.elapsedMs < 5000, 'Sharing failure did not return within the bounded retry period.');
     assert.deepEqual(fs.readFileSync(status), original);
   } finally { holder.process.kill(); await holder.done; }
+  // A lock released during the retry window must succeed, including when the
+  // status carries a typed original ErrorRecord. Catch variables must not
+  // collide with that parameter (PowerShell names are case-insensitive).
+  const transientStatus = path.join(folder, 'transient-status.json');
+  const transientReady = path.join(folder, 'transient-ready');
+  const transientGo = path.join(folder, 'transient-go');
+  fs.writeFileSync(transientStatus, original);
+  const transientHolder = child(executable, `$f=[IO.File]::Open(${quote(transientStatus)},[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read); try{[IO.File]::WriteAllText(${quote(transientReady)},'ready');$deadline=[DateTime]::UtcNow.AddSeconds(15);while(-not [IO.File]::Exists(${quote(transientGo)})){if([DateTime]::UtcNow -gt $deadline){throw 'Missing writer handshake'};Start-Sleep -Milliseconds 5};Start-Sleep -Milliseconds 300}finally{$f.Dispose()}`);
+  try {
+    const deadline = Date.now() + 10000;
+    while (!fs.existsSync(transientReady) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert(fs.existsSync(transientReady));
+    const transientWriter = child(executable, load + `$statusPath=${quote(transientStatus)};try{throw 'original update failure'}catch{$originalUpdateError=$_};[IO.File]::WriteAllText(${quote(transientGo)},'go');Write-UpdateStatus -State failed -Step failed -Message 'original update failure' -UpdateError $originalUpdateError`);
+    assert.equal(await transientWriter.done, 0, 'Status must recover when the file lock is released within the retry window.');
+    assert.equal(await transientHolder.done, 0);
+    const recovered = parse(transientStatus);
+    assert.equal(recovered.state, 'failed');
+    assert.equal(recovered.failure.message, 'original update failure');
+  } finally { transientHolder.process.kill(); await transientHolder.done; }
   // A missing parent is a persistent write failure, with no publication retry.
   const invalid = child(executable, load + `$statusPath=${quote(path.join(folder, 'missing/status.json'))}; $timer=[Diagnostics.Stopwatch]::StartNew(); $failed=$false; try{Write-UpdateStatus -State running -Step test -Message 'must not publish'}catch{$failed=$true}; @{failed=$failed; elapsedMs=$timer.ElapsedMilliseconds}|ConvertTo-Json|Set-Content -LiteralPath ${quote(resultFile)} -Encoding UTF8`);
   assert.equal(await invalid.done, 0);
@@ -84,7 +105,7 @@ async function run(executable, name) {
     assert.deepEqual(fs.readFileSync(status), original);
     assert.equal(fs.readdirSync(folder).filter((file) => file.endsWith('.tmp')).length, 0);
   }
-  return { name, writes: 601, writeFailures: 0, reads, partialJson: partial, temporaryReadUnavailable: unavailable, readErrorCodes, finalState: completed.state, boundedLockFailure: true, persistentFailure: true, temporaryFiles: 0, recoveryOnStatusFailure: true, existingListenerNotDuplicated: true, originalFailureExit: 1 };
+  return { name, writes: 601, writeFailures: 0, reads, partialJson: partial, temporaryReadUnavailable: unavailable, readErrorCodes, finalState: completed.state, boundedLockFailure: true, transientLockRecovered: true, persistentFailure: true, temporaryFiles: 0, recoveryOnStatusFailure: true, existingListenerNotDuplicated: true, originalFailureExit: 1 };
 }
 (async () => {
   const results = [await run(ps5, 'ps5'), await run(ps7, 'ps7')];
