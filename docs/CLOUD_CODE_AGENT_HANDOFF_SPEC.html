@@ -633,8 +633,11 @@ npm run build</code></pre>
         <ul>
           <li>起動時は DB/API から projects/trash を取得する。</li>
           <li>10 秒 timeout または API 失敗時は localStorage backup を読む。</li>
-          <li>編集中のDraftは300ms debounceで端末のIndexedDBへProject・利用者・タブ別に退避する。Draftは共有DBへ自動uploadしない。Current / New Rev / 放置終了の新Rev保存は、応答と保存先本文を照合してから成功と表示する。放置保存のコメントは「自動保存」。</li>
+          <li>編集中のDraftは300ms debounceで端末のIndexedDBへProject・利用者・タブ別に退避する。Draftは共有DBへ自動uploadしない。Current / New Revは応答と保存先本文を照合してから成功と表示する。終了時・アイドル時の自動保存は行わない。</li>
           <li>trash は 300ms debounce で保存する。</li>
+          <li>ユーザー起点のDB操作は同期tokenで排他し、前処理・送信・読戻し・下書き整理まで全画面の進行表示で操作を止める。Trashは予約から送信完了まで追跡し、本文読了込みの有限待機を使う。通常のIndexedDB下書き・heartbeat・背景GETは対象外。</li>
+          <li>native modalとwindow captureでbody portal・キー操作も抑止する。最後のblur入力はsnapshot前に確定し、遅延入力のrebase・operation ID・CAS・ownerEpoch保護は維持する。Revision復元から内部保存は同じtokenを引き継ぐ。処理中のidle Finishは延期しheartbeatを維持する。</li>
+          <li>結果不明・Recovery保留は処理中tokenとは分ける。通信終了後は進行表示を閉じ、既存Check/Backup/再認証の導線を残す。timeoutを未commitや自動再送の根拠にしない。外部認証SDK自体はこのDB操作modalの待機対象にしない。</li>
           <li>Import/Export は JSON backup 形式にも対応する。</li>
         </ul>
       </section>

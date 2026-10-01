@@ -4,6 +4,7 @@ import { installLocalEditingMocks } from './support/secure-sharing-mock';
 import { createNewProject } from '../../app/lib/storage';
 import { readNativeDraftRecords } from './support/native-project-drafts';
 import { createNewRoomType, createEmptyDeviceAssignment } from '../../app/lib/constants';
+import { expectOperationBlocksUi } from './support/database-operation';
 
 async function setup(page: Page, ownerChange = false, legacy = false) {
   const state = await installLocalEditingMocks(page);
@@ -16,14 +17,53 @@ async function setup(page: Page, ownerChange = false, legacy = false) {
   }
   const item = { id: 'restore-item', deletedAt: '2026-09-10T00:00:00.000Z', project };
   state.trash.projects = [item];
+  let switchOwner: (() => Promise<void>) | undefined;
   if (ownerChange) {
-    await page.addInitScript(() => localStorage.setItem('cfs-collaboration-user-v1', JSON.stringify({ id: 'mock-user', displayName: 'Owner A' })));
+    // Real SDK cross-tab auth delivery; only credentials and HTTP are synthetic.
+    // No production bypass, direct React dispatch, or useCollaboration replacement.
+    const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+    const jwt = (sub: string) => `${Buffer.from('{"alg":"none","typ":"JWT"}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub, exp: expiresAt })).toString('base64url')}.c2ln`;
+    const session = (id: string) => ({ access_token: jwt(id), refresh_token: 'synthetic-only', token_type: 'bearer', expires_at: expiresAt, expires_in: 3600,
+      user: { id, email: `${id}@example.test`, app_metadata: { provider: 'azure' }, user_metadata: {} } });
+    const sessionA = session('owner-A'), sessionB = session('owner-B');
+    const storageKey = 'sb-cfs-restore-owner-auth-token';
+    const membership = (authorization?: string) => {
+      const id = authorization === `Bearer ${sessionB.access_token}` ? 'owner-B' : 'owner-A';
+      return { id, displayName: id === 'owner-B' ? 'Owner B' : 'Owner A', email: `${id}@example.test`, role: 'admin', active: true, createdAt: null, lastSeenAt: null };
+    };
+    let ownerBAuthCalls = 0;
+    await page.addInitScript(({ storageKey, sessionA }) => localStorage.setItem(storageKey, JSON.stringify(sessionA)), { storageKey, sessionA });
+    await page.context().route('**/api/sharing/config**', route => route.fulfill({ json: {
+      mode: 'supabase', url: 'https://cfs-restore-owner.supabase.co', publishableKey: jwt('anon'),
+    } }));
+    await page.context().route('https://cfs-restore-owner.supabase.co/**', route => {
+      const user = route.request().headers().authorization === `Bearer ${sessionB.access_token}` ? sessionB.user : sessionA.user;
+      return route.fulfill({ json: { user } });
+    });
+    await page.context().route('**/api/collaboration/auth', route => {
+      const value = membership(route.request().headers().authorization);
+      if (value.id === 'owner-B') ownerBAuthCalls++;
+      return route.fulfill({ json: { membership: value } });
+    });
     await page.context().route('**/api/collaboration/status**', route => {
       const query = new URL(route.request().url()).searchParams;
+      const value = membership(route.request().headers().authorization);
       return route.fulfill({ json: { enabled: true, mode: 'edit', projectId: query.get('projectId') ?? '',
-        lock: { userId: query.get('userId'), sessionId: query.get('sessionId'), expiresAt: '2099-01-01T00:00:00Z' },
+        membership: value,
+        lock: { userId: value.id, sessionId: query.get('sessionId'), expiresAt: '2099-01-01T00:00:00Z' },
         locks: [], leaseSeconds: 90, heartbeatMs: 900000, idleMs: 900000 } });
     });
+    switchOwner = async () => {
+      await page.evaluate(({ storageKey, sessionB }) => {
+        // A second SDK client/tab writes its session and broadcasts SIGNED_IN.
+        localStorage.setItem(storageKey, JSON.stringify(sessionB));
+        const channel = new BroadcastChannel(storageKey);
+        channel.postMessage({ event: 'SIGNED_IN', session: sessionB });
+        channel.close();
+      }, { storageKey, sessionB });
+      await expect.poll(() => ownerBAuthCalls).toBeGreaterThan(0);
+      await expect(page.locator('.collaboration-user-chip')).toHaveText('Owner B');
+    };
   }
   let trashToken = 'trash-0', trashFails = false, trashPosts = 0;
   await page.context().route('**/api/projects?restoreRaw=1', route => route.fulfill({ json: { projects: state.projects } }));
@@ -47,7 +87,7 @@ async function setup(page: Page, ownerChange = false, legacy = false) {
   page.on('dialog', dialog => void dialog.accept());
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Restore Project', exact: true })).toBeVisible();
-  return { state, project, item, setTrashFailure: (value: boolean) => { trashFails = value; }, trashPosts: () => trashPosts,
+  return { state, project, item, switchOwner, setTrashFailure: (value: boolean) => { trashFails = value; }, trashPosts: () => trashPosts,
     changeTrashToken: () => { trashToken += '-external'; } };
 }
 const card = (page: Page) => page.locator('.screen-card-wrap').filter({ hasText: 'Synthetic restored project' });
@@ -199,8 +239,9 @@ test('Partial restore confirmation retains later edits durably and survives norm
   await expect(page.getByRole('button', { name: 'Check Previous Restore', exact: true })).toHaveCount(0);
 });
 
-test('Restore delayed completion cannot publish account A result or clear Trash after owner B registers', async ({ page }) => {
-  const { state, trashPosts } = await setup(page, true);
+test('Restore blocks account UI while a cross-tab auth event still isolates owner A completion from owner B', async ({ page }) => {
+  const { state, trashPosts, switchOwner } = await setup(page, true);
+  expect(switchOwner).toBeDefined();
   let release!: () => void, posts = 0, committed: any[] = [];
   const gate = new Promise<void>(resolve => { release = resolve; });
   await page.context().route('**/api/projects', async route => {
@@ -210,21 +251,32 @@ test('Restore delayed completion cannot publish account A result or clear Trash 
     return route.fulfill({ json: { ok: true, projects: body.projects } });
   });
   await page.context().route('**/api/projects?restoreRaw=1', route => route.fulfill({ json: { projects: committed } }));
-  const rawConfirmation = page.waitForResponse(response => response.url().endsWith('/api/projects?restoreRaw=1'));
   await page.getByRole('button', { name: 'Restore Project', exact: true }).click();
   await expect.poll(() => posts).toBe(1);
+  const rawConfirmation = page.waitForResponse(response => response.url().endsWith('/api/projects?restoreRaw=1') && response.request().headers()['x-cfs-user-id'] === 'owner-A');
   try {
-    await page.context().route('**/api/collaboration/users/register', route => route.fulfill({ json: { ok: true, user: { id: 'owner-B', displayName: 'Owner B', role: 'admin' } } }));
-    await page.getByRole('button', { name: 'User: Owner A', exact: true }).click();
-    await page.getByLabel('Display name', { exact: true }).fill('Owner B');
-    await page.getByRole('button', { name: 'Register', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'User: Owner B', exact: true })).toBeVisible();
+    await expectOperationBlocksUi(page);
+    const users = page.getByRole('button', { name: 'Manage users', exact: true, includeHidden: true });
+    const bounds = await users.boundingBox();
+    expect(bounds).not.toBeNull();
+    await page.mouse.click(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+    await users.evaluate(element => (element as HTMLElement).click());
+    await expect(page.locator('[aria-labelledby="collaborationMembersTitle"]')).toHaveCount(0);
+    await expect(page.locator('.collaboration-user-chip')).toHaveText('Owner A');
+    await expect(page.getByTestId('database-operation-overlay')).toBeVisible();
+    expect(posts).toBe(1); expect(trashPosts()).toBe(0);
+    await expect.poll(async () => (await readNativeDraftRecords(page)).some(r => r.scope.owner === 'owner-A' && (r as any).intent?.restore)).toBe(true);
+    await switchOwner!();
   } finally { release(); }
   await (await rawConfirmation).finished();
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expect(card(page)).toHaveCount(0);
+  await expect(trashRow(page)).toBeVisible();
+  await expect(page.locator('.collaboration-user-chip')).toHaveText('Owner B');
+  expect(posts).toBe(1);
   expect(state.projects).toHaveLength(0); expect(trashPosts()).toBe(0);
   const records = await readNativeDraftRecords(page);
+  expect(records.some(r => r.scope.owner === 'owner-A' && (r as any).intent?.restore)).toBe(true);
   expect(records.filter(r => (r as any).intent?.restore).every(r => r.scope.owner !== 'owner-B')).toBe(true);
 });
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { appendCommonRevision, commonRevisions, commonSnapshot } from '../lib/projectCommonHistory';
 import { usePendingCfsAction, type PendingCfsGuard } from "../lib/usePendingCfsAction";
 import { rebaseProjectSave, type ProjectSaveReceipt } from "../lib/projectSaveState";
+import { isDatabaseOperationBusy } from '../lib/databaseOperation';
 import type {
   CfsRowDisplaySettings,
   CircuitEntry,
@@ -304,7 +305,7 @@ interface ProjectScreenProps {
   onDiscardMyUnsavedChanges: () => Promise<boolean>;
   onRequestRestore: (source: RestoreSource) => void;
   onSaveProjectRevision: (mutate: (project: ProjectData) => ProjectData | null) => Promise<boolean>;
-  onMoveRoomTypeToTrash: (project: ProjectData, roomType: RoomType) => void;
+  onMoveRoomTypeToTrash: (project: ProjectData, roomType: RoomType) => boolean;
   saveStatus:
     | "idle"
     | "savingDraft"
@@ -504,6 +505,7 @@ export default function ProjectScreen({
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent): void {
+      if (isDatabaseOperationBusy()) return;
       const target = e.target;
       if (target instanceof HTMLElement) {
         const tag = target.tagName;
@@ -1475,7 +1477,7 @@ export default function ProjectScreen({
       ) {
         return;
       }
-      onMoveRoomTypeToTrash(project, roomType);
+      if (!onMoveRoomTypeToTrash(project, roomType)) return;
       updateProject((p) => ({
         ...p,
         roomTypes: p.roomTypes.filter((rt) => rt.id !== id),
@@ -1924,6 +1926,7 @@ export default function ProjectScreen({
 
   useLayoutEffect(() => {
     collaboration.setFinishGuard(async ({ idle }) => {
+      if (isDatabaseOperationBusy()) return false;
       const pendingGuard = pendingCfsGuardRef.current;
       if (pendingGuard) {
         if (await pendingGuard()) window.setTimeout(() => { collaboration.resumeIdleAfterSave?.(); void collaboration.finishEditing({ idle }); }, 0);
@@ -1958,6 +1961,7 @@ export default function ProjectScreen({
   }, [openFinishRevisionDialog, hasUnsavedDatabaseChanges]);
 
   const handleBackToProjectList = usePendingCfsAction((): void => {
+    if (isDatabaseOperationBusy()) return;
     if (hasUnsavedDatabaseChangesNow()) {
       openFinishRevisionDialog(false, "back");
       return;

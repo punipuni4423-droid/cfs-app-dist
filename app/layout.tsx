@@ -6,6 +6,7 @@ import DisplayScaleController from "./components/DisplayScaleController";
 import MigrationNotice from "./components/MigrationNotice";
 import ApiAccessGate from "./components/ApiAccessGate";
 import AppBuildInfoProvider from "./components/AppBuildInfoProvider";
+import DatabaseOperationOverlay from "./components/DatabaseOperationOverlay";
 import { readRunningBuildInfo } from "./lib/appBuildInfoServer";
 
 const cfsIconVersion = "20260817-hy08";
@@ -36,6 +37,7 @@ export default async function RootLayout({
       <body className="min-h-screen flex flex-col">
         <ApiAccessGate>
         <AppBuildInfoProvider info={buildInfo}>
+        <DatabaseOperationOverlay />
         <DisplayScaleController />
         <SettingsMenu />
         <MigrationNotice />

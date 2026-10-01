@@ -1,25 +1,35 @@
 {
   "entries": [
     {
+      "id": "2026-10-01-2",
+      "date": "2026-10-01",
+      "title": "Screen protection during saves and other operations ／ 保存・削除などの処理中の操作を保護",
+      "items": [
+        "Saving, deleting, restoring and importing now show a progress overlay and temporarily block screen interaction. Please wait until the result has been checked. ／ 保存・削除・復元・Importなどの処理中は、進行表示を出して画面操作を一時停止します。保存後の確認が終わるまで、そのままお待ちください。",
+        "Repeated clicks, tab changes, settings controls and keyboard actions are blocked while an operation is running. ／ ボタンの連打、タブ移動、設定画面やキーボードからの操作が、実行中の処理と重ならないようにしました。",
+        "If a request stops responding, the wait ends while drafts and recovery requests are retained. Check Saved or the result message after the overlay closes. If the result is unknown, check its status in Save and Recovery. ／ 通信が止まった場合に待機を終了し、下書きや復旧要求を残せるようにしました。表示が消えた後はSavedや結果メッセージを確認し、結果不明の場合はSave and Recoveryから保存状況を確認してください。"
+      ]
+    },
+    {
       "id": "2026-10-01-1",
       "date": "2026-10-01",
-      "title": "アプリ更新の安定性改善",
+      "title": "More reliable app updates ／ アプリ更新の安定性改善",
       "items": [
-        "更新ログを別の処理が開いていると、更新や失敗後の復旧判定が中断される問題を修正しました。",
-        "ログの書込み障害と更新コマンドの失敗を区別して記録するようにしました。更新が失敗した場合は原因の詳細を状態ファイルに残します。",
-        "再接続待ちが長引く場合の確認手順を独立Git復旧ガイドに追記しました。"
+        "Fixed a problem where another process holding the update log open could interrupt an update or the recovery checks after a failure. ／ 更新ログを別の処理が開いていると、更新や失敗後の復旧判定が中断される問題を修正しました。",
+        "Log write failures are now recorded separately from update command failures. If an update fails, the state file retains details of the cause. ／ ログの書込み障害と更新コマンドの失敗を区別して記録するようにしました。更新が失敗した場合は原因の詳細を状態ファイルに残します。",
+        "Added troubleshooting steps for prolonged reconnection waits to the independent Git recovery guide. ／ 再接続待ちが長引く場合の確認手順を独立Git復旧ガイドに追記しました。"
       ]
     },
     {
       "id": "2026-09-29-1",
       "date": "2026-09-29",
-      "title": "NewRevの初期選択と保存処理の改善",
+      "title": "Improved NewRev defaults and saving ／ NewRevの初期選択と保存処理の改善",
       "items": [
-        "NewRevでは、最新Revisionから設定や回路が変わったRoomTypeと、履歴がまだないRoomTypeを初期選択します。Currentで保存した後もRevisionとの差分を判定します。チェックは手動で変更できます。",
-        "共通項目だけを変更してCurrentで保存した場合も、既存の共通Revisionとの差分があれば、RoomTypeを選ばずに共通Revisionを保存できます。",
-        "共有先の保存検査で、履歴を含む大きな案件の比較処理を軽量化しました。既存履歴の保護、編集権限、競合時の保護は維持しています。",
-        "共有案件の読み込みと保存後の確認で、大きなデータを重複して組み立てる処理を減らしました。",
-        "保存の競合後に共有先の最新版を読み込んだだけでは、このタブの下書きを上書きしないようにしました。その後の編集は通常どおり下書きに残ります。"
+        "NewRev initially selects RoomTypes whose settings or circuits differ from the latest Revision, and RoomTypes with no history. Differences from the Revision are still checked after saving Current. You can change the selections manually. ／ NewRevでは、最新Revisionから設定や回路が変わったRoomTypeと、履歴がまだないRoomTypeを初期選択します。Currentで保存した後もRevisionとの差分を判定します。チェックは手動で変更できます。",
+        "After changing only common settings and saving Current, you can save a common Revision without selecting a RoomType if the settings differ from the existing common Revision. ／ 共通項目だけを変更してCurrentで保存した場合も、既存の共通Revisionとの差分があれば、RoomTypeを選ばずに共通Revisionを保存できます。",
+        "Shared save checks now compare large projects with history more efficiently. Existing history, edit access and conflict protection are preserved. ／ 共有先の保存検査で、履歴を含む大きな案件の比較処理を軽量化しました。既存履歴の保護、編集権限、競合時の保護は維持しています。",
+        "Reduced duplicate data assembly when loading shared projects and checking save results for large projects. ／ 共有案件の読み込みと保存後の確認で、大きなデータを重複して組み立てる処理を減らしました。",
+        "Loading the latest shared project after a save conflict no longer overwrites this tab's draft. Subsequent edits are still recorded in the draft as usual. ／ 保存の競合後に共有先の最新版を読み込んだだけでは、このタブの下書きを上書きしないようにしました。その後の編集は通常どおり下書きに残ります。"
       ]
     },
     {

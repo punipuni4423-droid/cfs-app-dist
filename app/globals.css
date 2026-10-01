@@ -10351,3 +10351,29 @@ body.cfs-top-ui-collapsed .save-reliability-notice {
 .remote-project-update-dialog h2 { font-size: 1.2rem; margin: 0 0 12px; }
 .remote-project-update-dialog p { line-height: 1.6; margin: 0 0 16px; }
 .remote-project-update-badge { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 7px 10px; border-radius: 8px; background: #e7f5f5; color: #195b62; white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+/* A native modal keeps body portals and nested dialogs behind the operation. */
+.database-operation-overlay {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(440px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  padding: 28px;
+  border: 1px solid #dbe5e8;
+  border-radius: 14px;
+  background: #fff;
+  color: #24343b;
+  box-shadow: 0 16px 48px rgb(15 35 45 / 18%);
+  outline: none;
+  text-align: center;
+}
+.database-operation-overlay::backdrop { background: rgb(33 48 58 / 32%); }
+.database-operation-overlay h2 { margin: 14px 0 10px; font-size: 18px; font-weight: 600; }
+.database-operation-overlay p { margin: 0; font-size: 14px; line-height: 1.7; color: #536871; }
+.database-operation-spinner {
+  width: 30px; height: 30px; margin: 0 auto;
+  border: 3px solid #dcecef; border-top-color: #168b98; border-radius: 50%;
+  animation: database-operation-spin .8s linear infinite;
+}
+@keyframes database-operation-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .database-operation-spinner { animation-duration: 2s; } }

@@ -38,11 +38,17 @@ export async function matchesSaveIntent(sent: ProjectData, received: ProjectData
 export async function finiteFetch(url: string, init: RequestInit, timeout = SAVE_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const externalSignal = init.signal;
+  let abortExternal: () => void = () => {};
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => { controller.abort(); reject(new Error('deadline')); }, timeout);
+    abortExternal = () => { controller.abort(externalSignal?.reason); reject(new Error('request aborted')); };
+    if (externalSignal?.aborted) abortExternal();
+    else externalSignal?.addEventListener('abort', abortExternal, { once: true });
   });
   try {
     return await Promise.race([deadline, (async () => {
+      if (controller.signal.aborted) throw new Error('request aborted');
       const response = await fetch(url, { ...init, signal: controller.signal });
       // The deadline includes body consumption; headers alone are not completion.
       const body = await response.arrayBuffer();
@@ -50,7 +56,10 @@ export async function finiteFetch(url: string, init: RequestInit, timeout = SAVE
     })()]);
   }
   catch { throw new SaveProtocolError('SAVE_RESULT_UNKNOWN', 'The save result could not be verified. Check Save Status.', undefined, true); }
-  finally { clearTimeout(timer); }
+  finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', abortExternal);
+  }
 }
 export function saveError(status: number, code?: string): SaveProtocolError {
   const messages: Record<number, string> = {

@@ -7,6 +7,7 @@ import type { ProjectDraftRecord } from '../../app/lib/projectDraftStore';
 import type { ProjectData } from '../../app/types';
 import { completeImportBatch, confirmedImportBatch, deferredImportBatch, verifyImportBatch } from '../../app/lib/projectImportRecovery';
 import { validDraftRecord, initializeProjectDrafts, refreshProjectImport, cachedDraftRecords } from '../../app/lib/projectDraftStore';
+import { expectOperationBlocksUi, queuedProjectPatch } from './support/database-operation';
 
 async function importFile(page: Page, projects: ProjectData[]) {
   await page.locator('input[type=file]').setInputFiles({ name: 'synthetic.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(projects)) });
@@ -196,7 +197,7 @@ test('import defer retains exact batch, refuses failed GET, adopts authoritative
   expect(state.projects).toHaveLength(1); expect(state.projects[0].id).toBe(original.id);
 });
 
-test('successful import rebases later edits and keeps them durably through reload', async ({ page }) => {
+test('import blocks navigation, rebases queued edits and keeps them durably through reload', async ({ page }) => {
   const state = await installLocalEditingMocks(page);
   const original = createNewProject('Later editing'); state.projects = [original] as unknown as Record<string, unknown>[];
   acceptDialogs(page);
@@ -211,13 +212,13 @@ test('successful import rebases later edits and keeps them durably through reloa
   });
   await page.goto('/'); await expect(page.locator('.screen-card')).toHaveCount(1);
   await importFile(page, [incoming(original)]); await expect.poll(() => posts).toBe(1);
-  await page.locator('.screen-card').filter({ hasText: original.name }).click();
-  await page.getByRole('tab', { name: 'Room Type', exact: true }).click();
-  await page.getByPlaceholder('New room type name').fill('Later local 日本語');
-  await page.getByRole('button', { name: 'Create Room Type', exact: true }).click();
+  await expectOperationBlocksUi(page);
+  await page.locator('.screen-card').filter({ hasText: original.name }).evaluate(element => (element as HTMLElement).click());
+  await expect(page.getByPlaceholder('New project name')).toBeVisible();
+  await queuedProjectPatch(page, original.id, { roomTypes: [...sent[0].roomTypes, createNewRoomType('Later local 日本語')] });
   release();
   await expect(page.getByTestId('import-save-message')).toHaveCount(0);
-  await expect(page.locator('.revision-save-status-label')).not.toHaveText('Saved');
+  await expect(page.getByTestId('database-operation-overlay')).toHaveCount(0);
   await expect.poll(async () => (await readNativeDraftRecords(page)).some(record => record.project.roomTypes.some(room => room.name === 'Later local 日本語'))).toBe(true);
   expect(state.projects[0]).toEqual(sent[0]);
   await page.reload();
@@ -302,7 +303,7 @@ test('batch validation rejects missing, duplicate, mutated and mixed-defer recor
   expect(validDraftRecord(legacy)).toBe(true);
 });
 
-test('view change while preparing aborts before UI replacement or POST', async ({ page }) => {
+test('view change is blocked while preparing and the guarded import starts once', async ({ page }) => {
   const state = await installLocalEditingMocks(page);
   const original = createNewProject('Prepare source'); state.projects = [original] as unknown as Record<string, unknown>[];
   const alerts: string[] = [];
@@ -321,10 +322,13 @@ test('view change while preparing aborts before UI replacement or POST', async (
   });
   await importFile(page, [incoming(original)]);
   await expect.poll(() => page.evaluate(() => (window as unknown as { digestStarted: boolean }).digestStarted)).toBe(true);
-  await page.locator('.screen-card').click();
+  await expectOperationBlocksUi(page);
+  await page.locator('.screen-card').evaluate(element => (element as HTMLElement).click());
+  await expect(page.getByPlaceholder('New project name')).toBeVisible();
   await page.evaluate(() => (window as unknown as { releaseDigest: () => void }).releaseDigest());
-  await expect.poll(() => alerts.some(message => message.includes('No import was sent'))).toBe(true);
-  expect(posts).toBe(0); expect(await archives(page)).toHaveLength(0);
+  await expect(page.getByTestId('import-save-message')).toContainText('HTTP 503');
+  expect(alerts.some(message => message.includes('No import was sent'))).toBe(false);
+  expect(posts).toBe(1); expect(await archives(page)).toHaveLength(1);
   expect(state.projects).toEqual([original]);
 });
 
@@ -534,7 +538,7 @@ test('confirmed commit with failed readback is recoverable by Check in the same 
   expect(await archives(page)).toEqual(committed); expect(posts).toBe(1);
 });
 
-test('edits during confirmation readback keep the gate until their latest contents are archived', async ({ page }) => {
+test('confirmation readback blocks UI while queued edits keep the recovery gate until archived', async ({ page }) => {
   const state = await installLocalEditingMocks(page);
   const original = createNewProject('Confirmation later edits'); state.projects = [original] as unknown as Record<string, unknown>[];
   acceptDialogs(page);
@@ -567,10 +571,10 @@ test('edits during confirmation readback keep the gate until their latest conten
   await page.goto('/'); await expect(page.locator('.screen-card')).toHaveCount(1);
   await importFile(page, [incoming(original)]);
   await expect.poll(() => page.evaluate(() => typeof (window as unknown as { releaseImportRead: unknown }).releaseImportRead)).toBe('function');
-  await page.locator('.screen-card').click();
-  await page.getByRole('tab', { name: 'Room Type', exact: true }).click();
-  await page.getByPlaceholder('New room type name').fill('During confirmation 日本語');
-  await page.getByRole('button', { name: 'Create Room Type', exact: true }).click();
+  await expectOperationBlocksUi(page);
+  await page.locator('.screen-card').evaluate(element => (element as HTMLElement).click());
+  await expect(page.getByPlaceholder('New project name')).toBeVisible();
+  await queuedProjectPatch(page, original.id, { roomTypes: [...(state.projects[0] as unknown as ProjectData).roomTypes, createNewRoomType('During confirmation 日本語')] });
   await page.evaluate(() => (window as unknown as { releaseImportRead: () => void }).releaseImportRead());
   await expect(page.getByTestId('import-save-message')).toContainText('local edits changed');
   await page.getByTestId('save-reliability-alert').getByRole('button', { name: 'Check Import Status', exact: true }).click();

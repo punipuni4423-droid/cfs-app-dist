@@ -3,6 +3,7 @@ import { openSaveRecovery } from './support/save-recovery-ui';
 import type { ProjectData } from "../../app/types";
 import { installLocalEditingMocks } from "./support/secure-sharing-mock";
 import { readNativeDraftProject } from "./support/native-project-drafts";
+import { expectOperationBlocksUi, queuedInput } from './support/database-operation';
 
 const currentSave = (page: Page) => page.getByRole("button", { name: "Save current project without a new revision" });
 const title = (page: Page) => page.getByLabel("Title for remark 1", { exact: true });
@@ -60,7 +61,7 @@ async function setup(page: Page, collaborationEnabled = false) {
   return state;
 }
 
-test("Current retains edits made during POST, Undo/Redo and the next save use them", async ({ page }, testInfo) => {
+test("Current blocks UI during POST and retains queued edits through Undo/Redo and the next save", async ({ page }, testInfo) => {
   const state = await setup(page);
   const requests: Array<{ project: ProjectData; expectedUpdatedAt: string }> = [];
   const savedToken = "2030-01-02T03:04:05.000Z";
@@ -79,10 +80,13 @@ test("Current retains edits made during POST, Undo/Redo and the next save use th
     await currentSave(page).click();
     await expect.poll(() => requests.length).toBe(1);
     // Undo groups are deliberately separated by the product's 900 ms interval.
+    await expectOperationBlocksUi(page);
+    await page.keyboard.type('blocked text');
+    await expect(title(page)).toHaveValue('Before request');
     await page.waitForTimeout(1000);
-    await title(page).fill("Typed while saving");
+    await queuedInput(title(page), "Typed while saving");
     await page.waitForTimeout(1000);
-    await body(page).fill("Second field while saving");
+    await queuedInput(body(page), "Second field while saving");
     const response = page.waitForResponse((candidate) => candidate.url().includes("/api/projects") && candidate.request().method() === "POST");
     release();
     await (await response).finished();
@@ -105,7 +109,7 @@ test("Current retains edits made during POST, Undo/Redo and the next save use th
   }
 });
 
-test("New Revision retains keyboard Redo changes during POST and preserves revision metadata through Undo", async ({ page }, testInfo) => {
+test("New Revision blocks keyboard Redo during POST and preserves queued edits and revision metadata", async ({ page }, testInfo) => {
   const state = await setup(page);
   await page.getByRole("tab", { name: "Room Type", exact: true }).click();
   await page.getByPlaceholder("New room type name").fill("T114 Room");
@@ -139,12 +143,15 @@ test("New Revision retains keyboard Redo changes during POST and preserves revis
     await dialog.getByRole("button", { name: "Save Revision", exact: true }).click();
     await expect.poll(() => requests.length).toBe(1);
     expect(requests[0].project.roomTypes[0].revisions).toHaveLength(1);
-    // A real keyboard path remains available while the modal blocks pointer
-    // access to the editor: clicking its heading leaves focus off text inputs.
-    await dialog.getByRole("heading", { name: "Save Revision", exact: true }).click();
-    await page.keyboard.press("Control+y");
+    await expectOperationBlocksUi(page);
+    await expect(title(page)).toHaveValue('Before request');
+    await expect(body(page)).toHaveValue('Original body');
+    // Defensive rebase coverage, independent of the now-blocked user events.
+    await page.waitForTimeout(1000);
+    await queuedInput(title(page), 'Redo title during revision save');
     await expect(title(page)).toHaveValue("Redo title during revision save");
-    await page.keyboard.press("Control+y");
+    await page.waitForTimeout(1000);
+    await queuedInput(body(page), 'Redo body during revision save');
     await expect(body(page)).toHaveValue("Redo body during revision save");
     release();
     await expect(dialog).toBeHidden();
@@ -217,7 +224,7 @@ for (const tab of ["Area", "Fixture"] as const) {
   });
 }
 
-test("Explicit Current save retains keyboard Redo during POST and Finish keeps the later draft", async ({ page }, testInfo) => {
+test("Explicit Current blocks keyboard Redo and Finish during POST, then keeps a queued later draft", async ({ page }, testInfo) => {
   const state = await setup(page, true);
   // An unsaved room also opens the old revision-only guard, so this case
   // specifically detects the later exit race rather than the missing guard.
@@ -248,8 +255,11 @@ test("Explicit Current save retains keyboard Redo during POST and Finish keeps t
     await currentSave(page).click();
     await expect.poll(() => submitted?.remarks?.[0]?.title).toBe("Finish submitted title");
     expect(submitted?.remarks?.[0]?.body).toBe("Original body");
-    await page.locator(".revision-save-status-label").click();
-    await page.keyboard.press("Control+y");
+    await expectOperationBlocksUi(page);
+    await page.getByRole('button', { name: 'Finish editing', exact: true, includeHidden: true }).evaluate(element => (element as HTMLButtonElement).click());
+    await expect(page.getByRole('dialog', { name: 'Finish editing with draft changes?' })).toBeHidden();
+    await expect(body(page)).toHaveValue('Original body');
+    await queuedInput(body(page), 'Redo while finishing');
     await expect(body(page)).toHaveValue("Redo while finishing");
     const response = page.waitForResponse((candidate) => candidate.url().includes("/api/projects") && candidate.request().method() === "POST");
     release();
@@ -308,8 +318,9 @@ for (const outcome of ["success", "failure"] as const) {
     try {
       await currentSave(page).click();
       await expect.poll(() => requestCount).toBe(1);
-      await title(page).fill(`Latest ${outcome} draft title`);
-      await body(page).fill(`Latest ${outcome} draft body`);
+      await expectOperationBlocksUi(page);
+      await queuedInput(title(page), `Latest ${outcome} draft title`);
+      await queuedInput(body(page), `Latest ${outcome} draft body`);
       // Ensure the debounce wrote the newer draft BEFORE the response can
       // clear it (success) or overwrite it with the submitted snapshot (failure).
       await expect.poll(async () => (await readDraft())[0]?.remarks?.[0]?.body).toBe(`Latest ${outcome} draft body`);

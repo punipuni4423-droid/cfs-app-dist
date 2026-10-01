@@ -15,6 +15,7 @@ import { getApiIdentity } from "./apiAccessClient";
 import { finiteFetch, SaveProtocolError } from './projectSaveProtocol';
 import { parseProjectUpdates } from './remoteProjectUpdates';
 import type { CollaborationProjectUpdate } from '../types';
+import { beginDatabaseOperation, endDatabaseOperation, isDatabaseOperationBusy, type DatabaseOperation } from './databaseOperation';
 
 export interface ProjectUpdateObservation {
   workspace: string;
@@ -633,10 +634,12 @@ export function useCollaboration(projectId = ""): CollaborationController {
       window.alert("Enter a display name.");
       return;
     }
+    const operation = beginDatabaseOperation('Registering user…');
+    if (!operation) return;
     setState((current) => ({ ...current, busy: true, message: "Registering user." }));
     try {
       const existing = stateRef.current.user;
-      const response = await fetch("/api/collaboration/users/register", {
+      const response = await fetchWithTimeout("/api/collaboration/users/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: getApiIdentity()?.userId || existing?.id || newId("user"), displayName, email: profile.email.trim() }),
@@ -694,10 +697,11 @@ export function useCollaboration(projectId = ""): CollaborationController {
       startEditingAfterRegistrationRef.current = false;
       setState((current) => ({ ...current, busy: false, message: "User registration failed." }));
       window.alert(error instanceof Error ? error.message : "User registration failed.");
-    }
+    } finally { endDatabaseOperation(operation); }
   }, [applyStatus, authHeaders, refreshStatus, runEditStartRefresh]);
 
   const requestMicrosoftSignIn = useCallback(async (emailHint = ""): Promise<void> => {
+    if (isDatabaseOperationBusy()) return;
     const normalizedHint = emailHint.trim().toLowerCase();
     if (normalizedHint && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedHint)) {
       window.alert("Enter a valid email address.");
@@ -736,11 +740,17 @@ export function useCollaboration(projectId = ""): CollaborationController {
   }, []);
 
   const signOut = useCallback(async (): Promise<void> => {
+    if (isDatabaseOperationBusy()) return;
     authGenerationRef.current++; transitionRef.current++; idleBlockedRef.current = true;
     try {
       if (stateRef.current.mode === "edit") {
-        await releaseEditingLock().catch(() => undefined);
+        const operation = beginDatabaseOperation('Releasing edit access…');
+        if (!operation) return;
+        try { await releaseEditingLock().catch(() => undefined); }
+        finally { endDatabaseOperation(operation); }
       }
+      // External authentication is not a CFS data mutation. Keep the existing
+      // SDK flow out of the modal; its promise has no application deadline.
       await supabaseRef.current?.auth.signOut();
     } finally {
       setState((current) => ({ ...current, mode: "view", accessToken: "", user: null, role: null, lock: null, locks: [], members: [], message: "Signed out." }));
@@ -751,7 +761,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
     if (stateRef.current.role !== "admin") return;
     setState((current) => ({ ...current, busy: true, membersDialogOpen: true, message: "Loading members." }));
     try {
-      const response = await fetch("/api/collaboration/members", { cache: "no-store", headers: authHeaders() });
+      const response = await fetchWithTimeout("/api/collaboration/members", { cache: "no-store", headers: authHeaders() });
       const payload = await parseJsonResponse<{ members: CollaborationMembership[] }>(response);
       setState((current) => ({ ...current, busy: false, members: payload.members, message: "" }));
     } catch (error) {
@@ -765,9 +775,11 @@ export function useCollaboration(projectId = ""): CollaborationController {
 
   const saveMember = useCallback(async (member: { email: string; displayName: string; role: CollaborationRole; active: boolean }): Promise<void> => {
     if (stateRef.current.role !== "admin") return;
+    const operation = beginDatabaseOperation('Saving member settings…');
+    if (!operation) return;
     setState((current) => ({ ...current, busy: true }));
     try {
-      const response = await fetch("/api/collaboration/members", {
+      const response = await fetchWithTimeout("/api/collaboration/members", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(member),
@@ -779,13 +791,13 @@ export function useCollaboration(projectId = ""): CollaborationController {
       const message = error instanceof Error ? error.message : "Could not save the member.";
       setState((current) => ({ ...current, busy: false, message }));
       throw error instanceof Error ? error : new Error(message);
-    }
+    } finally { endDatabaseOperation(operation); }
   }, [authHeaders, openMembersDialog, refreshStatus]);
 
   const startEditing = useCallback(async (): Promise<void> => {
     const current = stateRef.current;
     if (current.authVerificationBlocked) { setState(next => ({ ...next, message: 'Your account needs verification. Sign in again.' })); return; }
-    if (current.busy || finishingRef.current) return;
+    if (current.busy || finishingRef.current || isDatabaseOperationBusy()) return;
     const transition = ++transitionRef.current;
     idleBlockedRef.current = false;
     if (!current.user) {
@@ -797,6 +809,8 @@ export function useCollaboration(projectId = ""): CollaborationController {
       setState((next) => ({ ...next, message: "An Editor or Admin role is required to edit shared CFS projects." }));
       return;
     }
+    const operation = beginDatabaseOperation('Obtaining edit access…');
+    if (!operation) return;
     setState((next) => ({ ...next, busy: true, message: "Checking edit lock." }));
     const updateSequence = ++updateSequenceRef.current, updateGeneration = authGenerationRef.current;
     try {
@@ -823,6 +837,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       setState((next) => ({ ...next, message: error instanceof Error ? error.message : "Could not start editing." }));
     } finally {
       if (transition === transitionRef.current) setState((next) => ({ ...next, busy: false }));
+      endDatabaseOperation(operation);
     }
   }, [applyStatus, authHeaders, identityBody, runEditStartRefresh, acceptProjectUpdates]);
 
@@ -833,6 +848,8 @@ export function useCollaboration(projectId = ""): CollaborationController {
       setState((next) => ({ ...next, message: "An Admin role is required to force-release an edit lock." }));
       return;
     }
+    const operation = beginDatabaseOperation('Releasing edit access…');
+    if (!operation) return;
     setState((next) => ({ ...next, busy: true, message: "Releasing the edit lock." }));
     const updateSequence = ++updateSequenceRef.current, updateTransition = transitionRef.current, updateGeneration = authGenerationRef.current;
     try {
@@ -858,6 +875,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       setState((next) => ({ ...next, message: error instanceof Error ? error.message : "Could not force-release the edit lock." }));
     } finally {
       setState((next) => ({ ...next, busy: false }));
+      endDatabaseOperation(operation);
     }
   }, [applyStatus, authHeaders, identityBody, refreshStatus, acceptProjectUpdates]);
 
@@ -871,10 +889,12 @@ export function useCollaboration(projectId = ""): CollaborationController {
 
   const finishEditing = useCallback(async (options: FinishEditingOptions = {}): Promise<void> => {
     if (!stateRef.current.enabled || stateRef.current.mode !== "edit") return;
+    if (isDatabaseOperationBusy()) return;
     if (finishingRef.current || (options.idle && idleBlockedRef.current)) return;
     finishingRef.current = true;
     if (!options.idle) idleBlockedRef.current = false;
     const transition = transitionRef.current;
+    let operation: DatabaseOperation | null = null;
     try {
     if (!options.bypassGuard && finishGuardRef.current) {
       try {
@@ -886,6 +906,8 @@ export function useCollaboration(projectId = ""): CollaborationController {
       }
     }
     if (transition !== transitionRef.current || stateRef.current.mode !== 'edit') return;
+    operation = beginDatabaseOperation('Finishing editing…');
+    if (!operation) return;
     releasingRef.current = true;
     transitionRef.current++;
     const releaseTransition = transitionRef.current;
@@ -914,7 +936,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       }));
       if (!releaseFailed) await refreshStatus().catch(() => undefined);
     }
-    } finally { finishingRef.current = false; releasingRef.current = false; }
+    } finally { finishingRef.current = false; releasingRef.current = false; if (operation) endDatabaseOperation(operation); }
   }, [applyStatus, refreshStatus, releaseEditingLock]);
 
   const markActivity = useCallback((): void => {
@@ -934,7 +956,7 @@ export function useCollaboration(projectId = ""): CollaborationController {
       if (!current.enabled || releasingRef.current || (current.sharingMode === "supabase" && !current.user)) return;
       const now = Date.now();
       if (current.mode === "edit") {
-        if (!current.busy && !finishingRef.current && !idleBlockedRef.current && now - lastActivityAtRef.current >= current.idleMs) {
+        if (!current.busy && !finishingRef.current && !idleBlockedRef.current && !isDatabaseOperationBusy() && now - lastActivityAtRef.current >= current.idleMs) {
           void finishEditing({ idle: true });
         }
         if (now - lastHeartbeatAtRef.current < current.heartbeatMs || heartbeatInFlightRef.current) return;

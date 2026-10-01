@@ -1218,7 +1218,7 @@ export default function CfsLinkMapPanel({
                   <span>Swimlane map</span>
                   <strong>{graph.summary.edges} current links</strong>
                   <small>
-                    レーンは役割別の概要、カードは連動ルートです。ノードを選ぶと下に接続先が出ます。
+                    Lanes group the tabs by role, and cards show their link routes. Select a node to see its connections below.
                   </small>
                 </div>
               </div>

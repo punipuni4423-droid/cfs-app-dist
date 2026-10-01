@@ -3,6 +3,7 @@ import { installLocalEditingMocks } from './support/secure-sharing-mock';
 import { createNewProject, prepareProjectSave } from '../../app/lib/storage';
 import { appendCommonRevision } from '../../app/lib/projectCommonHistory';
 import { readNativeDraftRecords } from './support/native-project-drafts';
+import { expectOperationBlocksUi } from './support/database-operation';
 
 test('normal project keeps recovery in the toolbar; panel disclosure performs no save or restore', async ({ page }) => {
   const state = await installLocalEditingMocks(page);
@@ -66,7 +67,7 @@ test('a list rename failure does not create a recovery warning in another clean 
   expect(state.projects).toEqual([first, second]);
 });
 
-test('a delayed previous-save confirmation keeps its list display scope after opening another project', async ({ page }) => {
+test('a delayed previous-save confirmation blocks navigation, retains its draft, and keeps feedback scoped after completion', async ({ page }) => {
   const state = await installLocalEditingMocks(page);
   const first = createNewProject('Archived previous save');
   first.remarks = [{ id: 'remark', title: 'Original', body: 'base', hasTable: false, columns: [], rows: [] }];
@@ -83,27 +84,70 @@ test('a delayed previous-save confirmation keeps its list display scope after op
       intent: { before: first, project: sent, expectedUpdatedAt: first.updatedAt, operationId: sent.lastSaveOperation!.id } }));
   }, { first, sent, draft });
   let holdNextRead = false, held = false, release!: () => void, writes = 0;
+  page.on('request', request => {
+    if (/\/api\/(projects|trash)(?:[/?]|$)/.test(request.url()) && request.method() === 'POST') writes++;
+  });
   const gate = new Promise<void>(resolve => { release = resolve; });
   await page.context().route('**/api/projects', async route => {
-    if (route.request().method() !== 'GET') { writes++; return route.fallback(); }
+    if (route.request().method() !== 'GET') return route.fallback();
     if (holdNextRead && !held) { held = true; await gate; }
     return route.fulfill({ json: { projects: state.projects } });
   });
   await page.goto('/');
   await page.getByTestId('save-recovery-toggle').click();
   await page.getByRole('button', { name: 'Check Previous Save', exact: true }).click();
+  const scope = { workspace: `local:${new URL(page.url()).origin}`, owner: 'mock-user', tab: 'synthetic-previous-tab' };
+  const key = JSON.stringify([scope.workspace, scope.owner, first.id, scope.tab]);
+  const originalBytes = JSON.stringify({ key, scope, project: draft, generation: 1,
+    savedAt: '2032-01-01T00:00:01.000Z', baseUpdatedAt: first.updatedAt,
+    intent: { before: first, project: sent, expectedUpdatedAt: first.updatedAt, operationId: sent.lastSaveOperation!.id } });
+  const readFallback = () => page.evaluate(key => localStorage.getItem(`cfs-draft-project-v3:${key}`), key);
+  // Initialization reads fallback records; it does not migrate them to IDB.
+  // Check must preserve the entire original record until a confirmed Recovery exists.
+  expect(await readFallback()).toBe(originalBytes);
   holdNextRead = true;
+  const checkStartedAt = Date.now();
   await page.getByTestId('save-check').click();
   await expect.poll(() => held).toBe(true);
   try {
-    await page.locator('.screen-card').filter({ hasText: other.name }).click();
-    await expect(page.getByTestId('project-backup-download')).toBeVisible();
+    await expectOperationBlocksUi(page);
+    const otherCard = page.locator('.screen-card').filter({ hasText: other.name });
+    const bounds = await otherCard.boundingBox();
+    expect(bounds).not.toBeNull();
+    // Real pointer input hits the modal; explicit DOM click also must not
+    // reach the background navigation handler through window capture.
+    await page.mouse.click(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+    await otherCard.evaluate(element => (element as HTMLElement).click());
+    await expect(otherCard).toBeVisible();
+    await expect(page.getByTestId('project-backup-download')).toHaveCount(0);
+    await expect(page.getByTestId('database-operation-overlay')).toBeVisible();
+    expect(await readFallback()).toBe(originalBytes);
+    expect(writes).toBe(0);
     release();
+    await expect(page.getByTestId('database-operation-overlay')).toHaveCount(0);
     await expect(page.getByTestId('save-check')).toHaveCount(0);
+    const retainedRecords = async () => (await readNativeDraftRecords(page)).filter(record => record.project.id === first.id
+      && record.scope.workspace === scope.workspace && record.scope.owner === scope.owner && record.scope.tab.startsWith('recovery:'));
+    await expect.poll(async () => (await retainedRecords()).length).toBe(1);
+    const retained = (await retainedRecords())[0];
+    expect(retained.key).toBe(JSON.stringify([scope.workspace, scope.owner, first.id, retained.scope.tab]));
+    expect(retained.baseUpdatedAt).toBe(sent.updatedAt);
+    expect('intent' in retained ? retained.intent : undefined).toBeUndefined();
+    // Rebase advances only edit metadata here; compare every project field,
+    // and independently bound the generated timestamp instead of guessing it.
+    const editedAt = Date.parse(retained.project.updatedAt);
+    const priorTime = Math.max(Date.parse(sent.updatedAt), Date.parse(draft.updatedAt)) + 1;
+    expect(editedAt).toBeGreaterThanOrEqual(Math.max(priorTime, checkStartedAt));
+    expect(editedAt).toBeLessThanOrEqual(Math.max(priorTime, Date.now()));
+    expect(retained.project).toEqual(JSON.parse(JSON.stringify({ ...draft, updatedAt: retained.project.updatedAt, lastUpdatedBy: sent.lastUpdatedBy })));
+    expect(await readFallback()).toBeNull();
+    await otherCard.click();
+    await expect(page.getByTestId('project-backup-download')).toBeVisible();
     await expect(page.getByTestId('save-reliability-alert')).toHaveCount(0);
     await page.getByTestId('save-recovery-toggle').click();
     await expect(page.getByTestId('save-recovery-panel')).not.toContainText('The previous save has been verified');
-    await expect.poll(async () => (await readNativeDraftRecords(page)).some(record => record.project.id === first.id && record.project.remarks?.[0]?.body === 'later local draft')).toBe(true);
+    expect(await retainedRecords()).toEqual([retained]);
+    expect(await readFallback()).toBeNull();
     expect(state.projects).toEqual([sent, other]);
     expect(writes).toBe(0);
   } finally { release(); }

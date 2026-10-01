@@ -1432,7 +1432,7 @@ export async function loadProjectsFromDatabase(
 ): Promise<ProjectData[]> {
   if (typeof window === 'undefined') return [];
   try {
-    const response = await fetch('/api/projects', {
+    const response = await finiteFetch('/api/projects', {
       cache: 'no-store',
       signal: options.signal,
       headers: options.accessToken ? { Authorization: `Bearer ${options.accessToken}` } : undefined,
@@ -1481,7 +1481,7 @@ export async function loadTrashFromDatabase(
 ): Promise<TrashData> {
   if (typeof window === 'undefined') return emptyTrashData();
   try {
-    const response = await fetch('/api/trash', {
+    const response = await finiteFetch('/api/trash', {
       cache: 'no-store',
       signal: options.signal,
       headers: options.accessToken ? { Authorization: `Bearer ${options.accessToken}` } : undefined,
@@ -1794,13 +1794,15 @@ export async function cleanupRestoredProjectTrash(
 
 export async function saveTrashToDatabase(
   trash: TrashData,
-  options: { notifyOnError?: boolean; collaboration?: CollaborationSaveIdentity } = {},
+  options: { notifyOnError?: boolean; collaboration?: CollaborationSaveIdentity; isCurrent?: () => boolean } = {},
 ): Promise<void> {
   if (typeof window === 'undefined') return;
   const notifyOnError = options.notifyOnError ?? true;
+  const isCurrent = options.isCurrent ?? (() => true);
+  if (!isCurrent()) throw new Error('The user has changed. Check Trash again.');
   saveLocalTrash(trash);
   try {
-    const response = await fetch('/api/trash', {
+    const response = await finiteFetch('/api/trash', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...collaborationSaveHeaders(options.collaboration) },
       body: JSON.stringify({ trash, expectedUpdatedAt: trashServerUpdatedAt }),
@@ -1809,10 +1811,11 @@ export async function saveTrashToDatabase(
       throw new Error(`POST /api/trash failed: ${response.status}`);
     }
     const result = await response.json();
+    if (!isCurrent()) throw new Error('The user has changed. Check Trash again.');
     trashServerUpdatedAt = typeof result.updatedAt === 'string' ? result.updatedAt : undefined;
   } catch (error) {
     console.error('Failed to save trash to database.', error);
-    if (notifyOnError) {
+    if (notifyOnError && isCurrent()) {
       window.alert(
         'Failed to save the trash folder. Check the saved state before restarting the app.',
       );

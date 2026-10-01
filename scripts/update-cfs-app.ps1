@@ -61,6 +61,8 @@ function Write-UpdateStatus {
   if ($ExpectedHead) { $payload['expectedHead'] = $ExpectedHead }
   $logWarning = Get-Variable -Name CfsLogWriteWarning -Scope Script -ErrorAction SilentlyContinue
   if ($logWarning) { $payload['logWarning'] = [string]$logWarning.Value }
+  $writerDiagnostics = Get-Variable -Name CfsWriterInventoryDiagnostics -Scope Script -ErrorAction SilentlyContinue
+  if ($writerDiagnostics -and @($writerDiagnostics.Value).Count -gt 0) { $payload['writerInventoryDiagnostics'] = @($writerDiagnostics.Value) }
   if ($UpdateError) {
     # Keep a shallow diagnostic: serializing ErrorRecord itself traverses large
     # invocation/session objects and can hide the original failure again.
@@ -251,6 +253,9 @@ function Start-CfsAppServer {
   $env:HOSTNAME = $HostName
   $env:CFS_APP_DIR = $appPath
   $env:NODE_ENV = 'production'
+  # Shared by normal startup and failure recovery. Recheck after runtime
+  # preparation, immediately before starting any verified app writer.
+  Assert-CfsWritersStopped -AppRoot $appPath -Port $Port
   $script:RestartedProcess = Start-Process -FilePath $node -ArgumentList ('"' + $entry + '"') -WorkingDirectory $appPath -RedirectStandardOutput (Join-Path $appPath ("start-" + $Port + ".out.log")) -RedirectStandardError (Join-Path $appPath ("start-" + $Port + ".err.log")) -WindowStyle Hidden -PassThru
 }
 

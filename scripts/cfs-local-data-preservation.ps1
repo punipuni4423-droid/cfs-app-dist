@@ -160,9 +160,14 @@ function Assert-CfsDataLocksStopped {
 
 function Get-CfsProcessById {
   param([int]$ProcessId)
-  try { return Get-Process -Id $ProcessId -ErrorAction Stop }
+  try {
+    $process = Get-Process -Id $ProcessId -ErrorAction Stop
+    if ($null -eq $process) { throw 'Process lookup returned no identity without a verified absence error.' }
+    return $process
+  }
   catch {
-    if ($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId*') { return $null }
+    if ($_.FullyQualifiedErrorId -eq 'NoProcessFoundForGivenId,Microsoft.PowerShell.Commands.GetProcessCommand' -and
+        $_.CategoryInfo.Category -eq [Management.Automation.ErrorCategory]::ObjectNotFound) { return $null }
     throw
   }
 }
@@ -174,20 +179,100 @@ function Get-CfsPortListeners {
   return @(Get-NetTCPConnection -ErrorAction Stop | Where-Object { $_.State -eq 'Listen' -and $_.LocalPort -eq $Port })
 }
 
+function Add-CfsWriterInventoryDiagnostic {
+  param([hashtable]$Record)
+  # Only caller-selected scalar identity fields, never command lines or arbitrary
+  # exception messages. Diagnostic I/O must not decide whether a writer is safe.
+  try {
+    $Record['observedAt'] = [DateTime]::UtcNow.ToString('o')
+    $diagnostic = [pscustomobject]$Record
+    $previous = Get-Variable -Name CfsWriterInventoryDiagnostics -Scope Script -ErrorAction SilentlyContinue
+    $items = if ($previous) { @($previous.Value) } else { @() }
+    $script:CfsWriterInventoryDiagnostics = @($items | Select-Object -Last 31) + @($diagnostic)
+    if (Get-Command Write-Log -CommandType Function -ErrorAction SilentlyContinue) {
+      Write-Log ('Writer inventory: ' + ($diagnostic | ConvertTo-Json -Depth 3 -Compress))
+    }
+  } catch { } # The original safety check/exception is authoritative.
+}
+
+function Get-CfsWriterObservation {
+  param([object]$Candidate)
+  $processNumber = 0; $parentNumber = 0
+  $idProperty = $Candidate.PSObject.Properties['ProcessId']
+  $parentProperty = $Candidate.PSObject.Properties['ParentProcessId']
+  $commandProperty = $Candidate.PSObject.Properties['CommandLine']
+  $creationProperty = $Candidate.PSObject.Properties['CreationDate']
+  if ($idProperty) { $null = [int]::TryParse([string]$idProperty.Value, [ref]$processNumber) }
+  if ($parentProperty) { $null = [int]::TryParse([string]$parentProperty.Value, [ref]$parentNumber) }
+  $missing = @()
+  if ($processNumber -le 0) { $missing += 'ProcessId' }
+  if (-not $commandProperty -or [string]::IsNullOrWhiteSpace([string]$commandProperty.Value)) { $missing += 'CommandLine' }
+  $created = $null
+  if ($creationProperty -and $creationProperty.Value -is [datetime]) { $created = $creationProperty.Value.ToUniversalTime().ToString('o') }
+  else { $missing += 'CreationDate' }
+  return [pscustomobject]@{ pid = $processNumber; parentPid = $parentNumber; creationDate = $created; missingFields = ($missing -join ',') }
+}
+
 function Get-CfsAppWriters {
   param([string]$AppRoot)
   $root = (Assert-CfsPlainPath -Path $AppRoot).TrimEnd('\', '/')
   # Match the exact app path boundary (both slash styles), never just its name.
   $patterns = @([regex]::Escape($root + '\'), [regex]::Escape($root.Replace('\', '/') + '/'))
-  $candidates = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop)
-  foreach ($candidate in $candidates) {
-    # CIM can succeed but hide another user's command line. Such a process
-    # could be another writer for this app; absence cannot safely be inferred.
-    if ([string]::IsNullOrWhiteSpace([string]$candidate.CommandLine) -or $null -eq $candidate.CreationDate) {
-      throw 'A Node process cannot be identified. Writer inventory is incomplete; maintenance was refused.'
+  $pending = @{}
+  $lastUnknown = $null
+  $script:CfsWriterInventoryDiagnostics = @()
+  # At most three complete queries including the first, and two 100ms waits.
+  # OperationTimeoutSec bounds each CIM operation, not a hard wall-clock SLA.
+  for ($observation = 1; $observation -le 3; $observation++) {
+    try {
+      $candidates = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -OperationTimeoutSec 2 -ErrorAction Stop)
+    } catch {
+      Add-CfsWriterInventoryDiagnostic @{ phase = 'enumerate'; observation = $observation; result = 'query-error'; exceptionType = $_.Exception.GetType().FullName; hResult = $_.Exception.HResult; errorCode = 'CimQueryFailed'; category = [string]$_.CategoryInfo.Category }
+      throw
     }
+    $incomplete = $false
+    foreach ($candidate in $candidates) {
+      $identity = Get-CfsWriterObservation $candidate
+      if ($identity.missingFields) {
+        $incomplete = $true; $lastUnknown = $identity
+        Add-CfsWriterInventoryDiagnostic @{ phase = 'enumerate'; observation = $observation; pid = $identity.pid; parentPid = $identity.parentPid; creationDate = $identity.creationDate; missingFields = $identity.missingFields; result = 'incomplete' }
+        if ($identity.pid -le 0) { throw 'A Node process cannot be identified. Writer inventory has no usable PID; maintenance was refused.' }
+        if (-not $pending.ContainsKey($identity.pid)) { $pending[$identity.pid] = $identity }
+      } elseif ($pending.ContainsKey($identity.pid)) {
+        $previous = $pending[$identity.pid]
+        $result = if (-not $previous.creationDate) { 'complete-identity-established' } elseif ($previous.creationDate -ceq $identity.creationDate) { 'complete-same-identity' } else { 'complete-new-identity' }
+        Add-CfsWriterInventoryDiagnostic @{ phase = 'enumerate'; observation = $observation; pid = $identity.pid; parentPid = $identity.parentPid; creationDate = $identity.creationDate; missingFields = ''; result = $result }
+        # A reused PID is represented only by this new, complete snapshot row.
+        # Stop-CfsDataWriters still binds a handle and rechecks before stopping.
+        $pending.Remove($identity.pid)
+      }
+    }
+    foreach ($processNumber in @($pending.Keys)) {
+      $identity = $pending[$processNumber]
+      try { $process = Get-CfsProcessById -ProcessId $processNumber }
+      catch {
+        Add-CfsWriterInventoryDiagnostic @{ phase = 'process-probe'; observation = $observation; pid = $identity.pid; parentPid = $identity.parentPid; missingFields = $identity.missingFields; result = 'query-error'; exceptionType = $_.Exception.GetType().FullName; hResult = $_.Exception.HResult; errorCode = 'ProcessProbeFailed'; category = [string]$_.CategoryInfo.Category }
+        throw
+      }
+      if ($null -eq $process) {
+        Add-CfsWriterInventoryDiagnostic @{ phase = 'process-probe'; observation = $observation; pid = $identity.pid; parentPid = $identity.parentPid; missingFields = $identity.missingFields; result = 'NoProcessFoundForGivenId' }
+        $pending.Remove($processNumber)
+      } else {
+        Add-CfsWriterInventoryDiagnostic @{ phase = 'process-probe'; observation = $observation; pid = $identity.pid; parentPid = $identity.parentPid; missingFields = $identity.missingFields; result = 'alive-unresolved' }
+        if ($process -is [IDisposable]) { $process.Dispose() }
+      }
+    }
+    # Missing from a later snapshot is insufficient: every past unknown must
+    # be fully reidentified or positively absent. Never return a partial query.
+    if (-not $incomplete -and $pending.Count -eq 0) {
+      return @($candidates | Where-Object { $_.CommandLine -match $patterns[0] -or $_.CommandLine -match $patterns[1] })
+    }
+    if ($observation -lt 3) { Start-Sleep -Milliseconds 100 }
   }
-  return @($candidates | Where-Object { $_.CommandLine -match $patterns[0] -or $_.CommandLine -match $patterns[1] })
+  $unresolved = if ($pending.Count -gt 0) { @($pending.Values | Sort-Object pid)[0] } else { $lastUnknown }
+  $reason = if ($pending.Count -gt 0) { 'unresolved' } else { 'final-inventory-incomplete' }
+  Add-CfsWriterInventoryDiagnostic @{ phase = 'final'; observation = 3; pid = $unresolved.pid; parentPid = $unresolved.parentPid; missingFields = $unresolved.missingFields; result = $reason }
+  throw ("A Node process cannot be identified. Writer inventory is incomplete; maintenance was refused. [pid={0}; parentPid={1}; missingFields={2}; observations=3; phase=enumerate; result={3}; observedAt={4}]" -f $unresolved.pid, $unresolved.parentPid, $unresolved.missingFields, $reason, [DateTime]::UtcNow.ToString('o'))
 }
 
 function Assert-CfsWritersStopped {

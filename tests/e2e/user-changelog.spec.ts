@@ -135,7 +135,10 @@ test('retained history renders newest five releases with the exact remaining cou
     for (const line of entry.title.split(' ／ ')) await expect(article.locator('h3')).toContainText(line);
     for(const item of entry.items) for (const line of item.split(' ／ ')) await expect(article.getByText(line,{exact:true})).toBeVisible();
   }
-  if(entries.length>5) await expect(region(page)).toContainText(`${entries.length-5} more earlier updates not shown.`);
+  if(entries.length>5) {
+    const remaining = entries.length-5;
+    await expect(region(page)).toContainText(`${remaining} more earlier ${remaining === 1 ? 'update' : 'updates'} not shown.`);
+  }
   else await expect(region(page).locator('.update-highlights-more')).toHaveCount(0);
 });
 
