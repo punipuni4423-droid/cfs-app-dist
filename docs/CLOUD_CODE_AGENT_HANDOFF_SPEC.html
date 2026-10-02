@@ -254,7 +254,7 @@
             </tr>
             <tr>
               <td>保存</td>
-              <td>プロジェクト本体は <code>/api/projects</code> 経由で <code>data/projects.json</code> に保存。Trash は <code>/api/trash</code> 経由で <code>data/trash/trash.json</code>。プロジェクト削除は <code>/api/projects/delete</code> の単一処理で退避と削除を確定。ローカルは共通ロックと復旧記録、共有は単一DBトランザクションで保護する。</td>
+              <td>プロジェクト本体は <code>/api/projects</code> 経由で <code>data/projects.json</code> に保存。Trash は <code>/api/trash</code> 経由で <code>data/trash/trash.json</code>。プロジェクト削除は <code>/api/projects/delete</code>、Room Type削除は <code>/api/projects/room-types/delete</code> の単一処理で原本の退避と削除を確定。Room Typeの未保存編集は先に保存し、Revision履歴を含む全文のTrashコピーと案件をreadbackで照合する。ローカルは共通ロックと復旧記録、共有は単一DBトランザクションで保護する。通常保存の履歴保護は解除しない。</td>
               <td>ブラウザ localStorage はフォールバック/設定/表示設定にも使う。古い docs の「localStorage のみ」は現在の正ではない。</td>
             </tr>
             <tr>

@@ -305,7 +305,7 @@ interface ProjectScreenProps {
   onDiscardMyUnsavedChanges: () => Promise<boolean>;
   onRequestRestore: (source: RestoreSource) => void;
   onSaveProjectRevision: (mutate: (project: ProjectData) => ProjectData | null) => Promise<boolean>;
-  onMoveRoomTypeToTrash: (project: ProjectData, roomType: RoomType) => boolean;
+  onMoveRoomTypeToTrash: (project: ProjectData, roomType: RoomType) => Promise<boolean>;
   saveStatus:
     | "idle"
     | "savingDraft"
@@ -1467,7 +1467,7 @@ export default function ProjectScreen({
   }, [numericRevisionValue]);
 
   const handleDeleteRoomType = useCallback(
-    (id: string): void => {
+    async (id: string): Promise<void> => {
       const roomType = project.roomTypes.find((rt) => rt.id === id);
       if (!roomType) return;
       if (
@@ -1477,17 +1477,13 @@ export default function ProjectScreen({
       ) {
         return;
       }
-      if (!onMoveRoomTypeToTrash(project, roomType)) return;
-      updateProject((p) => ({
-        ...p,
-        roomTypes: p.roomTypes.filter((rt) => rt.id !== id),
-      }));
+      if (!await onMoveRoomTypeToTrash(project, roomType)) return;
       if (activeRoomTypeId === id) {
         setActiveRoomTypeId("");
         setActiveTab("rooms");
       }
     },
-    [updateProject, activeRoomTypeId, onMoveRoomTypeToTrash, project],
+    [activeRoomTypeId, onMoveRoomTypeToTrash, project],
   );
 
   const handleSelectRoomType = useCallback((id: string): void => {

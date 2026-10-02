@@ -28,6 +28,10 @@ import {
   renameProjectInDatabase,
   saveTrashToDatabase,
   deleteProjectToTrash,
+  prepareRoomTypeDelete,
+  deleteRoomTypeToTrash,
+  confirmRoomTypeDelete,
+  type RoomTypeDeleteIntent,
   type CollaborationSaveIdentity,
 } from "./lib/storage";
 import ProjectListScreen from "./components/ProjectListScreen";
@@ -320,6 +324,7 @@ export default function Home() {
   const [notificationDraftReady, setNotificationDraftReady] = useState(false);
   const explicitSavePending = useRef(false);
   const deletePending = useRef(false);
+  const roomDeletePending = useRef<{ epoch: number; intent: RoomTypeDeleteIntent } | null>(null);
   const [deletingProject, setDeletingProject] = useState(false);
   const [saveReceipt, setSaveReceipt] = useState<ProjectSaveReceipt | null>(null);
   const [draftStatus, setDraftStatus] = useState(() => getDraftStatus(activeProjectId));
@@ -1068,26 +1073,66 @@ export default function Home() {
     [beginOperation, collaboration.editIdentity, pendingRestore, projects, requireEditMode, trash, runProjectRestore, reportSaveFeedback, captureSaveFeedbackScope],
   );
 
-  const handleMoveRoomTypeToTrash = useCallback((project: ProjectData, roomType: RoomType): boolean => {
+  const handleMoveRoomTypeToTrash = useCallback(async (project: ProjectData, roomType: RoomType): Promise<boolean> => {
     if (!requireEditMode()) return false;
+    const epoch = ownerEpoch.current, owner = draftScope();
+    const before = projectsRef.current.find(item => item.id === project.id);
+    const persisted = persistedProjects.current.get(project.id);
+    if (!owner || !before || !persisted || hasProjectChanges(before, persisted) || explicitSavePending.current || pendingSave || pendingRestore
+      || importInFlight.current || restoreInFlight.current
+      || cachedDraftRecords().some(record => record.project.id === project.id && (record.intent || record.importRecovery))) {
+      window.alert('Save your changes and resolve any pending save or recovery before deleting a Room Type.');
+      return false;
+    }
+    if (trashSaveTimer.current || trashSavesInFlight.current.size) {
+      window.alert('Another Trash update is in progress. Wait for it to finish before deleting a Room Type.');
+      return false;
+    }
+    const pending = roomDeletePending.current?.epoch === epoch ? roomDeletePending.current.intent : undefined;
+    if (pending && (pending.projectId !== project.id || pending.roomTypeId !== roomType.id)) {
+      window.alert('A previous Room Type deletion is unconfirmed. Reload to check the project and Trash before another deletion.');
+      return false;
+    }
     const operation = beginOperation('Moving Room Type to Trash…');
     if (!operation) return false;
-    trashOperation.current = operation;
-    setTrash((current) => ({
-      ...current,
-      roomTypes: [
-        {
-          id: createAppId(),
-          deletedAt: new Date().toISOString(),
-          projectId: project.id,
-          projectName: project.name,
-          roomType: cloneData(roomType),
-        },
-        ...current.roomTypes,
-      ],
-    }));
-    return true;
-  }, [beginOperation, requireEditMode]);
+    const current = () => epoch === ownerEpoch.current && owner === draftScope();
+    setSaveStatus('savingDraft');
+    try {
+      const intent = pending ?? await prepareRoomTypeDelete(persisted, roomType.id, collaboration.editIdentity);
+      if (!current()) return false;
+      if (projectsRef.current.find(item => item.id === project.id) !== before) throw new Error('The draft changed while checking the deletion. Save your changes before deleting the Room Type.');
+      roomDeletePending.current = { epoch, intent };
+      const saved = pending ? await confirmRoomTypeDelete(intent, collaboration.editIdentity, current)
+        : await deleteRoomTypeToTrash(intent, collaboration.editIdentity, current);
+      if (!current()) return false;
+      if (projectsRef.current.find(item => item.id === project.id) !== before) throw new Error('Newer edits were retained. Reload to check the deletion before saving.');
+      draftCheckpointEpoch.current.set(project.id, (draftCheckpointEpoch.current.get(project.id) ?? 0) + 1);
+      await discardCurrentTabDraft(project.id, owner);
+      if (!current()) return false;
+      const latest = projectsRef.current.find(item => item.id === project.id);
+      if (latest !== before) {
+        if (latest) await checkpointProject(latest, persistedProjectUpdatedAt.current.get(project.id) ?? null, null, owner);
+        throw new Error('Newer edits were retained. Reload to check the deletion before saving.');
+      }
+      rememberPersistedProject(saved.project);
+      skipNextSave.current = true;
+      skipNextTrashSave.current = true;
+      setTrash(saved.trash);
+      setProjects(latest => latest.map(item => item.id === project.id ? saved.project : item));
+      setRecoveryRecords(cachedDraftRecords());
+      roomDeletePending.current = null;
+      setSaveStatus('draftSaved');
+      setLastSavedAt(formatStatusTime());
+      return true;
+    } catch (error) {
+      if (current()) {
+        if (!pending && error instanceof SaveProtocolError && !error.unknown) roomDeletePending.current = null;
+        setSaveStatus('error');
+        window.alert(`${error instanceof Error ? error.message : 'Deletion could not be confirmed.'}\nReload to check the Room Type and Trash. Your displayed data is retained.`);
+      }
+      return false;
+    } finally { endDatabaseOperation(operation); }
+  }, [beginOperation, collaboration.editIdentity, pendingRestore, pendingSave, rememberPersistedProject, requireEditMode, setProjects]);
 
   const handleRestoreRoomType = useCallback(
     (trashItemId: string): void => {

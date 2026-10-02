@@ -1,4 +1,4 @@
-import { capturedProjectBase, registerProjectBases, type ProjectBase, type RestoreSource } from './projectBase';
+import { capturedProjectBase, registerProjectBases, validProjectBase, type ProjectBase, type RestoreSource } from './projectBase';
 import type {
   CfsCircuit,
   CfsRowDisplaySettings,
@@ -42,7 +42,7 @@ import { normalizeSwitchPriorityFunctions } from './switchSync';
 import { normalizeProjectRoomTypeCircuitIds } from './roomTypeSync';
 import { collectionLosses, migrationMessage, migrationReport, setMigrationReviewPending, type MigrationReport } from './migrationSafety';
 import { cachedProjectDrafts, checkpointProject } from './projectDraftStore';
-import { finiteFetch, matchesSaveIntent, prepareSaveProject, projectFingerprint, SAVE_PROTOCOL_VERSION, SaveProtocolError, saveError } from './projectSaveProtocol';
+import { finiteFetch, matchesSaveIntent, prepareSaveProject, projectFingerprint, saveContent, SAVE_PROTOCOL_VERSION, SaveProtocolError, saveError } from './projectSaveProtocol';
 import { validCommonHistory } from './projectCommonHistory';
 import { canonicalJson } from './canonicalJson';
 
@@ -1711,6 +1711,82 @@ export async function deleteProjectToTrash(
   saveLocalTrash(trash);
   clearLocalProjectDraft(projectId);
   return { projects, trash };
+}
+
+export interface RoomTypeDeleteIntent {
+  projectId: string;
+  roomTypeId: string;
+  operationId: string;
+  base: ProjectBase;
+  /** Exact server original, including unknown fields and revision snapshot bytes. */
+  before: ProjectData;
+}
+
+async function readRoomTypeDeleteProject(projectId: string, collaboration?: CollaborationSaveIdentity) {
+  const response = await finiteFetch(`/api/projects/room-types/delete?projectId=${encodeURIComponent(projectId)}`,
+    { cache: 'no-store', headers: collaborationSaveHeaders(collaboration) }, 15_000);
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw saveError(response.status, body?.code);
+  if (!body?.project || body.project.id !== projectId || !Array.isArray(body.project.roomTypes)
+    || !validProjectBase(body.base) || body.base.updatedAt !== body.project.updatedAt) {
+    throw new SaveProtocolError('ROOM_DELETE_RESPONSE_INVALID', 'The Room Type deletion base could not be verified.', undefined, true);
+  }
+  return body as { project: ProjectData; base: ProjectBase };
+}
+
+export async function prepareRoomTypeDelete(before: ProjectData, roomTypeId: string, collaboration?: CollaborationSaveIdentity): Promise<RoomTypeDeleteIntent> {
+  const snapshot = await readRoomTypeDeleteProject(before.id, collaboration);
+  const displayed = migrateProjectsPayload([snapshot.project])[0];
+  if (!displayed || snapshot.project.updatedAt !== before.updatedAt
+    || canonicalJson(saveContent(displayed)) !== canonicalJson(saveContent(before))
+    || snapshot.project.roomTypes.filter(room => room?.id === roomTypeId).length !== 1) {
+    throw new SaveProtocolError('PROJECT_CONFLICT', 'Save your changes or reload the latest project before deleting a Room Type.', 409);
+  }
+  return { projectId: before.id, roomTypeId, operationId: createAppId(), base: snapshot.base, before: snapshot.project };
+}
+
+/** Read-only recovery. An unknown reply never authorizes another deletion POST. */
+export async function confirmRoomTypeDelete(intent: RoomTypeDeleteIntent, collaboration?: CollaborationSaveIdentity,
+  isCurrent: () => boolean = () => true): Promise<{ project: ProjectData; trash: TrashData }> {
+  if (!isCurrent()) throw new Error('The user has changed.');
+  const snapshot = await readRoomTypeDeleteProject(intent.projectId, collaboration);
+  const trashSnapshot = await readRestoreTrashSnapshot(collaboration, isCurrent);
+  const original = intent.before.roomTypes.filter(room => room.id === intent.roomTypeId);
+  const items = trashSnapshot.trash.roomTypes.filter(item => item.id === intent.operationId);
+  const expected = { ...intent.before, roomTypes: intent.before.roomTypes.filter(room => room.id !== intent.roomTypeId) };
+  if (original.length !== 1 || items.length !== 1 || items[0].projectId !== intent.projectId
+    || items[0].projectName !== intent.before.name || canonicalJson(items[0].roomType) !== canonicalJson(original[0])
+    || snapshot.project.roomTypes.some(room => room.id === intent.roomTypeId)
+    || canonicalJson(saveContent(snapshot.project)) !== canonicalJson(saveContent(expected))) {
+    throw new SaveProtocolError('ROOM_DELETE_RESULT_UNKNOWN', 'Deletion is not yet verified. Reload to check the Room Type and Trash. No deletion was resent.', undefined, true);
+  }
+  if (!isCurrent()) throw new Error('The user has changed.');
+  const project = migrateProjectsPayload([snapshot.project])[0];
+  if (!project) throw new SaveProtocolError('ROOM_DELETE_RESPONSE_INVALID', 'The deleted Room Type could not be verified.', undefined, true);
+  registerProjectBases([project], { bases: { [project.id]: snapshot.base } });
+  trashServerUpdatedAt = trashSnapshot.updatedAt;
+  const trash = migrateTrashPayload(trashSnapshot);
+  saveLocalTrash(trash);
+  return { project, trash };
+}
+
+export async function deleteRoomTypeToTrash(intent: RoomTypeDeleteIntent, collaboration?: CollaborationSaveIdentity,
+  isCurrent: () => boolean = () => true): Promise<{ project: ProjectData; trash: TrashData }> {
+  if (!isCurrent()) throw new Error('The user has changed.');
+  const { before: _before, ...request } = intent;
+  const response = await finiteFetch('/api/projects/room-types/delete', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...collaborationSaveHeaders(collaboration) }, body: JSON.stringify(request),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw saveError(response.status, body?.code);
+  if (body?.ok !== true || body.operationId !== intent.operationId) {
+    throw new SaveProtocolError('ROOM_DELETE_RESPONSE_INVALID', 'The deletion receipt could not be verified. Check the Room Type and Trash.', undefined, true);
+  }
+  try { return await confirmRoomTypeDelete(intent, collaboration, isCurrent); }
+  catch {
+    // The mutation was accepted. Even a later 401/409 is not a rejected POST.
+    throw new SaveProtocolError('ROOM_DELETE_RESULT_UNKNOWN', 'The deletion was submitted but readback could not be verified. Reload to check the Room Type and Trash.', undefined, true);
+  }
 }
 
 async function readRestoreTrashSnapshot(collaboration?: CollaborationSaveIdentity, isCurrent: () => boolean = () => true) {

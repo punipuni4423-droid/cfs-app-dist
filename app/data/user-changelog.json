@@ -1,6 +1,16 @@
 {
   "entries": [
     {
+      "id": "2026-10-02-room-type-trash",
+      "date": "2026-10-02",
+      "title": "Reliable Room Type deletion ／ Room Type削除の改善",
+      "items": [
+        "Room Types with revision history can now be moved to Trash. Their complete saved contents and history are retained together. ／ Revision履歴のあるRoom TypeをTrashへ移せるようにしました。保存済みの内容と履歴をまとめて保管します。",
+        "Save pending edits with Current or New Rev before deleting a Room Type. The screen waits until the project and Trash have been checked. ／ Room Typeを削除する前に、未保存の編集をCurrentまたはNew Revで保存してください。案件とTrashの確認が終わるまで画面操作を一時停止します。",
+        "If the result cannot be confirmed, the original remains visible. Repeating the action checks the result without sending another deletion. Reload to check the project and Trash if verification still fails. ／ 結果を確認できない場合は元の表示を残します。同じ操作を繰り返しても削除は再送せず、結果だけを確認します。確認できなければ再読込して案件とTrashを確認してください。"
+      ]
+    },
+    {
       "id": "2026-10-02-update-diagnostics",
       "date": "2026-10-02",
       "title": "Update monitoring and diagnostics ／ 更新の監視と診断",

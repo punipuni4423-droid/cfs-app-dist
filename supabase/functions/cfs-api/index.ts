@@ -689,6 +689,27 @@ async function deleteProject(body: Record<string, unknown>, membership: Membersh
   return { ...asRecord(saved.data), ...await readProjects(membership) };
 }
 
+async function deleteRoomType(body: Record<string, unknown>, membership: Membership) {
+  const projectId = normalizeIdentifier(body.projectId, 'Project ID');
+  const roomTypeId = normalizeIdentifier(body.roomTypeId, 'Room Type ID');
+  const operationId = typeof body.operationId === 'string' ? body.operationId : '';
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operationId)) {
+    throw Object.assign(new Error('A deletion operation ID is required.'), { status: 400 });
+  }
+  const { sessionId, stateId } = await assertLease({ ...body, projectId }, membership);
+  const saved = await admin.rpc('delete_cfs_room_type_to_trash', {
+    p_state_id: stateId, p_user_id: membership.auth_user_id, p_session_id: sessionId,
+    p_user_name: membership.display_name || membership.email, p_project_id: projectId,
+    p_room_type_id: roomTypeId, p_operation_id: operationId, p_base: body.base,
+  });
+  if (saved.error) {
+    if (saved.error.message?.includes('CFS_PROJECT_CONFLICT')) throw projectConflictError(await readProject(projectId).catch(() => null));
+    throwTrashMutationError(saved.error);
+  }
+  // Small transaction receipt; the client verifies project/Trash via readback.
+  return saved.data;
+}
+
 function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
@@ -821,6 +842,7 @@ async function handleAction(action: string, body: Record<string, unknown>, membe
   if (action === "project.rename") return renameProject(body, membership);
   if (action === "project.save") return saveProject(body, membership);
   if (action === "projects.delete") return deleteProject(body, membership);
+  if (action === 'room-types.delete') return deleteRoomType(body, membership);
   if (action === "trash.read") return { ok: true, ...await readTrashSnapshot() };
   if (action === "trash.save") return saveTrash(body, membership);
   if (action === "members.list") return memberList(membership);
