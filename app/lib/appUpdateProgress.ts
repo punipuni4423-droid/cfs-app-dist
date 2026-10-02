@@ -21,6 +21,7 @@ export interface AppUpdateStatus {
   appDir?: string;
   gitPath?: string;
   lastRun?: {
+    observability?: AppUpdateObservation;
     state?: string;
     currentStep?: string;
     progress?: number;
@@ -45,6 +46,7 @@ export function isAppUpdateStatus(value: unknown): value is AppUpdateStatus {
   if (item.lastRun !== undefined) {
     if (!item.lastRun || typeof item.lastRun !== "object" || Array.isArray(item.lastRun)) return false;
     const run = item.lastRun as Record<string, unknown>;
+    if (run.observability !== undefined && !parseUpdateObservation(run.observability)) return false;
     for (const key of ["state", "currentStep", "message", "startedAt", "updatedAt"]) {
       if (run[key] !== undefined && typeof run[key] !== "string") return false;
     }
@@ -75,5 +77,6 @@ export function remainingUpdateEstimate(step: string | undefined, phaseElapsed: 
   const remaining = Math.max(0, current - phaseElapsed) + PHASES.slice(index + 1).reduce((sum, phase) => sum + expected(phase), 0);
   const minimum = Math.max(1, Math.ceil(remaining * 0.5 / 60));
   const maximum = Math.max(minimum + 1, Math.ceil(remaining * 2 / 60));
-  return `Estimated time remaining: about ${minimum}–${maximum} min (varies by PC and connection)`;
+  return `Time reference for remaining stages: about ${minimum}–${maximum} min (not a measured prediction; varies by PC and connection)`;
 }
+import { parseUpdateObservation, type AppUpdateObservation } from "./appUpdateObservation";

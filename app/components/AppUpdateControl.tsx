@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAppUpdateStatus, remainingUpdateEstimate, UPDATE_STEP_SECONDS, type AppUpdateStatus } from "../lib/appUpdateProgress";
 import { isCalendarAppVersion } from "../lib/appBuildVersion";
+import { updateObservationAllowsTimeReference, updateObservationMessage } from "../lib/appUpdateObservation";
 
 const UPDATE_SESSION_KEY = "cfs-self-update-active";
 const UPDATE_STARTED_KEY = "cfs-self-update-started-at";
@@ -168,6 +169,11 @@ function overlayMessage(status: AppUpdateStatus | null, updateSessionActive: boo
   return "Please do not edit, import, export, or save while the update is running.";
 }
 
+function cleanupNeedsConfirmation(status: AppUpdateStatus | null): boolean {
+  const cleanup = status?.lastRun?.observability?.cleanupState;
+  return cleanup === "pending" || cleanup === "unverifiable";
+}
+
 export default function AppUpdateControl() {
   const [status, setStatus] = useState<AppUpdateStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -206,7 +212,8 @@ export default function AppUpdateControl() {
     return parts.join(" ");
   }, [applyStarted, status, updateSessionActive]);
   const message = statusMessage(status, applyStarted);
-  const overlayVisible = updateSessionActive || status?.lastRun?.state === "running";
+  const cleanupUnverified = cleanupNeedsConfirmation(status);
+  const overlayVisible = updateSessionActive || status?.lastRun?.state === "running" || cleanupUnverified;
   const stepLabel = runStepLabel(status, updateSessionActive);
 
   // Percentages are the last server checkpoint, never elapsed-time animation.
@@ -219,7 +226,7 @@ export default function AppUpdateControl() {
   const elapsedText = `Elapsed: ${formatElapsed(elapsedSeconds)}`;
   const currentStep = status?.lastRun?.currentStep;
   const awaitingStart = !currentStep || ["queued", "launch", "start"].includes(currentStep);
-  const estimateText = remainingUpdateEstimate(currentStep, Math.max(0, (Date.now() - stepTimingRef.current.startedAt) / 1000), loadLearnedDurations(), status?.state !== "checking_failed", terminal);
+  const estimateText = remainingUpdateEstimate(currentStep, Math.max(0, (Date.now() - stepTimingRef.current.startedAt) / 1000), loadLearnedDurations(), status?.state !== "checking_failed", terminal || !updateObservationAllowsTimeReference(status?.lastRun?.observability, Date.now()));
   const startDiagnostic = !terminal && awaitingStart && elapsedSeconds * 1000 >= START_DIAGNOSTIC_MS;
 
   useEffect(() => {
@@ -320,12 +327,12 @@ export default function AppUpdateControl() {
   }, [refreshStatus]);
 
   useEffect(() => {
-    if (!updateSessionActive && !applyStarted && status?.lastRun?.state !== "running") return;
+    if (!updateSessionActive && !applyStarted && status?.lastRun?.state !== "running" && !cleanupUnverified) return;
     const intervalId = window.setInterval(() => {
       void refreshStatus({ quiet: true });
     }, 2000);
     return () => window.clearInterval(intervalId);
-  }, [applyStarted, refreshStatus, status?.lastRun?.state, updateSessionActive]);
+  }, [applyStarted, cleanupUnverified, refreshStatus, status?.lastRun?.state, updateSessionActive]);
 
   // Track when each update step starts, and record how long the finished step
   // actually took so the next update's estimate matches this machine.
@@ -347,10 +354,10 @@ export default function AppUpdateControl() {
 
   // Update elapsed time even when no step/percentage has been received.
   useEffect(() => {
-    if (!overlayVisible || terminal) return;
+    if (!overlayVisible || (terminal && !cleanupUnverified)) return;
     const tickId = window.setInterval(() => setProgressTick((value) => value + 1), 1000);
     return () => window.clearInterval(tickId);
-  }, [overlayVisible, terminal]);
+  }, [cleanupUnverified, overlayVisible, terminal]);
 
   useEffect(() => {
     if (!updateSessionActive || status?.lastRun?.state !== "completed") return;
@@ -363,9 +370,9 @@ export default function AppUpdateControl() {
   }, [status?.lastRun?.state, updateSessionActive]);
 
   async function handleClick(): Promise<void> {
-    if (busy || updateSessionActive || applyStarted || status?.lastRun?.state === "running") return;
+    if (busy || overlayVisible || applyStarted) return;
     const latest = await refreshStatus({ fetchRemote: true });
-    if (!latest || latest.lastRun?.state === "running" || (latest.state !== "available" && latest.state !== "build_required")) {
+    if (!latest || latest.lastRun?.state === "running" || cleanupNeedsConfirmation(latest) || (latest.state !== "available" && latest.state !== "build_required")) {
       return;
     }
     const confirmLines =
@@ -477,10 +484,14 @@ export default function AppUpdateControl() {
             <p>{overlayMessage(status, updateSessionActive)}</p>
             <div className="app-update-progress-meta">
               <span>{stepLabel}</span>
-              <strong>{progress}%</strong>
+              <strong>{status?.lastRun?.state === "failed" ? "Failed" : `Stage checkpoint: ${progress}%`}</strong>
             </div>
             <p className="app-update-progress-elapsed">{elapsedText}</p>
+            <p className="app-update-overlay-note">Stage checkpoints do not measure work completion. {status?.state === "checking_failed" ? "The step shown is the last verified step. Check the separate update monitor for current observations." : ""}</p>
             {estimateText ? <p className="app-update-progress-elapsed">{estimateText}</p> : null}
+            {status?.lastRun?.observability && (!terminal || cleanupUnverified) ? (
+              <p className="app-update-overlay-note">{updateObservationMessage(status.lastRun.observability, Date.now())}</p>
+            ) : null}
             {!terminal && awaitingStart && status?.state !== "checking_failed" ? (
               <p className="app-update-overlay-note">Waiting for start confirmation: waiting for the update worker to acknowledge that processing has started.</p>
             ) : null}
@@ -489,21 +500,21 @@ export default function AppUpdateControl() {
               role="progressbar"
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-valuenow={progress}
+              aria-valuenow={status?.lastRun?.state === "failed" ? undefined : progress}
               aria-label={stepLabel}
             >
-              <span style={{ width: `${progress}%` }} />
+              <span style={{ width: `${status?.lastRun?.state === "failed" ? 0 : progress}%` }} />
             </div>
             {status?.lastRun?.state === "completed" ? (
               <p className="app-update-overlay-note">Reloading automatically.</p>
             ) : null}
             {startDiagnostic || (stalled && status?.state === "checking_failed") ? (
               <p className="app-update-overlay-note">
-                Status checks are taking longer than expected. Send artifacts\self-update\status.json and the latest update-*.log to your app distributor.
+                Status checks are taking longer than expected. Export diagnostics from the update monitor, or run COLLECT_CFS_UPDATE_DIAGNOSTICS.cmd from the standalone diagnostics tools.
                 Do not run another update or overwrite the installation until the update state is verified. This screen will only continue checking status.
               </p>
             ) : null}
-            {status?.lastRun?.state === "failed" ? (
+            {status?.lastRun?.state === "failed" && !cleanupUnverified ? (
               <div className="app-update-overlay-actions">
                 <button
                   type="button"

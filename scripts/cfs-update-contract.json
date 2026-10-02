@@ -5,6 +5,10 @@
     "scripts/update-cfs-app.ps1",
     "scripts/cfs-local-data-preservation.ps1",
     "scripts/cfs-update-maintenance.ps1",
-    "scripts/test-cfs-instance.ps1"
+    "scripts/test-cfs-instance.ps1",
+    "scripts/cfs-update-process-runner.ps1",
+    "scripts/cfs-update-observability.ps1",
+    "scripts/cfs-update-monitor.ps1",
+    "scripts/cfs-update-diagnostics.ps1"
   ]
 }

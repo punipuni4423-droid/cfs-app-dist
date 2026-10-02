@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import { parseUpdateObservation, type AppUpdateObservation } from "./appUpdateObservation";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -15,6 +16,7 @@ export type AppUpdateState =
   | "checking_failed";
 
 export interface AppUpdateRunStatus {
+  observability?: AppUpdateObservation;
   state?: string;
   startedAt?: string;
   finishedAt?: string;
@@ -180,7 +182,20 @@ async function readLastRun(): Promise<AppUpdateRunStatus | undefined> {
     const raw = await readFile(selfUpdateStatusFile, "utf8");
     const parsed: unknown = JSON.parse(raw.replace(/^\uFEFF/, ""));
     if (parsed === null || typeof parsed !== "object") return undefined;
-    return parsed as AppUpdateRunStatus;
+    const run = parsed as AppUpdateRunStatus & { attemptId?: string; observability?: AppUpdateObservation & { workerPid?: number; workerStartTicks?: string } };
+    const observation = parseUpdateObservation(run.observability);
+    if (observation && run.attemptId && /^[a-zA-Z0-9-]{1,80}$/.test(run.attemptId)) {
+      try {
+        const file = path.join(path.dirname(selfUpdateStatusFile), "observability", run.attemptId, "health.json");
+        if ((await stat(file)).size <= 2 * 1024 * 1024) {
+          const health = JSON.parse(await readFile(file, "utf8"));
+          const latest = parseUpdateObservation(health);
+          if (latest && health.attemptId === run.attemptId && health.workerPid === run.observability?.workerPid
+            && health.workerStartTicks === run.observability?.workerStartTicks && latest.state === run.state) run.observability = latest;
+        }
+      } catch { /* Keep the last canonical observation; UI exposes its age. */ }
+    } else if (run.observability !== undefined && !observation) { delete run.observability; }
+    return run;
   } catch {
     return undefined;
   }

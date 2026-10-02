@@ -24,6 +24,8 @@ $OutputEncoding = [Console]::OutputEncoding
 $appPath = (Resolve-Path -LiteralPath $AppDir).Path
 . (Join-Path $PSScriptRoot 'cfs-local-data-preservation.ps1')
 . (Join-Path $PSScriptRoot 'cfs-update-maintenance.ps1')
+. (Join-Path $PSScriptRoot 'cfs-update-process-runner.ps1')
+. (Join-Path $PSScriptRoot 'cfs-update-observability.ps1')
 $null = Assert-CfsPlainPath -Path $appPath
 $artifactDir = Join-Path $appPath "artifacts\self-update"
 $dataBackupDir = Join-Path $appPath "artifacts\data-recovery"
@@ -59,6 +61,13 @@ function Write-UpdateStatus {
   if ($AttemptId) { $payload['attemptId'] = $AttemptId }
   if ($TargetCommit) { $payload['targetCommit'] = $TargetCommit }
   if ($ExpectedHead) { $payload['expectedHead'] = $ExpectedHead }
+  $observation = Get-Variable -Name CfsObservation -Scope Script -ErrorAction SilentlyContinue
+  if ($observation -and $observation.Value) {
+    $snapshot = Get-CfsObservationSnapshot
+    $snapshot.state = $State
+    $snapshot.phase = $Step
+    $payload['observability'] = $snapshot
+  }
   $logWarning = Get-Variable -Name CfsLogWriteWarning -Scope Script -ErrorAction SilentlyContinue
   if ($logWarning) { $payload['logWarning'] = [string]$logWarning.Value }
   $writerDiagnostics = Get-Variable -Name CfsWriterInventoryDiagnostics -Scope Script -ErrorAction SilentlyContinue
@@ -91,6 +100,8 @@ function Write-UpdateStatus {
         } else {
           [IO.File]::Move($temporaryStatusPath, $statusPath)
         }
+        # A monitor must never announce success before canonical publication.
+        if ($observation -and $observation.Value) { Set-CfsObservationPhase -State $State -Phase $Step }
         if ($ConsoleProgress) { Write-Host ("[{0}%] {1}" -f $Progress, $Message) }
         return
       } catch {
@@ -122,7 +133,10 @@ function Write-Log {
     $line = ("[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message)
     $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($line + [Environment]::NewLine)
     $stream = [IO.File]::Open($logPath, [IO.FileMode]::Append, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
-    try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+    try {
+      if ($stream.Length + $bytes.Length -le 8MB) { $stream.Write($bytes, 0, $bytes.Length) }
+      else { $script:CfsLogWriteWarning = 'Update log reached its 8 MiB limit. Structured terminal status is recorded separately.' }
+    } finally { $stream.Dispose() }
   } catch {
     # No sleeps or command retries on diagnostic I/O failure. Status is an
     # independent channel; retain the first log warning even if logging resumes.
@@ -136,23 +150,11 @@ function Invoke-LoggedCommand {
   param(
     [string]$FilePath,
     [string[]]$Arguments,
-    [string]$WorkingDirectory
+    [string]$WorkingDirectory,
+    [double]$TimeoutSeconds = 0
   )
   Write-Log ("> " + $FilePath + " " + ($Arguments -join " "))
-  $previousErrorActionPreference = $ErrorActionPreference
-  $ErrorActionPreference = "Continue"
-  Push-Location -LiteralPath $WorkingDirectory
-  try {
-    $output = & $FilePath @Arguments 2>&1
-    $exitCode = $LASTEXITCODE
-  } finally {
-    Pop-Location
-    $ErrorActionPreference = $previousErrorActionPreference
-  }
-  foreach ($line in $output) { Write-Log ([string]$line) }
-  if ($exitCode -ne 0) {
-    throw "$FilePath exited with code $exitCode"
-  }
+  Invoke-CfsObservedCommand -FilePath $FilePath -Arguments $Arguments -WorkingDirectory $WorkingDirectory -TimeoutSeconds $TimeoutSeconds
 }
 
 function Invoke-NpmDependencyInstall {
@@ -162,6 +164,7 @@ function Invoke-NpmDependencyInstall {
   try {
     Invoke-LoggedCommand -FilePath "npm.cmd" -Arguments @("ci", "--include=dev", "--no-audit", "--no-fund") -WorkingDirectory $WorkingDirectory
   } catch {
+    if ($_.Exception.Data['CfsReason'] -ne 'native_nonzero' -or $script:CfsCleanupUncertain) { throw }
     Write-Log ("npm ci failed; retrying with npm install to recover from Windows file locks: " + $_.Exception.Message)
     Start-Sleep -Seconds 2
     Invoke-LoggedCommand -FilePath "npm.cmd" -Arguments @("install", "--include=dev", "--no-audit", "--no-fund") -WorkingDirectory $WorkingDirectory
@@ -430,16 +433,24 @@ $script:BuildStartedAt = $null
 $script:RestartedProcess = $null
 $script:StoppedAppWriters = $false
 try {
-Assert-CfsNoLegacyUpdateWorker $appPath
+try {
 if (-not $StartedAt) { $StartedAt = (Get-Date).ToUniversalTime().ToString("o") }
 $script:StartedAt = $StartedAt
+Initialize-CfsObservation -ArtifactRoot $artifactDir -RunId $AttemptId
+if (-not $AttemptId) { $AttemptId = $script:CfsObservation.attemptId }
+Start-CfsUpdateMonitor
 Write-UpdateStatus -State "running" -Step "start" -Message "Preparing self update." -Progress 5
 Write-Log "CFS self update started. AppDir=$appPath Port=$Port HostName=$HostName"
+Set-CfsObservationOperation 'legacy-worker-check'
+Assert-CfsNoLegacyUpdateWorker $appPath
+Set-CfsObservationOperation '' -End
 Clear-NextRuntimeEnvironmentForBuild
 
-try {
+  Set-CfsObservationOperation 'legacy-data-check'
   Assert-CfsNoLegacyData -RootPath $appPath
+  Set-CfsObservationOperation '' -End
   Write-UpdateStatus -State "running" -Step "git-check" -Message "Checking Git repository." -Progress 10
+  Set-CfsObservationOperation 'git-check'
   $gitExe = Resolve-GitExecutable -RootPath $appPath
   $env:CFS_GIT_EXE = $gitExe
   Write-Log "Using Git executable: $gitExe"
@@ -477,6 +488,7 @@ try {
   if ($ExpectedHead -and $beforeSha -ne $ExpectedHead) { throw 'The installed commit changed before the worker started.' }
 
   Write-UpdateStatus -State "running" -Step "git-fetch" -Message "Fetching updates." -Progress 25 -BackupPath $backupPath
+  Set-CfsObservationOperation '' -End
   if (-not $TargetCommit) {
     Invoke-LoggedCommand -FilePath $gitExe -Arguments @("-C", $repoRoot, "fetch", "--prune") -WorkingDirectory $repoRoot
     $TargetCommit = ([string](& $gitExe -C $repoRoot rev-parse '@{u}')).Trim()
@@ -503,6 +515,7 @@ try {
   }
 
   Write-UpdateStatus -State "running" -Step "git-pull" -Message "Applying Git update." -Progress 40 -BackupPath $backupPath
+  Set-CfsObservationOperation 'git-apply-check'
   if ($behind -gt 0) {
     # An interrupted update can leave files the incoming commits ADD sitting
     # untracked in the working tree, which aborts the fast-forward update. Move such
@@ -542,17 +555,25 @@ try {
   # Every update must prove the selected build and its running process. A
   # documentation-only change must not mask an earlier failed build.
   $dependenciesReady = Test-NpmDependenciesReady -WorkingDirectory $appPath
+  Set-CfsObservationOperation 'runtime-check'
   $script:CfsUpdateNode = Initialize-CfsUpdateNode $appPath
+  Set-CfsObservationOperation '' -End
   $env:PATH = [IO.Path]::GetDirectoryName($gitExe) + ';' + $env:PATH
   $needsNpmInstall = $dependenciesChanged -or -not $dependenciesReady
 
   # The docs-only path above must remain restart-free. Code updates stop every
   # identifiable app writer before snapshotting the complete transaction store.
   Write-UpdateStatus -State "running" -Step "backup-data" -Message "Stopping app and verifying local data backup." -Progress 50
+  Set-CfsObservationOperation 'stop-writers'
   Stop-CfsDataWriters -AppRoot $appPath -Port $Port
+  Set-CfsObservationOperation '' -End
   $script:StoppedAppWriters = $true
+  Set-CfsObservationOperation 'backup-data'
   $backupPath = Backup-CfsDataTrees -AppRoot $appPath -Trees @{ canonical = (Join-Path $appPath 'data') }
+  Set-CfsObservationOperation '' -End
+  Set-CfsObservationOperation 'verify-writers'
   Assert-CfsWritersStopped -AppRoot $appPath -Port $Port
+  Set-CfsObservationOperation '' -End
   Write-Log "Verified complete local data backup: $backupPath"
 
   if ($needsNpmInstall) {
@@ -568,28 +589,39 @@ try {
   }
 
   Write-UpdateStatus -State "running" -Step "build" -Message "Building updated app." -Progress 78 -BackupPath $backupPath
+  Set-CfsObservationOperation 'verify-writers'
   Assert-CfsWritersStopped -AppRoot $appPath -Port $Port
   Start-Sleep -Seconds 1
   Assert-CfsWritersStopped -AppRoot $appPath -Port $Port
+  Set-CfsObservationOperation '' -End
+  Set-CfsObservationOperation 'clear-build-output'
   Clear-NextBuildOutput -RootPath $appPath
+  Set-CfsObservationOperation '' -End
   $script:BuildStartedAt = [DateTime]::UtcNow
   Write-Log "Using NODE_ENV=production for Next build."
   Invoke-WithProductionNodeEnv {
     Invoke-LoggedCommand -FilePath "npm.cmd" -Arguments @("run", "build") -WorkingDirectory $appPath
   }
+  Set-CfsObservationOperation 'sync-static-assets'
   Sync-StandaloneStaticAssets -RootPath $appPath
+  Set-CfsObservationOperation '' -End
   if (-not (Test-CfsVerifiedBuild $TargetCommit)) { throw 'The build command did not produce a complete build for the selected commit.' }
 
   Write-UpdateStatus -State "running" -Step "restart" -Message "Restarting app." -Progress 94 -BackupPath $backupPath
+  Set-CfsObservationOperation 'restart'
   Assert-CfsWritersStopped -AppRoot $appPath -Port $Port
   Start-Sleep -Seconds 1
   Start-CfsAppServer -RequireFreshBuild
+  Set-CfsObservationOperation '' -End
+  Set-CfsObservationOperation 'readiness'
   Wait-CfsUpdatedServer -Commit $TargetCommit
+  Set-CfsObservationOperation '' -End
 
   Write-Log "CFS self update completed."
   Write-UpdateStatus -State "completed" -Step "done" -Message "Update completed. Reload the browser." -Progress 100 -BackupPath $backupPath
 } catch {
   $updateFailure = $_
+  Add-CfsExceptionEvidence $_.Exception 'worker'
   $updateFailureMessage = $_.Exception.Message
   Write-Log ("FAILED: " + $updateFailureMessage)
   try {
@@ -601,13 +633,22 @@ try {
   # the previous app back up so the waiting browser page can reconnect and show
   # this failure instead of sitting on "reconnecting" forever.
   try {
-    $stillListening = @(Get-CfsPortListeners -Port $Port)
-    if ($script:StoppedAppWriters -and -not $stillListening) {
-      Write-Log "Restarting app after failed update so the UI can reconnect."
-      Start-CfsAppServer
+    $cleanupUnknown = Get-Variable -Name CfsCleanupUncertain -Scope Script -ErrorAction SilentlyContinue
+    if ($script:StoppedAppWriters -and -not ($cleanupUnknown -and $cleanupUnknown.Value)) {
+      $stillListening = @(Get-CfsPortListeners -Port $Port)
+      if (-not $stillListening) {
+        Write-Log "Restarting app after failed update so the UI can reconnect."
+        Start-CfsAppServer
+      }
     }
   } catch {
     Write-Log ("Could not restart app after failure: " + $_.Exception.Message)
+  }
+  $cleanupUnknown = Get-Variable -Name CfsCleanupUncertain -Scope Script -ErrorAction SilentlyContinue
+  if ($cleanupUnknown -and $cleanupUnknown.Value) {
+    # Do not release maintenance while an owned command may still be writing.
+    Wait-CfsOwnedCleanup
+    try { Write-UpdateStatus -State 'failed' -Step 'failed' -Message $updateFailureMessage -Progress 100 -BackupPath $backupPath -UpdateError $updateFailure } catch { }
   }
   exit 1
 }

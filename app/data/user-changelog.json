@@ -1,6 +1,16 @@
 {
   "entries": [
     {
+      "id": "2026-10-02-update-diagnostics",
+      "date": "2026-10-02",
+      "title": "Update monitoring and diagnostics ／ 更新の監視と診断",
+      "items": [
+        "A separate update monitor shows worker response and OS activity while the app restarts. Closing the monitor does not stop the update. ／ アプリ停止中も独立した更新画面で応答とOS活動を確認できます。監視画面を閉じても更新は止まりません。",
+        "Use Export diagnostics or the standalone diagnostics tools to collect safe diagnostic information, including from version 26.10.2 when the app cannot start. ／ Export diagnosticsまたは独立した診断ツールで、安全化した診断情報を保存できます。アプリが起動しない26.10.2も対象です。",
+        "Update commands have active-time limits. A stale or unresponsive observation is shown separately from a confirmed stop; do not start another update while the outcome is unknown. ／ 更新コマンドに稼働時間上限を設けました。観測が古い・応答を確認できない状態と停止確認を区別します。結果が不明な間は更新を重ねないでください。"
+      ]
+    },
+    {
       "id": "2026-10-01-2",
       "date": "2026-10-01",
       "title": "Screen protection during saves and other operations ／ 保存・削除などの処理中の操作を保護",

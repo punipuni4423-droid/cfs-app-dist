@@ -13,7 +13,7 @@ const root = path.resolve(__dirname, '..');
 const scratch = process.env.CFS_PROGRESS_TEST_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'cfs-progress-ui-'));
 fs.mkdirSync(path.join(scratch, 'app/components'), { recursive: true });
 fs.mkdirSync(path.join(scratch, 'app/lib'), { recursive: true });
-for (const file of ['app/components/AppUpdateControl.tsx', 'app/lib/appUpdateProgress.ts', 'app/lib/appBuildVersion.ts']) {
+for (const file of ['app/components/AppUpdateControl.tsx', 'app/lib/appUpdateProgress.ts', 'app/lib/appUpdateObservation.ts', 'app/lib/appBuildVersion.ts']) {
   fs.writeFileSync(path.join(scratch, file.replace(/\.tsx?$/, '.js')), ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
   }).outputText);
@@ -25,6 +25,8 @@ function loadTsModule(file) {
   const filename = path.join(root, file);
   const loaded = new Module(filename, module);
   loaded.filename = filename; loaded.paths = module.paths;
+  const originalRequire = loaded.require.bind(loaded);
+  loaded.require = (name) => name === './appUpdateObservation' ? loadTsModule('app/lib/appUpdateObservation.ts') : originalRequire(name);
   loaded._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText, filename);
   return loaded.exports;
 }
@@ -106,6 +108,7 @@ function loadTsModule(file) {
       await page.clock.runFor(2500);
       assert.equal(await page.locator('[role="progressbar"]').getAttribute('aria-valuenow'), '1');
       assert.match(await page.locator('[role="alertdialog"]').innerText(), /Authentication is required/);
+      assert.match(await page.locator('[role="alertdialog"]').innerText(), /last verified step/);
       assert.match(await page.locator('[role="alertdialog"]').innerText(), /waiting for the connection to recover/);
       await page.screenshot({ path: path.join(scratch, 'auth-reconnect.png') });
     });
@@ -116,7 +119,10 @@ function loadTsModule(file) {
     });
     await scene('build ETA labelled and progress stays real', { status: status('available', { state: 'running', currentStep: 'build', progress: 78, startedAt: new Date(Date.now() - 1000).toISOString() }) }, async page => {
       await page.waitForSelector('[role="progressbar"]');
-      assert.match(await page.locator('[role="alertdialog"]').innerText(), /Estimated time remaining: about \d+–\d+ min/);
+      assert.match(await page.locator('[role="alertdialog"]').innerText(), /Time reference for remaining stages: about \d+–\d+ min/);
+      assert.match(await page.locator('[role="alertdialog"]').innerText(), /not a measured prediction/);
+      assert.match(await page.locator('[role="alertdialog"]').innerText(), /Stage checkpoint: 78%/);
+      assert.match(await page.locator('[role="alertdialog"]').innerText(), /Stage checkpoints do not measure work completion/);
       await page.clock.runFor(450000);
       assert.equal(await page.locator('[role="progressbar"]').getAttribute('aria-valuenow'), '78');
       assert.match(await page.locator('[role="alertdialog"]').innerText(), /taking longer than usual/);
@@ -166,8 +172,51 @@ function loadTsModule(file) {
     await scene('real helper launch failure is accepted as this run', { active: true, activeStartedAt: Date.parse(startedAt) - 100, status: status('available', fault) }, async page => {
       await page.getByRole('heading', { name: 'Update failed' }).waitFor();
       assert.equal(await page.getByRole('button', { name: 'Close', exact: true }).count(), 1);
+      assert.equal(await page.locator('[role="progressbar"]').getAttribute('aria-valuenow'), null);
+      assert.equal(await page.locator('[role="progressbar"] > span').evaluate(el => el.style.width), '0%');
       assert.doesNotMatch(await page.locator('[role="alertdialog"]').innerText(), /Estimated time remaining/);
       await page.screenshot({ path: path.join(scratch, 'worker-launch-failed.png') });
+    });
+    const observation = (cleanupState = 'not_needed') => ({ schemaVersion: 1, state: 'failed', phase: 'failed', operation: 'command-build', workerHeartbeatUtc: new Date().toISOString(), elapsedAwakeMs: 1200, elapsedWallMs: 1200, lastActivityUtc: null, observationQuality: 'complete', cleanupState, failureCode: 'cleanup_unverifiable' });
+    for (const condition of ['normal', 'stale', 'unavailable', 'cleanup']) {
+      const obs = { ...observation('pending'), state: 'running', failureCode: null, cleanupInProgress: condition === 'cleanup',
+        workerHeartbeatUtc: new Date(Date.now() - (condition === 'stale' ? 305000 : 0)).toISOString(), observationQuality: condition === 'unavailable' ? 'unavailable' : 'complete' };
+      await scene(`running pending distinguishes ${condition}`, { status: status('available', { state: 'running', currentStep: 'build', progress: 78, observability: obs }) }, async page => {
+        await page.waitForSelector('[role="alertdialog"]');
+        const text = await page.locator('[role="alertdialog"]').innerText();
+        if (condition === 'normal') { assert.doesNotMatch(text, /Command cleanup/); assert.match(text, /not a measured prediction/); }
+        else {
+          assert.doesNotMatch(text, /Time reference for remaining stages|Estimated time remaining/);
+          assert.match(text, condition === 'stale' ? /not been observed for 5 minutes/ : condition === 'unavailable' ? /OS activity observation is unavailable/ : /Command cleanup is still being verified/);
+        }
+        assert.equal(await page.locator('.app-update-button').isDisabled(), true);
+        assert.equal(await page.evaluate(() => window.fixture.posts), 0);
+        await page.screenshot({ path: path.join(scratch, `running-pending-${condition}.png`) });
+      });
+    }
+    for (const cleanup of ['pending', 'unverifiable']) {
+      await scene(`new tab retains protection for ${cleanup} cleanup`, { status: status('available', { state: 'failed', currentStep: 'failed', progress: 100, observability: observation(cleanup) }) }, async page => {
+        await page.waitForSelector('[role="alertdialog"]');
+        assert.equal(await page.locator('.app-update-button').isDisabled(), true);
+        assert.equal(await page.getByRole('button', { name: /^(Close|Reload)$/ }).count(), 0);
+        assert.match(await page.locator('[role="alertdialog"]').innerText(), /Do not start another update/);
+        assert.doesNotMatch(await page.locator('[role="alertdialog"]').innerText(), /Time reference for remaining stages|Estimated time remaining/);
+        assert.equal(await page.locator('[role="progressbar"]').getAttribute('aria-valuenow'), null);
+        const gets = await page.evaluate(() => window.fixture.gets);
+        await page.clock.runFor(4500);
+        assert((await page.evaluate(() => window.fixture.gets)) > gets, 'cleanup protection keeps checking status');
+        assert.equal(await page.evaluate(() => window.fixture.posts), 0);
+        await page.screenshot({ path: path.join(scratch, `cleanup-${cleanup}.png`) });
+        await page.evaluate(() => { window.fixture.status.lastRun.observability.cleanupState = 'verified'; });
+        await page.clock.runFor(2500);
+        assert.equal(await page.locator('[role="alertdialog"]').count(), 0, 'verified cleanup releases a newly opened tab');
+      });
+    }
+    await scene('stale worker response is not treated as a stopped update', { status: status('available', { state: 'running', currentStep: 'build', progress: 78, observability: { ...observation(), state: 'running', workerHeartbeatUtc: new Date(Date.now() - 301000).toISOString() } }) }, async page => {
+      await page.waitForSelector('[role="alertdialog"]');
+      assert.match(await page.locator('[role="alertdialog"]').innerText(), /does not confirm that the update stopped/);
+      assert.equal(await page.locator('.app-update-button').isDisabled(), true);
+      assert.equal(await page.evaluate(() => window.fixture.posts), 0);
     });
     const colors = {};
     for (const state of ['current', 'available', 'build_required']) {

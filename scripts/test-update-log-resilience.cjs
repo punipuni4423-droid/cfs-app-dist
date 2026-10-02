@@ -16,6 +16,8 @@ function execute(engine, name, body, expectedExit = 0) {
   fs.mkdirSync(folder);
   const setup = `$ErrorActionPreference='Stop'; Set-StrictMode -Version Latest;
     [Console]::OutputEncoding=New-Object Text.UTF8Encoding($false);$OutputEncoding=[Console]::OutputEncoding;$ProgressPreference='SilentlyContinue';
+    . ${quote(path.join(path.dirname(source), 'cfs-update-process-runner.ps1'))};
+    . ${quote(path.join(path.dirname(source), 'cfs-update-observability.ps1'))};
     $tokens=$null;$errors=$null;
     $ast=[Management.Automation.Language.Parser]::ParseFile(${quote(source)},[ref]$tokens,[ref]$errors);
     if($errors.Count){throw 'Worker parse failed'}

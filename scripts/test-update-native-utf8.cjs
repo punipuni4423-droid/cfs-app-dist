@@ -37,7 +37,8 @@ fs.writeFileSync(path.join(author, 'package.json'), JSON.stringify({ name: 'synt
 fs.writeFileSync(path.join(author, '.gitignore'), 'artifacts/\ndata/\n.cfs-build-info.json\n.cfs-updater/\nnode_modules/\n.next/\n');
 fs.writeFileSync(path.join(author, 'README.md'), 'Synthetic baseline\n');
 fs.mkdirSync(path.join(author, 'scripts'));
-for (const file of ['update-cfs-app.ps1', 'cfs-local-data-preservation.ps1', 'cfs-update-maintenance.ps1', 'test-cfs-instance.ps1']) fs.copyFileSync(path.join(__dirname, file), path.join(author, 'scripts', file));
+// Copy the actual v1 contract closure; preserve every existing assertion below.
+for (const file of JSON.parse(fs.readFileSync(path.join(__dirname, 'cfs-update-contract.json'), 'utf8')).files) fs.copyFileSync(path.join(__dirname, '..', file), path.join(author, file));
 git('-C', author, 'add', '.');
 git('-C', author, '-c', 'user.name=CFS Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'Synthetic baseline');
 git('-C', author, 'push', 'origin', 'master');
@@ -94,6 +95,14 @@ const after = git('-C', author, 'rev-parse', 'HEAD');
     assert.equal(git('-C', test.folder, 'status', '--porcelain', '--untracked-files=no'), '');
     assert.equal(JSON.parse(fs.readFileSync(path.join(test.folder, '.cfs-build-info.json'), 'utf8').replace(/^\uFEFF/, '')).gitSha, before, 'Failed build must not be stamped as current');
     assert.equal(fs.readFileSync(path.join(test.folder, 'data/synthetic-marker.json'), 'utf8'), '{"synthetic":"preserve-original-bytes"}\n');
+    // Close only this fixture's read-only window, through the normal window close.
+    const observations = path.join(test.folder, 'artifacts/self-update/observability');
+    for (const attempt of fs.readdirSync(observations)) {
+      const receipt = path.join(observations, attempt, 'monitor.json');
+      if (!fs.existsSync(receipt)) continue;
+      const id = JSON.parse(fs.readFileSync(receipt, 'utf8'));
+      powershell(ps5, `$p=Get-Process -Id ${id.pid} -ErrorAction SilentlyContinue;if($p){$null=$p.Handle;if($p.StartTime.ToUniversalTime().Ticks.ToString() -cne ${quote(id.startTicks)}){throw 'Monitor identity changed'};for($i=0;$i -lt 30 -and $p.MainWindowHandle -eq [IntPtr]::Zero;$i++){Start-Sleep -Milliseconds 100;$p.Refresh()};if(-not $p.CloseMainWindow() -or -not $p.WaitForExit(5000)){throw 'Monitor normal close failed'}}`);
+    }
     results.push({ name: test.name, initialCodePage: test.codePage, state: status.state, shaMatches: true, markerPreserved: true });
   }
   fs.writeFileSync(path.join(root, 'result.json'), JSON.stringify({ red, before, after, results }, null, 2));
