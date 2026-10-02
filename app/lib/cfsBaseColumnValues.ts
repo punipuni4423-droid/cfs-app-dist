@@ -131,6 +131,8 @@ export function cfsRowProgrammingNameValues(
         designerNumber: item.designerNumber.trim(),
         area: programmingAreaTokenForName(item, locationNumber, locationById, settings),
         address: programmingAddressToken(item, locationById),
+        // Other uses the existing location-number/99 convention, not its raw area prefix.
+        areaAddress: isOtherProgrammingLocation(item) ? undefined : normalizeProgrammingToken(item.areaAddress),
         device: deviceToken,
       },
       item.detail.trim(),

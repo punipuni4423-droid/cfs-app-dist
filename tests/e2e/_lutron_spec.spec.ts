@@ -133,7 +133,7 @@ test("builds a Lutron automation spec from CFS project data", () => {
     zone: "Zn1",
     areaName: "Bedroom",
     areaAddresses: ["BE1"],
-    programmingNames: ["[1][1][BE][1][A1-1] Bed Downlight"],
+    programmingNames: ["[1][1][BE1][A1-1] Bed Downlight"],
   });
   expect(spec.areaScenes[0]).toMatchObject({
     name: "Relax",

@@ -130,13 +130,24 @@ export function wrapProgrammingNameToken(value: string, bracketStyle: Programmin
 }
 
 export function formatProgrammingName(
-  values: Readonly<Record<ProgrammingNameToken, string>>,
+  values: Readonly<Record<ProgrammingNameToken, string> & { areaAddress?: string }>,
   detail: string,
   settings: ProgrammingNameSettings,
 ): string {
   const normalized = normalizeProgrammingNameSettings(settings);
-  const prefix = normalized.tokens
-    .map((token) => values[token].trim())
+  const parts: string[] = [];
+  for (let index = 0; index < normalized.tokens.length; index += 1) {
+    const token = normalized.tokens[index];
+    // Only the adjacent, forward pair represents a combined Area Address.
+    // Keep explicit single, reversed and separated token selections intact.
+    if (token === "area" && normalized.tokens[index + 1] === "address") {
+      parts.push(values.areaAddress?.trim() || `${values.area.trim()}${values.address.trim()}`);
+      index += 1;
+    } else {
+      parts.push(values[token].trim());
+    }
+  }
+  const prefix = parts
     .filter(Boolean)
     .map((value) => wrapProgrammingNameToken(value, normalized.bracketStyle))
     .join(normalized.tokenSeparator);

@@ -3325,6 +3325,7 @@ export default function CfsView({
         designerNumber: "2",
         area: "BM",
         address: "1",
+        areaAddress: "BM1",
         device: "A1-ZN1",
       },
       "Foyer DL",

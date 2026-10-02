@@ -40,6 +40,14 @@ For future CFS changes that touch data, API, or export behavior, include this li
 
 ## Current State
 
+### 2026-10-02 Programming NameのArea Address
+
+- XC API list: no change。保存schema・target ID・Inspection書戻しは不変。
+- LD API list: updated。通常のLutron specの`zones[].programmingNames`は、隣接するArea→Addressを一要素として出力（`[BM][1]`から`[BM1]`）。単独・逆順・非隣接の設定とOtherのLocation Number/99規則を保持。bridge JSONの形とRoomType対応は不変。
+- Project export: updated（CFS/All Rooms/Area Scene一覧のExcelの導出Programming Nameのみ）。Project/Share JSON、保存token配列、storage v14に変更なし。実共有DBには接続せず合成入力で検証する。
+
+`External sync: XC API list no change, LD API list updated, Project export updated.`
+
 - LD bridge export exists via `app/lib/lutronBridgeExport.ts`.
 - LD bridge API exists via `/api/lutron/spec?format=bridge` and aliases `format=ld` / `format=lutron-designer`.
 - Current LD bridge output is read-only, additive, and uses `reassignTemplates: false`.

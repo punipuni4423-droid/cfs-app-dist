@@ -6,6 +6,10 @@ This is the current official API/reference list for CFS output used by Lutron De
 
 The LD bridge export is read-only from CFS. It creates JSON that is validated and consumed by the Lutron Designer side tooling. CFS must not directly write to Lutron Designer databases.
 
+### 2026-10-02 Programming Nameの生成規則
+
+通常の`/api/lutron/spec`の`zones[].programmingNames`は、設定でAreaの直後にAddressがある場合、一つのArea Addressとして括弧・区切りを付けます（例：`[BM1]`、括弧なしなら`BM1`）。Areaコードの重複回避後の実Area Addressを使用し、単独・逆順・非隣接の設定、OtherのLocation Number/99規則は保持します。CFS画面・Excelと同じ規則です。保存schema・target ID・`format=bridge`のJSON契約は変更しません。
+
 ## Required API
 
 ### `GET /api/lutron/spec?format=bridge`

@@ -50,6 +50,7 @@ Device Assignの追加回路は機器に適合する候補から選びます。�
   - Dining: `DI`
 - Area Addressはエリア単位で重複しない番号を付けます。
 - Programming NameはCFSタブで確認し、実際のプログラム名として使える短さと一貫性を保ちます。
+- Programming Nameの組み合わせでAreaの直後にAddressを置くと、一つのArea Addressとして表示・出力します（例：`[BM1]`、括弧なしなら`BM1`）。Areaのみ、Addressのみ、逆順、他の要素を間に置いた順序はそれぞれ独立した要素として保持します。CFS、Area Scene一覧、Excel、Lutron specで同じ規則を使います。
 - DALIはGroup/AddressまたはLine/Group/Addressの構造を維持します。
 - DALIで同じDesigner #に複数灯がある場合、Device Assignの各Address/Detailは個別のDALI回路に対応させます。CFSとSwitch/Sceneの値は、その個別回路単位で連動することを確認します。
 - CCI/CCOは照明制御か非照明制御かを区別して確認します。

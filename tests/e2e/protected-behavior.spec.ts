@@ -2712,7 +2712,7 @@ test.describe("Protected CFS behaviors", () => {
     expect(projectPosts).toBe(0);
   });
 
-  test("programming name settings preserve the legacy default and custom separators", () => {
+  test("programming name settings combine adjacent Area Address and preserve custom separators", () => {
     const values = {
       locationNumber: "16",
       designerNumber: "2",
@@ -2722,7 +2722,7 @@ test.describe("Protected CFS behaviors", () => {
     };
 
     expect(formatProgrammingName(values, "Foyer DL", normalizeProgrammingNameSettings(undefined))).toBe(
-      "[16][2][BM][1][A1-ZN1] Foyer DL",
+      "[16][2][BM1][A1-ZN1] Foyer DL",
     );
     expect(
       formatProgrammingName(
@@ -2735,7 +2735,7 @@ test.describe("Protected CFS behaviors", () => {
           detailSeparator: "-",
         }),
       ),
-    ).toBe("(BM)-(1)-(2)-Foyer DL");
+    ).toBe("(BM1)-(2)-Foyer DL");
     expect(
       formatProgrammingName(
         values,

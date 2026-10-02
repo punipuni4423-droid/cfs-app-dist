@@ -294,6 +294,8 @@ function rowProgrammingNameValues(
         designerNumber,
         area: programmingAreaTokenForName(item, locationById, programmingNameSettings, locationNumber),
         address: programmingAddressToken(item, locationById),
+        // Match CFS's Other location-number/99 convention instead of a raw area prefix.
+        areaAddress: isOtherProgrammingLocation(item) ? undefined : normalizeProgrammingToken(item.areaAddress),
         device: deviceToken,
       },
       detail,

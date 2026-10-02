@@ -1,6 +1,15 @@
 {
   "entries": [
     {
+      "id": "2026-10-02-programming-area-address",
+      "date": "2026-10-02",
+      "title": "Programming Name Area Address formatting ／ Programming NameのArea Address表示を修正",
+      "items": [
+        "When Area is immediately followed by Address, Programming Name now keeps the full Area Address together, such as [BM1] instead of [BM][1]. ／ Areaの直後にAddressを配置した場合、Programming NameのArea Addressを[BM][1]ではなく[BM1]のように一つにまとめます。",
+        "The same formatting is used in the CFS preview, Excel exports and Lutron automation export. Separate selections and custom token order remain available. ／ CFSのプレビュー、Excel出力、Lutron連携出力に同じ規則を適用します。個別の項目選択や並び順の指定も引き続き利用できます。"
+      ]
+    },
+    {
       "id": "2026-10-02-room-type-trash",
       "date": "2026-10-02",
       "title": "Reliable Room Type deletion ／ Room Type削除の改善",
