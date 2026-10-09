@@ -3,7 +3,8 @@ param(
   [Parameter(Mandatory = $true)]
   [int]$Port,
   [Parameter(Mandatory = $true)]
-  [string]$AppRoot
+  [string]$AppRoot,
+  [switch]$CheckStaticAssets
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,6 +53,41 @@ try {
   }
 
   $actualRoot = Normalize-PathForCompare -PathValue ([string]$status.appDir)
+  if (-not [string]::Equals($actualRoot, $expectedRoot, [System.StringComparison]::OrdinalIgnoreCase)) { exit 1 }
+  if ($CheckStaticAssets) {
+    $references = [regex]::Matches([string]$page.Content, '(?i)(?:src|href)\s*=\s*["'']([^"'']+)["'']')
+    $assets = @{}
+    foreach ($reference in $references) {
+      $url = New-Object Uri ([Uri]$baseUrl), ([System.Net.WebUtility]::HtmlDecode($reference.Groups[1].Value))
+      if ($url.AbsolutePath.StartsWith('/_next/static/', [StringComparison]::Ordinal) -and
+          $url.AbsolutePath -match '(?i)\.(js|css)$') {
+        if ($url.Scheme -ne 'http' -or $url.Host -ne 'localhost' -or $url.Port -ne $Port) { exit 1 }
+        $assets[$url.AbsoluteUri] = if ($url.AbsolutePath -match '(?i)\.css$') { 'css' } else { 'js' }
+      }
+    }
+    if ($assets.Count -eq 0) { exit 1 }
+    # One shared deadline bounds the extra asset work on top of the API probes.
+    $assetDeadline = [DateTime]::UtcNow.AddSeconds(15)
+    foreach ($url in $assets.Keys) {
+      $remaining = [int][Math]::Ceiling(($assetDeadline - [DateTime]::UtcNow).TotalSeconds)
+      if ($remaining -le 0) { exit 1 }
+      $asset = Invoke-WebRequest -UseBasicParsing -TimeoutSec ([Math]::Min(5, $remaining)) -MaximumRedirection 0 $url
+      $contentType = [string]$asset.Headers['Content-Type']
+      $expectedType = if ($assets[$url] -eq 'css') { '^text/css(?:;|$)' } else { '^(?:application|text)/(?:javascript|x-javascript|ecmascript)(?:;|$)' }
+      if ($asset.StatusCode -ne 200 -or $contentType -notmatch $expectedType -or $asset.RawContentStream.Length -eq 0) { exit 1 }
+      $assetText = $utf8.GetString($asset.RawContentStream.ToArray())
+      # Check only the document prefix: HTML strings inside normal JS/CSS
+      # are valid and must not trigger a whole-body substring rejection.
+      $prefix = [regex]::Replace($assetText, '^[\s\uFEFF]+', '')
+      while ($prefix.StartsWith('<!--', [StringComparison]::Ordinal)) {
+        $commentEnd = $prefix.IndexOf('-->', [StringComparison]::Ordinal)
+        if ($commentEnd -lt 0) { break }
+        $prefix = [regex]::Replace($prefix.Substring($commentEnd + 3), '^[\s\uFEFF]+', '')
+      }
+      if ([string]::IsNullOrWhiteSpace($prefix) -or
+          $prefix.StartsWith('<', [StringComparison]::Ordinal)) { exit 1 }
+    }
+  }
   if ([string]::Equals($actualRoot, $expectedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
     exit 0
   }

@@ -150,15 +150,17 @@ interface CfsViewProps {
   canEdit?: boolean;
   onPendingCfsGuardChange?: (guard: PendingCfsGuard | null) => void;
   hasRevisionDraft?: boolean;
-  onBeforeInspectionStart?: (choice: InspectionRevisionChoice) => boolean;
+  inspectionSaveScope?: string;
+  onBeforeInspectionStart?: (choice: InspectionRevisionChoice) => Promise<boolean>;
   onInspectionModeStart?: (roomTypeId: string, payload: InspectionCompletionPayload) => void;
+  onInspectionModeFinish?: (savedAsNewRevision: boolean) => void;
   onInspectionRoomTypeEnter?: (roomTypeId: string, payload: InspectionCompletionPayload) => void;
   onInspectionLiveChange?: (
     roomTypeId: string,
     payload: InspectionCompletionPayload,
     options: { hasDraft: boolean },
   ) => void;
-  onCompleteInspection?: (payload: InspectionCompletionPayload, options: InspectionCompletionOptions) => boolean | void;
+  onCompleteInspection?: (payload: InspectionCompletionPayload, options: InspectionCompletionOptions) => Promise<boolean>;
   inspectionRevisionTargets?: InspectionRevisionTarget[];
   onInspectionRevisionTargetChange?: (
     roomTypeId: string,
@@ -192,6 +194,15 @@ export interface InspectionCompletionPayload {
 }
 
 export type InspectionRevisionChoice = "newRevision" | "sameRevision";
+
+export class InspectionSaveViewError extends Error {
+  constructor(additionalEdits = false) {
+    super(additionalEdits
+      ? 'The submitted inspection data was saved and verified. Additional edits are retained. Review the current data before finishing.'
+      : 'The save was verified, but the inspection view is not ready. Do not save another revision. Check Save Status or Recovery before continuing.');
+    this.name = 'InspectionSaveViewError';
+  }
+}
 
 export interface InspectionCompletionOptions {
   saveAsNewRevision: boolean;
@@ -1227,8 +1238,10 @@ export default function CfsView({
   canEdit = true,
   onPendingCfsGuardChange,
   hasRevisionDraft = false,
+  inspectionSaveScope = projectId,
   onBeforeInspectionStart,
   onInspectionModeStart,
+  onInspectionModeFinish,
   onInspectionRoomTypeEnter,
   onInspectionLiveChange,
   onCompleteInspection,
@@ -1351,6 +1364,19 @@ export default function CfsView({
   const lowHighEndPopoverRef = useRef<HTMLDivElement | null>(null);
   const inspectionRoomTypeIdRef = useRef(roomType.id);
   const inspectionDraftsTouchedRef = useRef(false);
+  const [inspectionSavePending, setInspectionSavePending] = useState(false);
+  const [inspectionSaveError, setInspectionSaveError] = useState('');
+  const inspectionSavePendingRef = useRef(false);
+  const inspectionSaveRequestRef = useRef(0);
+  const inspectionOwnerScopeRef = useRef(inspectionSaveScope);
+  const inspectionSaveContextRef = useRef({ scope: inspectionSaveScope, roomId: roomType.id, canEdit, epoch: 0 });
+  const oldInspectionContext = inspectionSaveContextRef.current;
+  inspectionSaveContextRef.current = { scope: inspectionSaveScope, roomId: roomType.id, canEdit,
+    epoch: oldInspectionContext.epoch + (oldInspectionContext.scope !== inspectionSaveScope
+      || oldInspectionContext.roomId !== roomType.id || oldInspectionContext.canEdit !== canEdit ? 1 : 0) };
+  const latestInspectionRef = useRef({ roomType, inspectionDrafts, onInspectionModeStart, onInspectionModeFinish, buildInspectionAppliedState });
+  latestInspectionRef.current = { roomType, inspectionDrafts, onInspectionModeStart, onInspectionModeFinish, buildInspectionAppliedState };
+  useEffect(() => () => { inspectionSaveContextRef.current.epoch += 1; }, []);
   const pointerDraggedFunctionColumnGroupKeyRef = useRef("");
   const mouseDraggedFunctionColumnGroupKeyRef = useRef("");
   const cfsSettingRequestIdRef = useRef(0);
@@ -4060,6 +4086,7 @@ export default function CfsView({
   }
 
   useEffect(() => {
+    if (!canEdit || inspectionOwnerScopeRef.current !== inspectionSaveScope) return;
     if (!inspectionMode) {
       inspectionRoomTypeIdRef.current = roomType.id;
       return;
@@ -4081,69 +4108,118 @@ export default function CfsView({
     inspectionDraftsTouchedRef.current = false;
     resetInspectionSelection();
     onInspectionRoomTypeEnter?.(roomType.id, baseline);
-  }, [inspectionMode, inspectionDraftList, onInspectionLiveChange, onInspectionRoomTypeEnter, resetInspectionSelection, roomType.id]);
+  }, [canEdit, inspectionSaveScope, inspectionMode, inspectionDraftList, onInspectionLiveChange, onInspectionRoomTypeEnter, resetInspectionSelection, roomType.id]);
 
   useEffect(() => {
-    if (!inspectionMode || !inspectionDraftsTouchedRef.current) return;
+    if (!canEdit || inspectionOwnerScopeRef.current !== inspectionSaveScope || !inspectionMode || !inspectionDraftsTouchedRef.current) return;
     onInspectionLiveChange?.(roomType.id, buildInspectionAppliedState(inspectionDraftList), {
       hasDraft: inspectionDraftList.length > 0,
     });
-  }, [inspectionMode, inspectionDraftList, onInspectionLiveChange, roomType.id]);
+  }, [canEdit, inspectionSaveScope, inspectionMode, inspectionDraftList, onInspectionLiveChange, roomType.id]);
 
   useEffect(() => {
     if (!inspectionMode || canEdit) return;
+    // Permission loss stops writeback, but does not discard unconfirmed edits.
+    setInspectionPopover(null);
+  }, [canEdit, inspectionMode]);
+
+  useEffect(() => {
+    if (inspectionOwnerScopeRef.current === inspectionSaveScope) return;
+    inspectionOwnerScopeRef.current = inspectionSaveScope;
+    inspectionSaveRequestRef.current += 1;
+    inspectionSavePendingRef.current = false;
+    setInspectionSavePending(false);
+    setInspectionSaveError('');
+    // The parent project draft owns durable recovery; never transfer this
+    // view's local inspection session to a different owner/project/session.
     clearInspectionLocalSession();
-  }, [canEdit, clearInspectionLocalSession, inspectionMode]);
+  }, [inspectionSaveScope, clearInspectionLocalSession]);
 
   function startInspectionMode(): void {
-    if (!canEdit) return;
+    if (!canEdit || inspectionSavePendingRef.current) return;
+    setInspectionSaveError('');
     setInspectionDialog({ kind: "start" });
   }
 
-  function beginInspectionMode(choice: InspectionRevisionChoice): void {
-    if (onBeforeInspectionStart && !onBeforeInspectionStart(choice)) return;
-    const baseline = captureInspectionSessionBaseline();
-    inspectionRoomTypeIdRef.current = roomType.id;
-    inspectionDraftsTouchedRef.current = false;
-    setInspectionSessionBaseline(baseline);
-    setInspectionDrafts({});
-    setInspectionBaselineValues({});
-    clearInspectionHistory();
-    setInspectionPopover(null);
-    setInspectionDialog(null);
-    resetInspectionSelection();
-    setShowInspectionMarkHighlight(true);
-    setInspectionSessionSavedRevision(choice === "newRevision");
-    setInspectionMode(true);
-    onInspectionModeStart?.(roomType.id, baseline);
+  async function beginInspectionMode(choice: InspectionRevisionChoice): Promise<void> {
+    if (!canEdit || inspectionSavePendingRef.current) return;
+    const started = inspectionSaveContextRef.current;
+    const request = ++inspectionSaveRequestRef.current;
+    inspectionSavePendingRef.current = true;
+    setInspectionSavePending(true);
+    setInspectionSaveError('');
+    try {
+      const prepared = onBeforeInspectionStart ? await onBeforeInspectionStart(choice) : false;
+      if (inspectionSaveContextRef.current.epoch !== started.epoch) return;
+      if (!prepared) { setInspectionSaveError(choice === 'newRevision'
+        ? 'The save was not verified. InspectionMode has not started. Check Save Status or Recovery.'
+        : 'InspectionMode preparation was not completed. Data is retained. Review pending inputs and edit access before continuing.'); return; }
+      // The save may have installed a receipt/new revision in another render.
+      // Capture the current room and callback, never the pre-await closure.
+      const latest = latestInspectionRef.current;
+      const baseline: InspectionCompletionPayload = cloneInspectionData({ scenes: latest.roomType.scenes,
+        roomScenes: latest.roomType.roomScenes, switches: latest.roomType.switches,
+        inspectionMarks: latest.roomType.inspectionMarks ?? [] });
+      inspectionRoomTypeIdRef.current = latest.roomType.id;
+      inspectionDraftsTouchedRef.current = false;
+      setInspectionSessionBaseline(baseline);
+      setInspectionDrafts({});
+      setInspectionBaselineValues({});
+      clearInspectionHistory();
+      setInspectionPopover(null);
+      setInspectionDialog(null);
+      resetInspectionSelection();
+      setShowInspectionMarkHighlight(true);
+      setInspectionSessionSavedRevision(choice === "newRevision");
+      setInspectionMode(true);
+      latest.onInspectionModeStart?.(latest.roomType.id, baseline);
+    } catch (error) {
+      if (inspectionSaveContextRef.current.epoch === started.epoch) setInspectionSaveError(error instanceof InspectionSaveViewError
+        ? error.message : choice === 'newRevision'
+          ? 'The save could not be verified. Keep the current data and check Save Status or Recovery.'
+          : 'InspectionMode could not be prepared. Keep the current data and review pending inputs and edit access.');
+    } finally {
+      if (inspectionSaveRequestRef.current === request) {
+        inspectionSavePendingRef.current = false;
+        setInspectionSavePending(false);
+      }
+    }
   }
 
   function completeInspectionSession(): void {
+    if (inspectionSavePendingRef.current) return;
+    setInspectionSaveError('');
     setInspectionDialog({ kind: "finish" });
   }
 
-  function finishInspectionSession(saveAsNewRevision: boolean): void {
-    const next = buildInspectionAppliedState(inspectionDraftList);
-    if (onCompleteInspection) {
-      const completed = onCompleteInspection(next, { saveAsNewRevision });
-      if (completed === false) return;
-    } else {
-      if (next.scenes !== roomType.scenes) onScenesChange?.(next.scenes);
-      if (next.roomScenes !== roomType.roomScenes) onRoomScenesChange?.(next.roomScenes);
-      if (next.switches !== roomType.switches) onSwitchesChange?.(next.switches);
-      onInspectionMarksChange?.(next.inspectionMarks);
+  async function finishInspectionSession(saveAsNewRevision: boolean): Promise<void> {
+    if (!canEdit || inspectionSavePendingRef.current) return;
+    const started = inspectionSaveContextRef.current;
+    const drafts = latestInspectionRef.current.inspectionDrafts;
+    const next = cloneInspectionData(latestInspectionRef.current.buildInspectionAppliedState());
+    const request = ++inspectionSaveRequestRef.current;
+    inspectionSavePendingRef.current = true;
+    setInspectionSavePending(true);
+    setInspectionSaveError('');
+    try {
+      const completed = onCompleteInspection ? await onCompleteInspection(next, { saveAsNewRevision }) : false;
+      if (inspectionSaveContextRef.current.epoch !== started.epoch) return;
+      if (!completed) { setInspectionSaveError('The inspection save was not verified. Inspection data is retained. Check Save Status or Recovery.'); return; }
+      if (latestInspectionRef.current.inspectionDrafts !== drafts) {
+        setInspectionSaveError('Additional inspection edits are retained. Review them before finishing.'); return;
+      }
+      clearInspectionLocalSession();
+      setShowInspectionMarkHighlight(true);
+      latestInspectionRef.current.onInspectionModeFinish?.(saveAsNewRevision);
+    } catch (error) {
+      if (inspectionSaveContextRef.current.epoch === started.epoch) setInspectionSaveError(error instanceof InspectionSaveViewError
+        ? error.message : 'The inspection save could not be verified. Inspection data is retained. Check Save Status or Recovery.');
+    } finally {
+      if (inspectionSaveRequestRef.current === request) {
+        inspectionSavePendingRef.current = false;
+        setInspectionSavePending(false);
+      }
     }
-    setInspectionDrafts({});
-    setInspectionBaselineValues({});
-    clearInspectionHistory();
-    setInspectionPopover(null);
-    setInspectionSessionBaseline(null);
-    setInspectionSessionSavedRevision(false);
-    setInspectionDialog(null);
-    inspectionDraftsTouchedRef.current = false;
-    resetInspectionSelection();
-    setShowInspectionMarkHighlight(true);
-    setInspectionMode(false);
   }
 
   function inspectionDraftSummaryForCell(row: CfsZoneRow, col: FunctionColumn): {
@@ -4393,9 +4469,7 @@ export default function CfsView({
     const canSaveNewRevision = !showRevisionTargets || selectedRevisionTargetCount > 0;
     const title = isStart ? "Start InspectionMode" : "Finish InspectionMode";
     const message = isStart
-      ? hasRevisionDraft
-        ? "The current revision has draft changes. Choose how to handle the revision before starting InspectionMode."
-        : "Choose whether to save a new revision before starting InspectionMode."
+      ? "Start in the current revision without saving, or save and verify a new revision capturing the pre-inspection state before starting."
       : alreadySaved
         ? "This InspectionMode session already started after saving a new revision. Finish it in the current revision."
         : "Choose whether to save the inspection result as a new revision before finishing.";
@@ -4413,6 +4487,8 @@ export default function CfsView({
             <span>{inspectionDraftList.length} draft / {inspectionMarkList.length} mark</span>
           </div>
           <p>{message}</p>
+          {inspectionSaveError ? <p role="alert">{inspectionSaveError}</p> : null}
+          {inspectionSavePending ? <p role="status">{isStart ? 'Preparing InspectionMode…' : 'Saving and verifying inspection data…'}</p> : null}
           {showRevisionTargets ? (
             <div className="cfs-inspection-dialog-targets">
               <div className="revision-batch-summary cfs-inspection-target-summary">
@@ -4437,7 +4513,8 @@ export default function CfsView({
                           <label className="revision-batch-row-check">
                             <input
                               type="checkbox"
-                              checked={target.selected}
+                               checked={target.selected}
+                               disabled={inspectionSavePending || !canEdit}
                               onChange={(event) =>
                                 onInspectionRevisionTargetChange?.(target.roomTypeId, { selected: event.target.checked })
                               }
@@ -4454,7 +4531,7 @@ export default function CfsView({
                             className="revision-batch-revision-input"
                             type="text"
                             value={target.revision}
-                            disabled={!target.selected}
+                             disabled={!target.selected || inspectionSavePending || !canEdit}
                             onChange={(event) =>
                               onInspectionRevisionTargetChange?.(target.roomTypeId, { revision: event.target.value })
                             }
@@ -4464,7 +4541,7 @@ export default function CfsView({
                           <textarea
                             className="revision-batch-note-input"
                             value={target.note}
-                            disabled={!target.selected}
+                             disabled={!target.selected || inspectionSavePending || !canEdit}
                             rows={2}
                             placeholder="Memo"
                             onChange={(event) =>
@@ -4492,10 +4569,10 @@ export default function CfsView({
           <div className="cfs-inspection-dialog-actions">
             {isStart ? (
               <>
-                <button type="button" className="btn btn-primary" onClick={() => beginInspectionMode("newRevision")}>
+                <button type="button" className="btn btn-primary" disabled={inspectionSavePending || !canEdit} onClick={() => void beginInspectionMode("newRevision")}>
                   Save New Revision & Start
                 </button>
-                <button type="button" className="btn btn-secondary" onClick={() => beginInspectionMode("sameRevision")}>
+                <button type="button" className="btn btn-secondary" disabled={inspectionSavePending || !canEdit} onClick={() => void beginInspectionMode("sameRevision")}>
                   Start Current Revision
                 </button>
               </>
@@ -4505,18 +4582,18 @@ export default function CfsView({
                   <button
                     type="button"
                     className="btn btn-primary"
-                    disabled={!canSaveNewRevision}
-                    onClick={() => finishInspectionSession(true)}
+                    disabled={!canSaveNewRevision || inspectionSavePending || !canEdit}
+                    onClick={() => void finishInspectionSession(true)}
                   >
                     Save New Revision & Finish
                   </button>
                 ) : null}
-                <button type="button" className="btn btn-secondary" onClick={() => finishInspectionSession(false)}>
+                <button type="button" className="btn btn-secondary" disabled={inspectionSavePending || !canEdit} onClick={() => void finishInspectionSession(false)}>
                   Finish Current Revision
                 </button>
               </>
             )}
-            <button type="button" className="btn btn-secondary" onClick={() => setInspectionDialog(null)}>
+            <button type="button" className="btn btn-secondary" disabled={inspectionSavePending} onClick={() => setInspectionDialog(null)}>
               Cancel
             </button>
           </div>

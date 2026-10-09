@@ -2,6 +2,7 @@ import type { ProjectData, TrashData } from '../types';
 import { capturedProjectBase, validProjectBase, type ProjectBase, type RestoreSource } from './projectBase';
 import { canonicalJson } from './canonicalJson';
 import { createAppId } from './id';
+import { matchesSaveIntent } from './projectSaveProtocol';
 import { confirmedImportBatch, deferredImportSubset, importBatches, isImportRecovery, validImportRecovery, verifyImportBatch, type ImportRecovery } from './projectImportRecovery';
 
 export interface DraftScope { workspace: string; owner: string; tab: string }
@@ -14,6 +15,8 @@ export interface ProjectDraftRecord {
   generation: number;
   savedAt: string;
   importRecovery?: ImportRecovery;
+  confirmedSaveEvidence?: { kind: 'confirmed-save'; operationId: string; fingerprint: string;
+    saveKind: 'current' | 'revision' | 'idle'; confirmedAt: string; savedBase?: ProjectBase };
   intent?: { before: ProjectData; project: ProjectData; expectedUpdatedAt: string; operationId: string; forceOverwriteUpdatedAt?: string; base?: ProjectBase; restoreSource?: RestoreSource;
     restore?: { trashItemId: string; deletedAt: string; expectedUpdatedAt: null; original: TrashData['projects'][number]; confirmedProject?: ProjectData } };
 }
@@ -108,6 +111,27 @@ export function cachedProjectDrafts(): ProjectData[] {
 }
 export function cachedDraftRecords(): ProjectDraftRecord[] { return scope ? cached.filter(record => owned(record, scope!)) : []; }
 export function draftScope(): DraftScope | null { return scope; }
+function confirmedEvidenceMatches(record: ProjectDraftRecord): boolean {
+  const evidence = record.confirmedSaveEvidence;
+  const operation = record.intent?.project?.lastSaveOperation;
+  return Boolean(evidence && typeof evidence === 'object' && !Array.isArray(evidence)
+    && Object.keys(evidence).every(key => ['kind', 'operationId', 'fingerprint', 'saveKind', 'confirmedAt', 'savedBase'].includes(key))
+    && typeof record.scope?.tab === 'string' && record.scope.tab.startsWith('recovery:save-evidence:')
+    && evidence.kind === 'confirmed-save' && record.intent && !record.intent.restore && operation
+    && typeof evidence.operationId === 'string' && evidence.operationId === record.intent.operationId
+    && evidence.operationId === operation.id && typeof evidence.fingerprint === 'string' && evidence.fingerprint.length > 0
+    && evidence.fingerprint === operation.fingerprint && ['current', 'revision', 'idle'].includes(evidence.saveKind)
+    && evidence.saveKind === operation.kind && (evidence.savedBase === undefined || validProjectBase(evidence.savedBase))
+    && typeof evidence.confirmedAt === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(evidence.confirmedAt)
+    && Number.isFinite(Date.parse(evidence.confirmedAt)));
+}
+/** Only an explicit verified receipt marker classifies an exported intent as evidence. */
+export function isConfirmedSaveEvidence(record: ProjectDraftRecord): boolean {
+  return validDraftRecord(record) && confirmedEvidenceMatches(record);
+}
+export function isUnresolvedSaveIntent(record: ProjectDraftRecord | null | undefined): boolean {
+  return Boolean(record?.intent && !isConfirmedSaveEvidence(record));
+}
 export function validDraftRecord(value: unknown): value is ProjectDraftRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as ProjectDraftRecord;
@@ -118,6 +142,7 @@ export function validDraftRecord(value: unknown): value is ProjectDraftRecord {
     && (record.baseUpdatedAt === null || typeof record.baseUpdatedAt === 'string')
     && (record.base === undefined || validProjectBase(record.base) && record.base.updatedAt === record.baseUpdatedAt)
     && (!isImportRecovery(record) || validImportRecovery(record))
+    && (!Object.hasOwn(record, 'confirmedSaveEvidence') || confirmedEvidenceMatches(record))
     && (!record.intent || (validProject(record.intent.before) && (record.intent.restore ? validRestoreProject(record.intent.project) : validProject(record.intent.project))
       && record.intent.before.id === record.project.id && record.intent.project.id === record.project.id
       && typeof record.intent.expectedUpdatedAt === 'string' && record.intent.operationId === record.intent.project.lastSaveOperation?.id
@@ -286,6 +311,110 @@ export async function removeConfirmedDraft(record: ProjectDraftRecord): Promise<
   const fallbackKey = FALLBACK_PREFIX + key;
   try { if (JSON.parse(localStorage.getItem(fallbackKey) ?? 'null')?.generation === record.generation) localStorage.removeItem(fallbackKey); } catch { /* Keep unreadable copies. */ }
   cached = cached.filter(item => item.key !== key || item.generation !== record.generation);
+}
+
+interface ConfirmedDraftPlan {
+  evidence: ProjectDraftRecord;
+  replacement: ProjectDraftRecord | null;
+  requested: string;
+}
+const confirmedDraftPlans = new WeakMap<ProjectDraftRecord, ConfirmedDraftPlan>();
+
+/** Retain the original intent before conditionally retiring its exact generation.
+ * A partial write can resume only with this attempt's identical replacement. */
+export async function retainAndRetireConfirmedDraft(record: ProjectDraftRecord, owner: DraftScope,
+  replacement: { project: ProjectData; base?: ProjectBase } | null, isCurrent: () => boolean,
+  confirmation: { saved: ProjectData; base?: ProjectBase }): Promise<void> {
+  const current = () => scope === owner && isCurrent();
+  const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
+  if (!current() || !validDraftRecord(record) || !record.intent || record.intent.restore || isImportRecovery(record)
+    || Object.hasOwn(record, 'confirmedSaveEvidence')
+    || !owned(record, owner)) throw new Error('The original save recovery changed. Keep the draft and export a backup.');
+  if (confirmation.base !== undefined && (!validProjectBase(confirmation.base) || confirmation.base.updatedAt !== confirmation.saved.updatedAt)
+    || confirmation.saved.lastSaveOperation?.id !== record.intent.operationId
+    || typeof confirmation.saved.lastSaveOperation?.fingerprint !== 'string' || !confirmation.saved.lastSaveOperation.fingerprint
+    || !['current', 'revision', 'idle'].includes(confirmation.saved.lastSaveOperation.kind)
+    || !await matchesSaveIntent(record.intent.project, confirmation.saved)) {
+    throw new Error('The confirmed save receipt does not match the original request. Keep the original recovery and export a backup.');
+  }
+  if (!current()) throw new Error('The recovery view changed. The original save request is retained.');
+  const requested = canonicalJson(replacement) ?? 'null';
+  let plan = confirmedDraftPlans.get(record);
+  if (plan && plan.requested !== requested) throw new Error('Newer edits are retained. The previous local recovery transition needs review. Export a backup.');
+  if (!plan) {
+    const evidence = structuredClone(record);
+    evidence.scope = { ...record.scope, tab: `recovery:save-evidence:${createAppId()}` };
+    evidence.key = keyFor(evidence.scope, evidence.project.id);
+    evidence.generation = ++generation;
+    evidence.savedAt = new Date().toISOString();
+    const operation = confirmation.saved.lastSaveOperation!;
+    evidence.confirmedSaveEvidence = { kind: 'confirmed-save', operationId: operation.id, fingerprint: operation.fingerprint,
+      saveKind: operation.kind, confirmedAt: new Date().toISOString(),
+      ...(confirmation.base ? { savedBase: structuredClone(confirmation.base) } : {}) };
+    if (!isConfirmedSaveEvidence(evidence)) throw new Error('The verified save evidence could not be classified safely. Export the original recovery.');
+    let candidate: ProjectDraftRecord | null = null;
+    if (replacement) {
+      candidate = { ...structuredClone(record), project: structuredClone(replacement.project),
+        baseUpdatedAt: confirmation.saved.updatedAt, ...(replacement.base ? { base: structuredClone(replacement.base) } : {}),
+        generation: ++generation, savedAt: new Date().toISOString() };
+      delete candidate.intent;
+      if (!validDraftRecord(candidate) || candidate.project.id !== record.project.id) throw new Error('The confirmed draft baseline could not be verified.');
+    }
+    plan = { evidence, replacement: candidate, requested };
+    confirmedDraftPlans.set(record, plan);
+  }
+  const { evidence, replacement: candidate } = plan;
+  const readFallback = (key: string): unknown => {
+    const raw = localStorage.getItem(FALLBACK_PREFIX + key);
+    if (raw === null) return undefined;
+    const value: unknown = JSON.parse(raw);
+    if (!validDraftRecord(value)) throw new Error('The fallback draft is invalid. Its original bytes are retained. Export Recovery for review.');
+    return value;
+  };
+  // Preserve every original field, including the old intent/base, at a separate key.
+  await bounded(transaction<void>('readwrite', (store, result) => {
+    const request = store.get(evidence.key);
+    request.onsuccess = () => {
+      if (!current() || request.result !== undefined && !same(request.result, evidence)) { store.transaction.abort(); return; }
+      store.put(evidence); result(undefined);
+    };
+  }));
+  if (!current()) throw new Error('The draft owner changed. The original save evidence is retained.');
+  const retained = (await bounded(readAll())).find(item => item.key === evidence.key);
+  if (!same(retained, evidence)) throw new Error('The original save evidence could not be read back. Export a backup.');
+  if (current()) cached = [...cached.filter(item => item.key !== evidence.key), evidence];
+  const acceptable = (value: unknown): boolean => value === undefined || same(value, record) || Boolean(candidate && same(value, candidate));
+  const fallbackBefore = readFallback(record.key);
+  if (!acceptable(fallbackBefore) || !current()) throw new Error('A newer local draft is retained. The confirmed draft was not retired.');
+  await bounded(transaction<void>('readwrite', (store, result) => {
+    const request = store.get(record.key);
+    request.onsuccess = () => {
+      try {
+        const ram = cached.find(item => item.key === record.key);
+        if (!current() || !acceptable(request.result) || !acceptable(ram) || !same(readFallback(record.key), fallbackBefore)) {
+          store.transaction.abort(); return;
+        }
+        if (candidate) store.put(candidate); else store.delete(record.key);
+        result(undefined);
+      } catch { store.transaction.abort(); }
+    };
+  }));
+  if (!current()) throw new Error('The draft owner changed. The original save evidence is retained.');
+  const fallbackNow = readFallback(record.key);
+  if (!acceptable(fallbackNow) || !same(fallbackNow, fallbackBefore)) throw new Error('The fallback draft changed. Keep this view and export a backup.');
+  // Replace atomically in fallback storage; never remove then checkpoint.
+  if (fallbackNow !== undefined) {
+    if (candidate) localStorage.setItem(FALLBACK_PREFIX + record.key, JSON.stringify(candidate));
+    else localStorage.removeItem(FALLBACK_PREFIX + record.key);
+  }
+  const verified = (await bounded(readAll())).find(item => item.key === record.key);
+  const fallbackVerified = readFallback(record.key);
+  if (!current() || (candidate ? !same(verified, candidate) : verified !== undefined)
+    || fallbackVerified !== undefined && (!candidate || !same(fallbackVerified, candidate))) {
+    throw new Error('The confirmed draft transition could not be read back. The original save evidence is retained. Export a backup.');
+  }
+  cached = cached.filter(item => item.key !== record.key);
+  if (candidate) cached.push(candidate);
 }
 
 /** Explicit discard affects only this owner/tab. Pending save/import evidence is never discarded. */

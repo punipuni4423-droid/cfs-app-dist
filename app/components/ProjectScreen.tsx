@@ -64,6 +64,7 @@ import CircuitsView from "./CircuitsView";
 import SceneView from "./SceneView";
 import RoomSceneView from "./RoomSceneView";
 import CfsView, {
+  InspectionSaveViewError,
   type InspectionCompletionOptions,
   type InspectionCompletionPayload,
   type InspectionRevisionTarget,
@@ -245,6 +246,7 @@ interface InspectionSessionEntry {
   baseline: InspectionCompletionPayload;
   touched: boolean;
   revision: string;
+  revisionEdited?: boolean;
   note: string;
   selected: boolean;
 }
@@ -276,7 +278,7 @@ function applyInspectionPayloadToRoomType(rt: RoomType, payload: InspectionCompl
 }
 
 function inspectionPayloadsEqual(before: InspectionCompletionPayload, after: InspectionCompletionPayload): boolean {
-  return JSON.stringify(before) === JSON.stringify(after);
+  return canonicalJson(before) === canonicalJson(after);
 }
 
 function revisionDateInputValue(value: string): string {
@@ -404,6 +406,47 @@ export default function ProjectScreen({
   const [batchRevisionError, setBatchRevisionError] = useState("");
   const [isSavingBatchRevision, setIsSavingBatchRevision] = useState(false);
   const [inspectionSessionEntries, setInspectionSessionEntries] = useState<InspectionSessionEntry[]>([]);
+  const inspectionScopeKey = JSON.stringify([collaboration.sharingMode, project.id, collaboration.user?.id, collaboration.sessionId]);
+  const inspectionContextRef = useRef({ project, activeRoomTypeId, canEdit, scope: inspectionScopeKey, epoch: 0 });
+  const inspectionContext = inspectionContextRef.current;
+  const inspectionScopeChanged = inspectionContext.scope !== inspectionScopeKey
+    || inspectionContext.activeRoomTypeId !== activeRoomTypeId || inspectionContext.canEdit !== canEdit;
+  inspectionContextRef.current = { project, activeRoomTypeId, canEdit, scope: inspectionScopeKey,
+    epoch: inspectionContext.epoch + (inspectionScopeChanged ? 1 : 0) };
+  const inspectionSavePendingRef = useRef(false);
+  const inspectionEditVersionRef = useRef(0);
+  const inspectionEntriesRef = useRef(inspectionSessionEntries);
+  inspectionEntriesRef.current = inspectionSessionEntries;
+  const inspectionCommittedRef = useRef({ project, saveReceipt });
+  const inspectionRenderWaitersRef = useRef(new Set<() => void>());
+  useLayoutEffect(() => {
+    inspectionCommittedRef.current = { project, saveReceipt };
+    for (const check of inspectionRenderWaitersRef.current) check();
+  }, [project, saveReceipt, inspectionScopeKey, activeRoomTypeId, canEdit]);
+  useEffect(() => () => {
+    inspectionContextRef.current.epoch += 1;
+    for (const check of inspectionRenderWaitersRef.current) check();
+  }, []);
+
+  const waitForInspectionSaveRender = useCallback((started: typeof inspectionContextRef.current): Promise<boolean> => new Promise(resolve => {
+    // eslint-disable-next-line prefer-const -- assigned after finish/check closures are defined
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (value: boolean) => { clearTimeout(timer); inspectionRenderWaitersRef.current.delete(check); resolve(value); };
+    const check = () => {
+      if (inspectionContextRef.current.epoch !== started.epoch) { finish(false); return; }
+      const committed = inspectionCommittedRef.current;
+      const saved = committed.saveReceipt?.saved;
+      if (saved?.id === started.project.id && saved.lastSaveOperation?.id
+        && saved.lastSaveOperation.id !== started.project.lastSaveOperation?.id
+        && committed.project.lastSaveOperation?.id === saved.lastSaveOperation.id) finish(true);
+    };
+    inspectionRenderWaitersRef.current.add(check);
+    // A boolean save result is insufficient until its receipt reaches the
+    // committed view. A missing render retains the session rather than guessing.
+    timer = setTimeout(() => finish(false), 5000);
+    check();
+  }), []);
+  useEffect(() => { setInspectionSessionEntries([]); }, [inspectionScopeKey]);
   const [lutronExportRoomTypeId, setLutronExportRoomTypeId] = useState<string | null>(null);
   const restoringNavigationRef = useRef(false);
   const restoredProjectIdRef = useRef(project.id);
@@ -1545,10 +1588,11 @@ export default function ProjectScreen({
     rt: RoomType,
     circuits: CircuitEntry[],
     options: SaveRevisionOptions = {},
+    sourceProject: ProjectData = project,
   ): RoomType => {
     // New history captures the same normalized values that the writer persists.
     // Existing historical snapshot strings are retained verbatim.
-    const normalized = normalizeProjectSave({ ...project, roomTypes: [rt], circuits });
+    const normalized = normalizeProjectSave({ ...sourceProject, roomTypes: [rt], circuits });
     rt = normalized.roomTypes[0];
     circuits = normalized.circuits;
     const revision = normalizedRevisionValue(options.revisionOverride, nextRoomTypeRevisionValue(rt));
@@ -1972,15 +2016,38 @@ export default function ProjectScreen({
     })();
   }, pendingCfsGuardRef);
 
-  const handlePrepareInspectionStart = useCallback((choice: InspectionRevisionChoice): boolean => {
-    if (!canEdit) {
+  const handlePrepareInspectionStart = useCallback(async (choice: InspectionRevisionChoice): Promise<boolean> => {
+    const started = inspectionContextRef.current;
+    if (!started.canEdit) {
       onReadOnlyAction?.();
       return false;
     }
-    if (!activeRoomType) return false;
-    if (choice === "newRevision") void handleSaveRevision({ clearInspectionMarks: false });
-    return true;
-  }, [activeRoomType, handleSaveRevision, canEdit, onReadOnlyAction]);
+    if (!started.activeRoomTypeId || inspectionSavePendingRef.current) return false;
+    inspectionSavePendingRef.current = true;
+    try {
+      if (choice === 'sameRevision') {
+        const latest = inspectionContextRef.current;
+        return latest.epoch === started.epoch && latest.canEdit
+          && latest.project.roomTypes.some(room => room.id === latest.activeRoomTypeId);
+      }
+      const mutate = (current: ProjectData): ProjectData | null => {
+        if (inspectionContextRef.current.epoch !== started.epoch || current.id !== started.project.id) return null;
+        const linked = syncProjectRoomTypeLinks(current, { devices });
+        const room = linked.roomTypes.find(rt => rt.id === started.activeRoomTypeId);
+        if (!room) return null;
+        if (choice !== 'newRevision') return linked;
+        return { ...linked, roomTypes: linked.roomTypes.map(rt => rt.id === room.id
+          ? { ...saveRoomTypeRevision(rt, circuitsForRoomType(linked, rt), { clearInspectionMarks: false }, linked),
+            updatedAt: new Date().toISOString() } : rt) };
+      };
+      const saved = await onSaveProjectRevision(mutate);
+      if (!saved) return false;
+      const committed = await waitForInspectionSaveRender(started);
+      if (inspectionContextRef.current.epoch !== started.epoch) return false;
+      if (!committed) throw new InspectionSaveViewError();
+      return inspectionContextRef.current.canEdit;
+    } finally { inspectionSavePendingRef.current = false; }
+  }, [devices, onReadOnlyAction, onSaveProjectRevision, saveRoomTypeRevision, waitForInspectionSaveRender]);
 
   const inspectionRevisionTargets = useMemo<InspectionRevisionTarget[]>(() => {
     const entryByRoomTypeId = new Map(inspectionSessionEntries.map((entry) => [entry.roomTypeId, entry]));
@@ -1991,7 +2058,7 @@ export default function ProjectScreen({
         roomTypeId: rt.id,
         name: rt.name || "Room Type",
         currentRevision: rt.revision || "-",
-        revision: entry.revision || nextRoomTypeRevisionValue(rt),
+        revision: entry.revisionEdited ? entry.revision : nextRoomTypeRevisionValue(rt),
         note: entry.note,
         selected: entry.selected,
       }];
@@ -1999,7 +2066,7 @@ export default function ProjectScreen({
   }, [inspectionSessionEntries, project.roomTypes]);
 
   const handleInspectionModeStart = useCallback((roomTypeId: string, payload: InspectionCompletionPayload): void => {
-    const roomType = project.roomTypes.find((rt) => rt.id === roomTypeId);
+    const roomType = inspectionContextRef.current.project.roomTypes.find((rt) => rt.id === roomTypeId);
     setInspectionSessionEntries([{
       roomTypeId,
       baseline: cloneProjectData(payload),
@@ -2008,12 +2075,12 @@ export default function ProjectScreen({
       note: "",
       selected: true,
     }]);
-  }, [project.roomTypes]);
+  }, []);
 
   const handleInspectionRoomTypeEnter = useCallback((roomTypeId: string, payload: InspectionCompletionPayload): void => {
     setInspectionSessionEntries((entries) => {
       if (entries.some((entry) => entry.roomTypeId === roomTypeId)) return entries;
-      const roomType = project.roomTypes.find((rt) => rt.id === roomTypeId);
+      const roomType = inspectionContextRef.current.project.roomTypes.find((rt) => rt.id === roomTypeId);
       return [
         ...entries,
         {
@@ -2026,14 +2093,15 @@ export default function ProjectScreen({
         },
       ];
     });
-  }, [project.roomTypes]);
+  }, []);
 
   const handleInspectionLiveChange = useCallback((
     roomTypeId: string,
     payload: InspectionCompletionPayload,
     options: { hasDraft: boolean },
   ): void => {
-    const currentRoomType = project.roomTypes.find((rt) => rt.id === roomTypeId);
+    const currentRoomType = inspectionContextRef.current.project.roomTypes.find((rt) => rt.id === roomTypeId);
+    if (!inspectionContextRef.current.canEdit) return;
     if (!currentRoomType || inspectionPayloadsEqual({
       scenes: currentRoomType.scenes,
       roomScenes: currentRoomType.roomScenes,
@@ -2041,6 +2109,7 @@ export default function ProjectScreen({
       inspectionMarks: currentRoomType.inspectionMarks ?? [],
     }, payload)) return;
 
+    inspectionEditVersionRef.current += 1;
     setInspectionSessionEntries((entries) => {
       const existing = entries.find((entry) => entry.roomTypeId === roomTypeId);
       const roomType = project.roomTypes.find((rt) => rt.id === roomTypeId);
@@ -2053,6 +2122,7 @@ export default function ProjectScreen({
         baseline,
         touched,
         revision: existing?.revision || (roomType ? nextRoomTypeRevisionValue(roomType) : "1.01"),
+        revisionEdited: existing?.revisionEdited,
         note: existing?.note ?? "",
         selected: existing?.selected ?? true,
       };
@@ -2082,112 +2152,90 @@ export default function ProjectScreen({
     roomTypeId: string,
     patch: Partial<Pick<InspectionRevisionTarget, "selected" | "revision" | "note">>,
   ): void => {
+    inspectionEditVersionRef.current += 1;
     setInspectionSessionEntries((entries) =>
       entries.map((entry) =>
         entry.roomTypeId === roomTypeId
-          ? { ...entry, ...patch }
+          ? { ...entry, ...patch, revisionEdited: patch.revision !== undefined ? true : entry.revisionEdited }
           : entry,
       ),
     );
   }, []);
 
+  const handleInspectionModeFinish = useCallback((savedAsNewRevision: boolean): void => {
+    setInspectionSessionEntries([]);
+    if (savedAsNewRevision) setShowRevisionChanges(true);
+  }, []);
+
   const handleCompleteInspection = useCallback(
-    (payload: InspectionCompletionPayload, options: InspectionCompletionOptions): boolean => {
-      if (!canEdit) {
+    async (payload: InspectionCompletionPayload, options: InspectionCompletionOptions): Promise<boolean> => {
+      const started = inspectionContextRef.current;
+      if (!started.canEdit) {
         onReadOnlyAction?.();
         return false;
       }
-      if (!activeRoomTypeId) return false;
-
-      if (options.saveAsNewRevision) {
-        const entryByRoomTypeId = new Map(inspectionSessionEntries.map((entry) => [entry.roomTypeId, entry]));
-        const selectedRoomTypeIds = new Set(
-          inspectionSessionEntries
-            .filter((entry) => entry.touched && entry.selected)
-            .map((entry) => entry.roomTypeId),
-        );
-        if (selectedRoomTypeIds.size === 0) selectedRoomTypeIds.add(activeRoomTypeId);
-
-        const invalidRoomType = project.roomTypes.find((rt) => {
-          if (!selectedRoomTypeIds.has(rt.id)) return false;
-          const entry = entryByRoomTypeId.get(rt.id);
-          const revision = normalizedRevisionValue(entry?.revision, nextRoomTypeRevisionValue(rt));
-          return revisionValidationMessage(rt, revision) !== "";
-        });
-        if (invalidRoomType) {
-          const entry = entryByRoomTypeId.get(invalidRoomType.id);
-          const revision = normalizedRevisionValue(entry?.revision, nextRoomTypeRevisionValue(invalidRoomType));
-          window.alert(revisionValidationMessage(invalidRoomType, revision));
-          return false;
-        }
-
-        void (async () => {
-          let saveValidationError = "";
-          const saved = await onSaveProjectRevision((current) => {
-            const currentInvalidRoomType = current.roomTypes.find((rt) => {
-              if (!selectedRoomTypeIds.has(rt.id)) return false;
-              const entry = entryByRoomTypeId.get(rt.id);
-              const revision = normalizedRevisionValue(entry?.revision, nextRoomTypeRevisionValue(rt));
-              return revisionValidationMessage(rt, revision) !== "";
-            });
-            if (currentInvalidRoomType) {
-              const entry = entryByRoomTypeId.get(currentInvalidRoomType.id);
-              const revision = normalizedRevisionValue(entry?.revision, nextRoomTypeRevisionValue(currentInvalidRoomType));
-              saveValidationError = revisionValidationMessage(currentInvalidRoomType, revision);
-              return null;
+      if (!started.activeRoomTypeId || inspectionSavePendingRef.current) return false;
+      const editVersion = inspectionEditVersionRef.current;
+      const capturedPayload = cloneProjectData(payload);
+      const entries = cloneProjectData(inspectionEntriesRef.current);
+      const entryByRoomTypeId = new Map(entries.map(entry => [entry.roomTypeId, entry]));
+      const selectedRoomTypeIds = new Set(entries.filter(entry => entry.touched && entry.selected).map(entry => entry.roomTypeId));
+      const activeEntry = entryByRoomTypeId.get(started.activeRoomTypeId);
+      if (activeEntry?.selected && !inspectionPayloadsEqual(activeEntry.baseline, capturedPayload)) selectedRoomTypeIds.add(started.activeRoomTypeId);
+      if (!entries.some(entry => entry.touched)) selectedRoomTypeIds.add(started.activeRoomTypeId);
+      const displayedRevisions = new Map(started.project.roomTypes.map(rt => [rt.id,
+        entryByRoomTypeId.get(rt.id)?.revisionEdited ? entryByRoomTypeId.get(rt.id)!.revision.trim() : nextRoomTypeRevisionValue(rt)]));
+      let saveValidationError = '';
+      inspectionSavePendingRef.current = true;
+      try {
+        const mutate = (current: ProjectData): ProjectData | null => {
+          if (inspectionContextRef.current.epoch !== started.epoch || current.id !== started.project.id
+            || !current.roomTypes.some(rt => rt.id === started.activeRoomTypeId)) return null;
+          // Resolve links first, then capture each new snapshot and its scoped
+          // circuits from this same current project. Old snapshots are retained.
+          const linked = syncProjectRoomTypeLinks({ ...current, roomTypes: current.roomTypes.map(rt => rt.id === started.activeRoomTypeId
+            ? { ...applyInspectionPayloadToRoomType(rt, capturedPayload), updatedAt: new Date().toISOString() } : rt) }, { devices });
+          if (!options.saveAsNewRevision) return linked;
+          if (!selectedRoomTypeIds.size) { saveValidationError = 'Select at least one room type to save a new revision.'; return null; }
+          const revisions = new Map<string, string>();
+          for (const id of selectedRoomTypeIds) {
+            const rt = linked.roomTypes.find(room => room.id === id);
+            if (!rt) { saveValidationError = 'An inspection room type is no longer available. Keep the inspection data and check Recovery.'; return null; }
+            const entry = entryByRoomTypeId.get(id);
+            const revision = entry?.revisionEdited ? entry.revision.trim() : nextRoomTypeRevisionValue(rt);
+            if (revision !== displayedRevisions.get(id)) {
+              saveValidationError = 'The revision candidate changed. Review the latest revision number before saving.'; return null;
             }
-
-            return syncProjectRoomTypeLinks(
-              {
-                ...current,
-                roomTypes: current.roomTypes.map((rt) => {
-                  let nextRoomType = rt.id === activeRoomTypeId
-                    ? applyInspectionPayloadToRoomType(rt, payload)
-                    : rt;
-                  if (selectedRoomTypeIds.has(rt.id)) {
-                    const entry = entryByRoomTypeId.get(rt.id);
-                    nextRoomType = saveRoomTypeRevision(nextRoomType, circuitsForRoomType(current, nextRoomType), {
-                      clearInspectionMarks: false,
-                      note: entry?.note ?? "",
-                      revisionOverride: entry?.revision,
-                    });
-                  }
-                  return nextRoomType === rt
-                    ? rt
-                    : { ...nextRoomType, updatedAt: new Date().toISOString() };
-                }),
-              },
-              { devices },
-            );
-          });
-          if (saveValidationError) {
-            window.alert(saveValidationError);
-            return;
+            saveValidationError = revisionValidationMessage(rt, revision);
+            if (saveValidationError) return null;
+            revisions.set(id, revision);
           }
-          if (!saved) {
-            window.alert("The inspection revisions could not be saved. Keep editing and try again.");
-            return;
-          }
-          setInspectionSessionEntries([]);
-          setShowRevisionChanges(true);
-        })();
-      } else {
-        updateActiveRoomType((rt) => applyInspectionPayloadToRoomType(rt, payload));
-        setInspectionSessionEntries([]);
-      }
-      return true;
+          return { ...linked, roomTypes: linked.roomTypes.map(rt => {
+            const revision = revisions.get(rt.id);
+            if (revision === undefined) return rt;
+            return { ...saveRoomTypeRevision(rt, circuitsForRoomType(linked, rt), {
+              clearInspectionMarks: false, note: entryByRoomTypeId.get(rt.id)?.note ?? '', revisionOverride: revision,
+            }, linked), updatedAt: new Date().toISOString() };
+          }) };
+        };
+        const saved = await (options.saveAsNewRevision ? onSaveProjectRevision(mutate) : onSaveProjectDraft(mutate));
+        const committed = saved && await waitForInspectionSaveRender(started);
+        if (inspectionContextRef.current.epoch !== started.epoch || !inspectionContextRef.current.canEdit) return false;
+        if (saveValidationError) { window.alert(saveValidationError); return false; }
+        if (saved && !committed) throw new InspectionSaveViewError();
+        if (!committed) return false;
+        if (inspectionEditVersionRef.current !== editVersion) throw new InspectionSaveViewError(true);
+        return true;
+      } finally { inspectionSavePendingRef.current = false; }
     },
     [
-      activeRoomTypeId,
-      canEdit,
       devices,
-      inspectionSessionEntries,
       onReadOnlyAction,
+      onSaveProjectDraft,
       onSaveProjectRevision,
-      project.roomTypes,
       revisionValidationMessage,
       saveRoomTypeRevision,
-      updateActiveRoomType,
+      waitForInspectionSaveRender,
     ],
   );
 
@@ -3134,9 +3182,11 @@ export default function ProjectScreen({
                 onOpenExternalWindow={handleOpenCfsWindow}
                 onOpenPinnedWindow={handleOpenPinnedCfsWindow}
                 canEdit={canEdit}
+                inspectionSaveScope={inspectionScopeKey}
                 hasRevisionDraft={roomTypeHasRevisionDraft(activeRoomType)}
                 onBeforeInspectionStart={handlePrepareInspectionStart}
                 onInspectionModeStart={handleInspectionModeStart}
+                onInspectionModeFinish={handleInspectionModeFinish}
                 onInspectionRoomTypeEnter={handleInspectionRoomTypeEnter}
                 onInspectionLiveChange={handleInspectionLiveChange}
                 onCompleteInspection={handleCompleteInspection}

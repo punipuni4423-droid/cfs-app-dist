@@ -110,6 +110,7 @@ $shareScripts = @(
   "ensure-node-runtime.ps1",
   "launch-cfs-app.ps1",
   "start-cfs-background-server.ps1",
+  "sync-cfs-startup-static.ps1",
   "test-cfs-instance.ps1",
   "update-cfs-app.ps1",
   "cfs-update-bootstrap.ps1",

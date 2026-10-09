@@ -142,7 +142,11 @@ if "%NEED_BUILD%"=="1" (
     call :set_status "CFS build failed. See the start log."
     exit /b 1
   )
-  call :sync_standalone_static
+  powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%APP_ROOT%\scripts\sync-cfs-startup-static.ps1" -AppRoot "%APP_ROOT%"
+  if errorlevel 1 (
+    call :set_status "CFS static assets could not be prepared. See the start log."
+    exit /b 1
+  )
 )
 if exist "%UPDATED_STANDALONE_SERVER%" (
   set "STANDALONE_SERVER=%UPDATED_STANDALONE_SERVER%"
@@ -263,19 +267,9 @@ if /I "%BUILD_GIT_SHA%"=="%CURRENT_GIT_SHA%" (
 )
 exit /b 0
 
-rem Mirrors Sync-StandaloneStaticAssets in scripts\update-cfs-app.ps1: the Next
-rem standalone runtime serves /_next/static from .next\standalone\.next\static,
-rem which "next build" does not populate on its own.
-:sync_standalone_static
-if not exist "%APP_ROOT%\.next\standalone\server.js" exit /b 0
-if not exist "%APP_ROOT%\.next\static" exit /b 0
-if exist "%APP_ROOT%\.next\standalone\.next\static" rmdir /s /q "%APP_ROOT%\.next\standalone\.next\static" >nul 2>nul
-xcopy /e /i /y /q "%APP_ROOT%\.next\static" "%APP_ROOT%\.next\standalone\.next\static" >nul 2>nul
-exit /b 0
-
 :is_cfs_running
 if exist "%APP_ROOT%\scripts\test-cfs-instance.ps1" (
-  powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%APP_ROOT%\scripts\test-cfs-instance.ps1" -Port %PORT% -AppRoot "%APP_ROOT%"
+  powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%APP_ROOT%\scripts\test-cfs-instance.ps1" -Port %PORT% -AppRoot "%APP_ROOT%" -CheckStaticAssets
   exit /b !ERRORLEVEL!
 )
 exit /b 1

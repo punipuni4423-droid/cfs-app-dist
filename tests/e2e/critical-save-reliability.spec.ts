@@ -446,7 +446,7 @@ test('New Revision captures normalized new rows and preserves prior snapshot byt
   await page.getByRole('tab', { name: 'CFS', exact: true }).click();
   await page.getByRole('button', { name: 'InspectionMode', exact: true }).click();
   const inspection = page.getByRole('dialog', { name: 'Start InspectionMode', exact: true });
-  await expect(inspection.getByText('Choose whether to save a new revision before starting InspectionMode.', { exact: true })).toBeVisible();
+  await expect(inspection.getByText('Start in the current revision without saving, or save and verify a new revision capturing the pre-inspection state before starting.', { exact: true })).toBeVisible();
   await inspection.getByRole('button', { name: 'Cancel', exact: true }).click();
   const releasesBeforeIdle = releases.length;
   const postsBeforeIdle = projectPosts;

@@ -261,7 +261,12 @@ async function storedAssignment(page: Page, projectId: string, assignmentId: str
 }
 
 async function storedRoomType(page: Page, projectId: string): Promise<RoomType | undefined> {
-  return (await readNativeDraftProject(page, projectId))?.roomTypes?.[0];
+  const draft = (await readNativeDraftProject(page, projectId))?.roomTypes?.[0];
+  if (draft) return draft;
+  // ABv2: Finish Current Revision is a confirmed save; the native draft is retired afterwards,
+  // so the saved values live in the mock /api/projects store.
+  const saved = mockState.projects.find((project) => String(project.id ?? "") === projectId) as { roomTypes?: RoomType[] } | undefined;
+  return saved?.roomTypes?.[0];
 }
 
 async function editEnd(page: Page, field: "Low" | "High", value: string): Promise<void> {

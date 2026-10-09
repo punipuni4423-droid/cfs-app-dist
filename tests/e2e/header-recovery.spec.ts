@@ -2,7 +2,7 @@ import { test, expect } from './support/safe-test';
 import { installLocalEditingMocks } from './support/secure-sharing-mock';
 import { createNewProject, prepareProjectSave } from '../../app/lib/storage';
 import { appendCommonRevision } from '../../app/lib/projectCommonHistory';
-import { readNativeDraftRecords } from './support/native-project-drafts';
+import { readNativeDraftRecords, type NativeDraftRecord } from './support/native-project-drafts';
 import { expectOperationBlocksUi } from './support/database-operation';
 
 test('normal project keeps recovery in the toolbar; panel disclosure performs no save or restore', async ({ page }) => {
@@ -126,8 +126,10 @@ test('a delayed previous-save confirmation blocks navigation, retains its draft,
     release();
     await expect(page.getByTestId('database-operation-overlay')).toHaveCount(0);
     await expect(page.getByTestId('save-check')).toHaveCount(0);
+    // Editable retained draft only; the verified-save evidence record is checked separately below.
     const retainedRecords = async () => (await readNativeDraftRecords(page)).filter(record => record.project.id === first.id
-      && record.scope.workspace === scope.workspace && record.scope.owner === scope.owner && record.scope.tab.startsWith('recovery:'));
+      && record.scope.workspace === scope.workspace && record.scope.owner === scope.owner && record.scope.tab.startsWith('recovery:')
+      && !record.scope.tab.startsWith('recovery:save-evidence:'));
     await expect.poll(async () => (await retainedRecords()).length).toBe(1);
     const retained = (await retainedRecords())[0];
     expect(retained.key).toBe(JSON.stringify([scope.workspace, scope.owner, first.id, retained.scope.tab]));
@@ -141,6 +143,21 @@ test('a delayed previous-save confirmation blocks navigation, retains its draft,
     expect(editedAt).toBeLessThanOrEqual(Math.max(priorTime, Date.now()));
     expect(retained.project).toEqual(JSON.parse(JSON.stringify({ ...draft, updatedAt: retained.project.updatedAt, lastUpdatedBy: sent.lastUpdatedBy })));
     expect(await readFallback()).toBeNull();
+    // The original intent is retained verbatim as verified-save evidence at a separate key.
+    const evidenceRecords = async () => (await readNativeDraftRecords(page)).filter(record => record.project.id === first.id
+      && record.scope.workspace === scope.workspace && record.scope.owner === scope.owner && record.scope.tab.startsWith('recovery:save-evidence:'));
+    await expect.poll(async () => (await evidenceRecords()).length).toBe(1);
+    const evidence = (await evidenceRecords())[0] as NativeDraftRecord & { confirmedSaveEvidence?: { operationId?: string }; intent?: unknown };
+    expect(evidence.key).toBe(JSON.stringify([scope.workspace, scope.owner, first.id, evidence.scope.tab]));
+    expect(evidence.confirmedSaveEvidence?.operationId).toBe(sent.lastSaveOperation!.id);
+    expect(evidence.intent).toEqual(JSON.parse(JSON.stringify({ before: first, project: sent, expectedUpdatedAt: first.updatedAt, operationId: sent.lastSaveOperation!.id })));
+    // The evidence row offers export only: no Check Previous Save, and Restore stays disabled.
+    const recoveryToggle = page.getByTestId('save-recovery-toggle');
+    if (await recoveryToggle.getAttribute('aria-expanded') !== 'true') await recoveryToggle.click();
+    const evidenceRow = page.getByTestId('recovery-record').filter({ hasText: 'Verified save evidence' });
+    await expect(evidenceRow).toHaveCount(1);
+    await expect(evidenceRow.getByRole('button', { name: 'Check Previous Save', exact: true })).toHaveCount(0);
+    await expect(evidenceRow.getByTestId('recovery-return-to-editor')).toBeDisabled();
     await otherCard.click();
     await expect(page.getByTestId('project-backup-download')).toBeVisible();
     await expect(page.getByTestId('save-reliability-alert')).toHaveCount(0);

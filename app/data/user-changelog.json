@@ -1,6 +1,17 @@
 {
   "entries": [
     {
+      "id": "2026-10-09-save-confirmation",
+      "date": "2026-10-09",
+      "title": "Verified saves for InspectionMode and recovery drafts ／ InspectionModeと復旧下書きの保存確認を改善",
+      "items": [
+        "InspectionMode now starts and finishes only after the save has been verified. Save New Revision & Start saves and verifies a new revision before starting, and Start Current Revision starts without saving. Both Finish options close InspectionMode only after the saved result is confirmed on screen. ／ InspectionModeの開始と終了は、保存の確認が終わってから進むようにしました。Save New Revision & Startは新しいRevisionを保存・確認してから開始し、Start Current Revisionは保存せずに開始します。どちらのFinishも、保存結果を画面で確認できてからInspectionModeを終了します。",
+        "If the inspection save cannot be verified, InspectionMode stays open and the inspection values, marks and memo are retained. Check Save Status or Recovery before saving again. ／ 検査の保存を確認できない場合はInspectionModeを終了せず、検査中の値・マーク・メモを保持します。再保存の前にSave StatusまたはRecoveryを確認してください。",
+        "After a previous save is verified from Save and Recovery, the local recovery draft is retired only after its verified-save evidence has been written and read back. If that step fails, the original draft is kept and the result is reported; it is never treated as success. The evidence record remains in Recovery for export only. ／ Save and Recoveryで以前の保存を確認できた場合、保存確認の証拠を書き込んで読み戻せたときだけ、ローカルの復旧下書きを整理します。この処理に失敗した場合は元の下書きを残して結果を表示し、成功とは扱いません。証拠の記録はExport用としてRecoveryに残ります。",
+        "Startup: after the first build, the app's static files are now prepared by a dedicated script that checks the copied files and the JS/CSS responses before the app opens. If this check fails, the app does not start. The share package includes this script. ／ 起動時: 初回ビルド後の静的ファイル準備を、コピー結果と画面が参照するJS/CSSの応答を確認する専用スクリプトに変更しました。確認に失敗した場合はアプリを起動しません。配布パッケージにもこのスクリプトを同梱します。"
+      ]
+    },
+    {
       "id": "2026-10-02-programming-area-address",
       "date": "2026-10-02",
       "title": "Programming Name Area Address formatting ／ Programming NameのArea Address表示を修正",

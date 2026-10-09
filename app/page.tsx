@@ -44,9 +44,10 @@ import { createAppId } from './lib/id';
 import { useCollaboration } from "./lib/useCollaboration";
 import { DEFAULT_CFS_ROW_ORDER } from "./lib/cfsRowDisplay";
 import { hasProjectChanges, nextProjectEditTime, rebaseProjectSave, type ProjectSaveReceipt } from "./lib/projectSaveState";
-import { archiveLegacyProjectDrafts, cachedDraftRecords, checkpointProject, checkpointProjectImport, checkpointProjectRestore, discardCurrentTabDraft, draftScope, resetProjectDrafts, validDraftRecord, exportRecoveryBytes, preserveRecoveryProject, DRAFT_STATUS_EVENT, getDraftStatus, initializeProjectDrafts, removeConfirmedDraft, type ProjectDraftRecord, type DraftScope } from './lib/projectDraftStore';
+import { archiveLegacyProjectDrafts, cachedDraftRecords, checkpointProject, checkpointProjectImport, checkpointProjectRestore, discardCurrentTabDraft, draftScope, resetProjectDrafts, validDraftRecord, exportRecoveryBytes, preserveRecoveryProject, retainAndRetireConfirmedDraft, DRAFT_STATUS_EVENT, getDraftStatus, initializeProjectDrafts, removeConfirmedDraft, type ProjectDraftRecord, type DraftScope } from './lib/projectDraftStore';
 import { completeImportBatch, confirmedImportBatch, deferredImportSubset, importBatches, importTargetsProject, isImportRecovery, recoverableImportSubset, verifyImportBatch, type ImportRecovery } from './lib/projectImportRecovery';
 import { confirmProjectImport, deferProjectImport, refreshProjectImport } from './lib/projectDraftStore';
+import { isConfirmedSaveEvidence, isUnresolvedSaveIntent } from './lib/projectDraftStore';
 import { finiteFetch, SaveProtocolError } from './lib/projectSaveProtocol';
 import { appendCommonRevision, commonSnapshot } from './lib/projectCommonHistory';
 import { canonicalJson, valuesDiffer } from './lib/canonicalJson';
@@ -287,7 +288,15 @@ export default function Home() {
     setProjectsState(next);
   }, []);
   const [trash, setTrash] = useState<TrashData>(emptyTrashData);
-  const [activeProjectId, setActiveProjectId] = useState<string>(() => readStoredActiveProjectId());
+  const [activeProjectId, setActiveProjectIdState] = useState<string>(() => readStoredActiveProjectId());
+  const activeProjectRef = useRef(activeProjectId);
+  const projectNavigationEpoch = useRef(0);
+  const setActiveProjectId = useCallback((update: string | ((current: string) => string)): void => {
+    const next = typeof update === 'function' ? update(activeProjectRef.current) : update;
+    if (next !== activeProjectRef.current) projectNavigationEpoch.current += 1;
+    activeProjectRef.current = next;
+    setActiveProjectIdState(next);
+  }, []);
   const collaboration = useCollaboration(activeProjectId);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -331,7 +340,12 @@ export default function Home() {
   const [recoveryRecords, setRecoveryRecords] = useState<ProjectDraftRecord[]>([]);
   const [saveFeedback, setSaveFeedback] = useState<{ kind: SaveFeedbackKind; message: string; projectId: string; epoch: number } | null>(null);
   const [workspaceUnverified, setWorkspaceUnverified] = useState(false);
-  const [pendingSave, setPendingSave] = useState<{ before: ProjectData; sent: ProjectData; expected: string; draft: ProjectDraftRecord | null; archived?: boolean; forceOverwriteUpdatedAt?: string } | null>(null);
+  const [pendingSave, setPendingSaveState] = useState<{ before: ProjectData; sent: ProjectData; expected: string; draft: ProjectDraftRecord | null; archived?: boolean; forceOverwriteUpdatedAt?: string } | null>(null);
+  const pendingSaveRef = useRef(pendingSave);
+  const setPendingSave = useCallback((next: typeof pendingSave): void => {
+    pendingSaveRef.current = next; setPendingSaveState(next);
+  }, []);
+  const confirmedPendingSaveRef = useRef<{ attempt: NonNullable<typeof pendingSave>; saved: ProjectData; working: ProjectData | undefined } | null>(null);
   const [pendingRestore, setPendingRestore] = useState<{ record: ProjectDraftRecord; projectConfirmed: boolean } | null>(null);
   const restoreInFlight = useRef(false);
   const importInFlight = useRef(false);
@@ -349,8 +363,6 @@ export default function Home() {
   const tabId = useRef(createAppId());
   const previousMode = useRef(collaboration.mode);
   const ownerEpoch = useRef(0);
-  const activeProjectRef = useRef(activeProjectId);
-  activeProjectRef.current = activeProjectId;
   const captureSaveFeedbackScope = useCallback((): SaveFeedbackScope => ({ projectId: activeProjectRef.current, epoch: ownerEpoch.current }), []);
   const reportSaveFeedback = useCallback((kind: SaveFeedbackKind, message: string, feedbackScope: SaveFeedbackScope = captureSaveFeedbackScope()) => {
     setSaveFeedback({ kind, message, ...feedbackScope });
@@ -1080,7 +1092,7 @@ export default function Home() {
     const persisted = persistedProjects.current.get(project.id);
     if (!owner || !before || !persisted || hasProjectChanges(before, persisted) || explicitSavePending.current || pendingSave || pendingRestore
       || importInFlight.current || restoreInFlight.current
-      || cachedDraftRecords().some(record => record.project.id === project.id && (record.intent || record.importRecovery))) {
+      || cachedDraftRecords().some(record => record.project.id === project.id && (isUnresolvedSaveIntent(record) || record.importRecovery))) {
       window.alert('Save your changes and resolve any pending save or recovery before deleting a Room Type.');
       return false;
     }
@@ -1300,7 +1312,7 @@ export default function Home() {
       const existing = started.find(item => item.id === project.id);
       const token = persistedProjectUpdatedAt.current.get(project.id);
       if (existing && !token) throw new Error('The shared baseline is unknown. Load shared data before importing.');
-      if (importBlocksProject(project.id) || cachedDraftRecords().some(record => record.project.id === project.id && record.intent)) {
+      if (importBlocksProject(project.id) || cachedDraftRecords().some(record => record.project.id === project.id && isUnresolvedSaveIntent(record))) {
         throw new Error('A previous save for an import target needs verification. Open Save and Recovery first.');
       }
       return existing ? token! : null;
@@ -1779,31 +1791,69 @@ export default function Home() {
   const resolvePendingSave = async (retry = false): Promise<void> => {
     const feedbackScope = captureSaveFeedbackScope();
     if (!pendingSave || explicitSavePending.current || importInFlight.current || importBlocksProject(pendingSave.sent.id)) return;
+    if (pendingSave.draft && isConfirmedSaveEvidence(pendingSave.draft)) {
+      reportSaveFeedback('recovery-required', 'This record is evidence of a verified save. Export it for review; use the separate retained draft for later edits.', feedbackScope);
+      return;
+    }
     if (retry && (!requireEditMode() || activeProjectId !== pendingSave.sent.id)) return;
     const operation = beginOperation(retry ? 'Retrying save…' : 'Checking save status…');
     if (!operation) return;
     explicitSavePending.current = true;
     const owner = draftScope();
     const epoch = ownerEpoch.current;
+    const attempt = pendingSave;
+    const navigationEpoch = projectNavigationEpoch.current;
+    const startedView = activeProjectRef.current;
+    const currentAttempt = () => epoch === ownerEpoch.current && owner === draftScope() && pendingSaveRef.current === attempt
+      && navigationEpoch === projectNavigationEpoch.current && startedView === activeProjectRef.current;
+    let databaseVerified = false;
     const identity = { userId: collaboration.user?.id ?? '', sessionId: collaboration.sessionId,
       projectId: pendingSave.sent.id, accessToken: collaboration.accessToken || undefined, requireLock: retry };
     try {
-      const saved = retry
+      const saved = retry && confirmedPendingSaveRef.current?.attempt !== attempt
         ? await saveProjectToDatabase(pendingSave.sent, projectsRef.current, { expectedUpdatedAt: pendingSave.expected,
           base: pendingSave.draft?.intent?.base, restoreSource: pendingSave.draft?.intent?.restoreSource,
           forceOverwrite: Boolean(pendingSave.forceOverwriteUpdatedAt), forceOverwriteUpdatedAt: pendingSave.forceOverwriteUpdatedAt,
           collaboration: identity, notifyOnError: false })
         : pendingSave.draft?.intent?.restoreSource ? await confirmProjectRestore(pendingSave.sent, identity) : await confirmProjectSave(pendingSave.sent, identity);
-      if (epoch !== ownerEpoch.current) return;
+      if (!currentAttempt()) return;
+      databaseVerified = true;
       if (pendingSave.archived && pendingSave.draft) {
-        const recovered = rebaseProjectSave({ before: pendingSave.before, saved }, pendingSave.draft.project);
-        const retained = await preserveRecoveryProject(recovered, saved.updatedAt, owner);
-        if (epoch !== ownerEpoch.current) return;
-        if (retained) {
-          await removeConfirmedDraft(pendingSave.draft).catch(() => undefined);
-          if (epoch !== ownerEpoch.current) return;
-          setRecoveryRecords(cachedDraftRecords());
+        if (!owner) throw new Error('The local recovery owner could not be verified.');
+        const receipt = { before: attempt.before, saved };
+        rememberPersistedProject(saved);
+        const prior = confirmedPendingSaveRef.current;
+        const workingBefore = projectsRef.current.find(project => project.id === saved.id);
+        if (!prior || prior.attempt !== attempt || prior.working !== workingBefore || canonicalJson(prior.saved) !== canonicalJson(saved)) {
+          draftCheckpointEpoch.current.set(saved.id, (draftCheckpointEpoch.current.get(saved.id) ?? 0) + 1);
+          skipNextSave.current = true;
+          setProjects(latest => latest.map(project => project.id === saved.id ? rebaseProjectSave(receipt, project) : project));
         }
+        setSaveReceipt(receipt);
+        const working = projectsRef.current.find(project => project.id === saved.id);
+        confirmedPendingSaveRef.current = { attempt, saved, working };
+        const recovered = rebaseProjectSave(receipt, pendingSave.draft.project);
+        // Local mode serves no bases; shared mode keeps the verified baseline mandatory before any side effect.
+        const base = capturedProjectBase(saved.id, saved.updatedAt);
+        const baseRequired = collaboration.sharingMode === 'supabase';
+        if (baseRequired && !base) throw new Error('The confirmed database baseline could not be verified.');
+        const retained = await preserveRecoveryProject(recovered, saved.updatedAt, owner);
+        if (!currentAttempt()) return;
+        if (!retained) throw new Error('Later edits could not be retained and read back in Recovery.');
+        const unchanged = () => currentAttempt() && projectsRef.current.find(project => project.id === saved.id) === working;
+        if (!unchanged()) throw new Error('Newer working edits are retained. Local recovery confirmation is not complete.');
+        const currentKey = JSON.stringify([owner.workspace, owner.owner, saved.id, owner.tab]);
+        const sameKey = currentKey === pendingSave.draft.key;
+        if (sameKey && !working) throw new Error('The latest working draft could not be verified.');
+        if (!sameKey && working) {
+          const workingDraft = cachedDraftRecords().find(record => record.key === currentKey);
+          if (isUnresolvedSaveIntent(workingDraft) || workingDraft?.importRecovery) throw new Error('The current tab has another pending save or import. Its original evidence is retained.');
+          const checkpoint = await checkpointProject(working, saved.updatedAt, null, owner);
+          if (!checkpoint || !unchanged()) throw new Error('The latest working draft could not be retained and read back.');
+        }
+        await retainAndRetireConfirmedDraft(pendingSave.draft, owner, sameKey ? { project: working!, base } : null, unchanged, { saved, base });
+        if (!unchanged()) return;
+        setRecoveryRecords(cachedDraftRecords());
         setPendingSave(null);
         reportSaveFeedback('recovery-required', 'The previous save has been verified. Later edits are retained in the local draft. Obtain edit access, then restore the draft to editing.', feedbackScope);
         return;
@@ -1820,8 +1870,11 @@ export default function Home() {
       setSaveStatus(saved.lastSaveOperation?.kind === 'current' ? 'projectSaved' : 'revisionSaved');
       reportSaveFeedback('success', 'Saved contents verified.', feedbackScope);
     } catch (error) {
-      if (epoch !== ownerEpoch.current) return;
-      reportSaveFeedback('save-failed', error instanceof SaveProtocolError ? `${error.message} (${error.code}${error.status ? ` / HTTP ${error.status}` : ''})` : 'The save result has not yet been verified. The local draft is retained.', feedbackScope);
+      if (!currentAttempt()) return;
+      if (databaseVerified) {
+        setRecoveryRecords(cachedDraftRecords());
+        reportSaveFeedback('recovery-required', `The database save was verified, but local recovery is not complete. Keep this view open and export a backup or Recovery. ${error instanceof Error ? error.message : ''}`, feedbackScope);
+      } else reportSaveFeedback('save-failed', error instanceof SaveProtocolError ? `${error.message} (${error.code}${error.status ? ` / HTTP ${error.status}` : ''})` : 'The save result has not yet been verified. The local draft is retained.', feedbackScope);
     } finally { if (epoch === ownerEpoch.current) explicitSavePending.current = false; endDatabaseOperation(operation); }
   };
 
@@ -1866,7 +1919,7 @@ export default function Home() {
   const notificationDraftUnsafe = getDraftStatus().state !== 'saved'
     || projects.some(project => ['saving', 'failed'].includes(getDraftStatus(project.id).state))
     || notificationImportsUnsafe
-    || notificationRecords.some(record => !validDraftRecord(record) || Boolean(record.intent)
+    || notificationRecords.some(record => !validDraftRecord(record) || isUnresolvedSaveIntent(record)
       || ['saving', 'failed'].includes(getDraftStatus(record.project.id).state));
   const notificationReloadSafe = collaboration.mode === 'view' && !collaboration.busy && !notificationDirty && !notificationDraftUnsafe
     && !noticeRequired && !explicitSavePending.current && !deletePending.current && !restoreInFlight.current && !importInFlight.current
@@ -1952,15 +2005,17 @@ export default function Home() {
           <span>Draft for this user: {record.project.name} / {record.savedAt} </span>
           <button className="btn btn-secondary" data-testid="recovery-export-raw" onClick={() => exportRecoveryBytes(record)}>Export Original Draft</button>
           {!validDraftRecord(record) && <span role="alert">The draft structure could not be verified. Export the original draft for review.</span>}
+          {isConfirmedSaveEvidence(record) && <span>Verified save evidence. Export is available; this record is not an editable draft.</span>}
           {validDraftRecord(record) && record.intent?.restore && <button className="btn btn-secondary" disabled={restoringProject} onClick={() => {
             setPendingRestore({ record, projectConfirmed: false }); reportSaveFeedback('recovery-required', 'A previous restore request is retained. Check Restore Status.');
           }}>Check Previous Restore</button>}
-          {validDraftRecord(record) && record.intent && !record.intent.restore && <button className="btn btn-secondary" onClick={() => {
+          {validDraftRecord(record) && isUnresolvedSaveIntent(record) && record.intent && !record.intent.restore && <button className="btn btn-secondary" onClick={() => {
             if (!record.intent!.before) { reportSaveFeedback('recovery-required', 'The previous save baseline is incomplete. Export the draft and review the differences.'); return; }
             setPendingSave({ before: record.intent!.before, sent: record.intent!.project, expected: record.intent!.expectedUpdatedAt, draft: record, archived: true, forceOverwriteUpdatedAt: record.intent!.forceOverwriteUpdatedAt });
             reportSaveFeedback('recovery-required', 'A previous save request is retained. Check Save Status.');
           }}>Check Previous Save</button>}
-          <button className="btn btn-secondary" data-testid="recovery-return-to-editor" disabled={!validDraftRecord(record) || Boolean(record.intent?.restore) || !collaboration.canEdit || activeProjectId !== record.project.id || !projects.some(project => project.id === record.project.id)} onClick={() => {
+          <button className="btn btn-secondary" data-testid="recovery-return-to-editor" disabled={!validDraftRecord(record) || isConfirmedSaveEvidence(record) || Boolean(record.intent?.restore) || !collaboration.canEdit || activeProjectId !== record.project.id || !projects.some(project => project.id === record.project.id)} onClick={() => {
+            if (isConfirmedSaveEvidence(record)) return;
             const server = persistedProjects.current.get(record.project.id);
             const currentBase = capturedProjectBase(record.project.id, server?.updatedAt);
             const baseMatches = record.base && currentBase && record.base.version === currentBase.version && record.base.hash === currentBase.hash && record.base.updatedAt === currentBase.updatedAt;
@@ -1969,7 +2024,7 @@ export default function Home() {
             }
             if (!window.confirm('Restore this draft to editing? It will not be saved to shared data yet.')) return;
             setProjects(latest => latest.map(project => project.id === record.project.id ? record.project : project));
-            if (record.intent) setPendingSave({ before: record.intent.before, sent: record.intent.project, expected: record.intent.expectedUpdatedAt, draft: record, forceOverwriteUpdatedAt: record.intent.forceOverwriteUpdatedAt });
+            if (isUnresolvedSaveIntent(record) && record.intent) setPendingSave({ before: record.intent.before, sent: record.intent.project, expected: record.intent.expectedUpdatedAt, draft: record, forceOverwriteUpdatedAt: record.intent.forceOverwriteUpdatedAt });
             reportSaveFeedback('draft-restored', 'The draft has been restored to editing. It is not saved to shared data.');
           }}>Restore Draft to Editing</button>
         </div>
