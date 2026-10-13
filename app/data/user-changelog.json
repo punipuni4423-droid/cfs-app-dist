@@ -1,6 +1,15 @@
 {
   "entries": [
     {
+      "id": "2026-10-13-delete-unverified-save-warning",
+      "date": "2026-10-13",
+      "title": "Warning before deleting a project whose last save is unverified ／ 保存未確認の案件を削除する前に警告",
+      "items": [
+        "When you delete a project whose last save could not be verified (for example after a reload during a save), the confirmation now warns that its latest changes may not be saved to the database and that a local draft is retained on this device and can be exported from Save and Recovery. Cancel sends nothing and keeps the project and the draft. ／ 最後の保存を確認できていない案件（保存中に再読込した場合など）を削除するとき、確認ダイアログに「最新の変更がデータベースに保存されていない可能性がある」「この端末にローカル下書きが残り、Save and RecoveryからExportできる」という警告を表示します。Cancelすれば何も送信されず、案件と下書きはそのまま残ります。",
+        "Deleting a project whose save is already verified works exactly as before. ／ 保存が確認済みの案件の削除は従来どおりです。"
+      ]
+    },
+    {
       "id": "2026-10-09-save-confirmation",
       "date": "2026-10-09",
       "title": "Verified saves for InspectionMode and recovery drafts ／ InspectionModeと復旧下書きの保存確認を改善",

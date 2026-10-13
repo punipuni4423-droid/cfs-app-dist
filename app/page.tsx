@@ -892,9 +892,15 @@ export default function Home() {
       const epoch = ownerEpoch.current;
       const project = projects.find((p) => p.id === id);
       if (!project) return;
+      // A retained save intent without verified evidence means the last save
+      // outcome is unknown (for example after a reload). Warn before any request.
+      const saveOutcomeUnknown = cachedDraftRecords().some(record => record.project.id === id && isUnresolvedSaveIntent(record));
+      const unknownSaveWarning = saveOutcomeUnknown
+        ? 'Warning: the last save of this project could not be verified. Its latest changes may not be saved to the database.\nA local draft is retained on this device and can be exported from Save and Recovery.\n\n'
+        : '';
       if (
         !window.confirm(
-          `Move project "${project.name}" to Trash?\n\nIt will be permanently deleted only when you empty Trash.`,
+          `${unknownSaveWarning}Move project "${project.name}" to Trash?\n\nIt will be permanently deleted only when you empty Trash.`,
         )
       ) {
         return;
