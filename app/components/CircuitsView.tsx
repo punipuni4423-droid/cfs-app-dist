@@ -1,5 +1,6 @@
 "use client";
 
+import AddRowButton from "./AddRowButton";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CircuitEntry, DryContactEntry, FixtureMaster, LocationMaster, RevisionFieldChanges } from "../types";
 import {
@@ -1201,15 +1202,7 @@ export default function CircuitsView({
               })
             )}
           </tbody>
-          <tfoot>
-            <tr className="add-row-tr">
-              <td colSpan={COL_COUNT}>
-                <button className="btn-add-row" onClick={addRow} title="Add Row" disabled={!canEdit}>
-                  + Add Row
-                </button>
-              </td>
-            </tr>
-          </tfoot>
+          <AddRowButton colSpan={COL_COUNT} onClick={addRow} disabled={!canEdit} title="Add Row" />
         </table>
       </ResizableMatrixScroll>
         </>
@@ -1334,15 +1327,7 @@ export default function CircuitsView({
                 })
               )}
             </tbody>
-            <tfoot>
-              <tr className="add-row-tr">
-                <td colSpan={DRY_CONTACT_COL_COUNT}>
-                  <button className="btn-add-row" onClick={addDryContactRow} title="Add Row" disabled={!canEdit}>
-                    + Add Row
-                  </button>
-                </td>
-              </tr>
-            </tfoot>
+            <AddRowButton colSpan={DRY_CONTACT_COL_COUNT} onClick={addDryContactRow} disabled={!canEdit} title="Add Row" />
           </table>
         </ResizableMatrixScroll>
       )}

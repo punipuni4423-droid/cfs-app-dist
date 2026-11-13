@@ -1,5 +1,6 @@
 "use client";
 
+import AddRowButton from "./AddRowButton";
 import type { TriggerMaster } from "../types";
 import { createEmptyTriggerMaster } from "../lib/constants";
 import ActionIconButton from "./ActionIconButton";
@@ -60,15 +61,7 @@ export default function TriggerMastersView({
               </tr>
             ))}
           </tbody>
-          <tfoot>
-            <tr className="add-row-tr">
-              <td colSpan={2}>
-                <button className="btn-add-row" onClick={addRow}>
-                  + Add Row
-                </button>
-              </td>
-            </tr>
-          </tfoot>
+          <AddRowButton colSpan={2} onClick={addRow} />
         </table>
       </div>
     </section>

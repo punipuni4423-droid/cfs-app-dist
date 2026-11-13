@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { isAppUpdateStatus, remainingUpdateEstimate, UPDATE_STEP_SECONDS, type AppUpdateStatus } from "../lib/appUpdateProgress";
+import { applyRejectionNotice, isAppUpdateStatus, remainingUpdateEstimate, UPDATE_STEP_SECONDS, type AppUpdateStatus } from "../lib/appUpdateProgress";
 import { isCalendarAppVersion } from "../lib/appBuildVersion";
 import { updateObservationAllowsTimeReference, updateObservationMessage } from "../lib/appUpdateObservation";
 
@@ -434,13 +434,13 @@ export default function AppUpdateControl() {
       });
       if (!response.ok) {
         if (response.status >= 500) throw new Error("dispatch-unconfirmed");
-        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        const payload = (await response.json().catch(() => null)) as { error?: string; code?: string } | null;
         window.sessionStorage.removeItem(UPDATE_SESSION_KEY);
         window.sessionStorage.removeItem(UPDATE_STARTED_KEY);
         updateSessionActiveRef.current = false;
         setUpdateSessionActive(false);
         setApplyStarted(false);
-        window.alert(payload?.error ?? "Update could not be started.");
+        window.alert(applyRejectionNotice(payload));
         await refreshStatus();
         return;
       }

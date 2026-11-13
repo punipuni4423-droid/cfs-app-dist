@@ -1,4 +1,5 @@
-import type { CircuitEntry, DeviceAssignment, Scene, SceneCircuitSetting } from "../types";
+import type { CircuitEntry, DeviceAssignment, Scene, SceneCircuitSetting, SceneValueMode } from "../types";
+import { normalizeSettingValue, settingValueMode } from "./sceneValueMode";
 import { RESERVED_VALUE } from "./constants";
 import { circuitGroupKey, circuitGroupMembers } from "./circuitGroups";
 import { ccoLightingCircuit, isCcoLighting, isContactPort } from "./ccoLighting";
@@ -203,10 +204,11 @@ function applyValueToCircuitIds(
   settings: readonly SceneCircuitSetting[],
   circuitIds: readonly string[],
   value: string,
+  mode: SceneValueMode,
 ): SceneCircuitSetting[] | null {
   const idSet = new Set(circuitIds);
-  if (!value) {
-    if (!settings.some((setting) => idSet.has(setting.circuitId) && setting.percentage.trim() !== "")) {
+  if (!value && mode !== "text") {
+    if (!settings.some((setting) => idSet.has(setting.circuitId) && (setting.percentage.trim() !== "" || setting.valueMode === "text"))) {
       return null;
     }
     return settings.filter((setting) => !idSet.has(setting.circuitId));
@@ -216,14 +218,14 @@ function applyValueToCircuitIds(
   const next = settings.map((setting) => {
     if (!idSet.has(setting.circuitId)) return setting;
     missing.delete(setting.circuitId);
-    if (setting.percentage === value) return setting;
+    if (setting.percentage === value && settingValueMode(setting) === mode) return setting;
     changed = true;
-    return { ...setting, percentage: value };
+    return { ...setting, percentage: value, valueMode: mode === "text" ? "text" as const : undefined };
   });
   if (missing.size === 0 && !changed) return null;
   return [
     ...next,
-    ...Array.from(missing).map((circuitId) => ({ circuitId, percentage: value })),
+    ...Array.from(missing).map((circuitId) => ({ circuitId, percentage: value, ...(mode === "text" ? { valueMode: "text" as const } : {}) })),
   ];
 }
 
@@ -243,12 +245,14 @@ export function syncSceneSettingsAcrossZoneMerges(
     let sceneChanged = false;
     for (const merge of merges.byPrimaryHeadId.values()) {
       if (scene.areaId !== merge.primaryHead.area) continue;
-      const valueById = new Map(settings.map((setting) => [setting.circuitId, setting.percentage]));
-      const primaryValue =
+      const valueById = new Map(settings.map((setting) => [setting.circuitId, setting]));
+      const primarySetting =
         merge.primaryMemberIds
-          .map((id) => (valueById.get(id) ?? "").trim())
-          .find((value) => value !== "") ?? "";
-      const updated = applyValueToCircuitIds(settings, merge.extraMemberIds, primaryValue);
+          .map((id) => valueById.get(id))
+          .find((setting) => setting && (setting.percentage.trim() !== "" || setting.valueMode === "text"));
+      const mode = settingValueMode(primarySetting);
+      const primaryValue = primarySetting ? normalizeSettingValue(primarySetting.percentage, mode) : "";
+      const updated = applyValueToCircuitIds(settings, merge.extraMemberIds, primaryValue, mode);
       if (updated) {
         settings = updated;
         sceneChanged = true;

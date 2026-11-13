@@ -1414,6 +1414,26 @@ textarea:disabled {
   min-width: 600px;
 }
 
+.thermostat-fixed-table {
+  table-layout: fixed;
+  min-width: 0;
+}
+
+.thermostat-fixed-table .cell-input {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.thermostat-reference-warning {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.read-only-overview > .matrix-scroll + * {
+  margin-top: 1rem;
+}
+
 .device-assign-table {
   table-layout: fixed;
   min-width: 1500px;
@@ -6956,6 +6976,12 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   background: var(--color-surface);
 }
 
+.cfs-matrix-table tbody .cfs-backlight-heading {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
 .cfs-matrix-table tbody .cfs-base-designerNumber,
 .cfs-matrix-table tbody .cfs-base-area {
   font-weight: 400;
@@ -7452,6 +7478,70 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   border-top: 1px solid var(--color-border);
 }
 
+.cfs-programming-name {
+  overflow-wrap: anywhere;
+}
+
+.cfs-programming-name-over-limit {
+  color: var(--color-danger);
+  font-weight: 700;
+}
+
+.scene-value-mode-control {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.scene-value-mode-buttons {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.scene-value-mode-buttons .btn {
+  min-height: 28px;
+  min-width: 34px;
+  padding: 4px 6px;
+}
+
+.scene-value-mode-body {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  align-items: start;
+}
+
+.scene-value-mode-pane {
+  grid-area: 1 / 1;
+  min-width: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.scene-value-mode-pane.is-active {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.scene-value-mode-feedback {
+  grid-area: 2 / 1;
+  line-height: 1.3;
+}
+
+.scene-value-mode-body .scene-text-value-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 5.5rem;
+  height: auto;
+  overflow: auto;
+  line-height: 1.3;
+  white-space: pre-wrap;
+  resize: vertical;
+}
+
 @media (max-width: 860px) {
   .cfs-matrix-card:not(.is-maximized) {
     min-block-size: max(30rem, calc(100dvh - 7rem));
@@ -7649,6 +7739,20 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
   opacity: 1;
   transform: translate(-50%, 0);
   visibility: visible;
+}
+
+.action-icon-button.switch-paste-in-toolbar {
+  visibility: hidden;
+}
+
+.action-icon-button.switch-copy-source[aria-pressed="true"] {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.switch-bulk-paste {
+  min-width: 11rem;
 }
 
 .action-menu-anchor {
@@ -8124,8 +8228,14 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 
 .month-day-picker-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
   gap: 0.5rem;
+}
+
+.month-day-picker-grid select {
+  width: 100%;
+  min-width: 7rem;
+  text-align: left;
 }
 
 .month-day-picker-actions {
@@ -8888,6 +8998,19 @@ body.cfs-top-ui-collapsed .cfs-matrix-card.is-maximized {
 
 .switch-col-operation {
   width: 84px;
+}
+
+.switch-col-function-drag {
+  width: 38px;
+}
+
+.switch-col-button-operation {
+  width: 84px;
+}
+
+.switch-table .drag-handle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .switch-row-operation-cell {

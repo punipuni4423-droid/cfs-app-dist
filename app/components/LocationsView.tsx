@@ -1,5 +1,6 @@
 "use client";
 
+import AddRowButton from "./AddRowButton";
 import type { LocationMaster } from "../types";
 import { createEmptyLocation, DEFAULT_LOCATION_COLORS } from "../lib/constants";
 import { deriveAreaCode, nextUniqueAreaCode, normalizeAreaCode } from "../lib/programming";
@@ -219,15 +220,7 @@ export default function LocationsView({ locations, onChange }: LocationsViewProp
               })
             )}
           </tbody>
-          <tfoot>
-            <tr className="add-row-tr">
-              <td colSpan={7}>
-                <button className="btn-add-row" onClick={add} title="Add Row">
-                  + Add Row
-                </button>
-              </td>
-            </tr>
-          </tfoot>
+          <AddRowButton colSpan={7} onClick={add} title="Add Row" />
         </table>
       </div>
     </section>

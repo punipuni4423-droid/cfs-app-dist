@@ -29,6 +29,11 @@ export function localRevisionRestore(project: ProjectData, source: RestoreSource
     if (key === 'cfsRowDisplay' ? typeof snapshot[key] !== 'object' || Array.isArray(snapshot[key]) : !Array.isArray(snapshot[key])) throw new Error('The revision snapshot is invalid.');
     values[key] = structuredClone(snapshot[key]);
   }
+  // Restoring an older room must not reuse the number of a subsequently removed TSTAT.
+  if (snapshot.nextThermostatNumber !== undefined && (!Number.isSafeInteger(snapshot.nextThermostatNumber) || Number(snapshot.nextThermostatNumber) < 1)) throw new Error('Revision TSTAT numbering is invalid.');
+  const nextThermostatNumber = Math.max(room.nextThermostatNumber ?? 1, Number(snapshot.nextThermostatNumber ?? 1),
+    ...room.hvacAssignments.map((row) => (row.thermostatNumber ?? 0) + 1), ...restored.hvacAssignments.map((row) => (row.thermostatNumber ?? 0) + 1));
+  if (nextThermostatNumber > 1 || room.nextThermostatNumber !== undefined || snapshot.nextThermostatNumber !== undefined) restored.nextThermostatNumber = nextThermostatNumber;
   let circuits = project.circuits;
   if (snapshot.circuits != null) {
     if (!Array.isArray(snapshot.circuits)) throw new Error('Revision circuits are invalid.');

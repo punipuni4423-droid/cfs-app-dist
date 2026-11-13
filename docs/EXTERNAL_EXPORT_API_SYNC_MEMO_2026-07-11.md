@@ -1,5 +1,41 @@
 # External Export / API Sync Memo - 2026-07-11
 
+## 2026-11-02 不正TSTAT参照の保全（ローカル候補・未配布）
+
+- 不正な`tstatBinding`は行と設定を残し、`{areaId:"",assignmentIds:[]}`と任意`tstatBindingQuarantine:{version:1,reason:"invalid-binding",raw:元JSON値}`へ隔離する。既quarantineもある場合、今回bindingをraw、元quarantine全体を任意`previousQuarantine`に一度保持する。未知/不正wrapperも存在自体を非活性の根拠とし、正常bindingやlegacy missingを勝手に修復しない。
+- Project/Share JSONとRoomType copyはforensic内容を保持する。raw/previous内IDを再帰remapせず、通常UI/Excel/LD/XCへrawを新たに露出しない。Lutron specは隔離制御を通常switch出力から除外し、英語warningだけを返す。Project Excelでは隔離・非活性を識別する。
+- 初回の行単位隔離はrepaired1/excluded0を報告し、明示保存のreviewを経る。正規sentinel+wrapperの再読は再包装/reportを追加しない。他の必須型不正・配列損失・CAS・空serverの規則は維持する。今版は自動修復/再接続/解除/削除操作を追加しない。
+- 旧26.10.7は隔離の非活性概念を認識しない。旧版roundtripでJSON情報が残っても旧版の制御安全性を保証しない。戻す前に必ずバックアップする。外部consumer実機確認は未実施。
+
+## 2026-11-02 出力のText metadata（ローカル候補・未配布）
+
+- Lutron specのArea Scene levels / Room Scene directLevels / Switch circuitOverridesは、Text時だけ任意の`valueMode: "text"`を出力する。欠落はStandard。`value`は既存の本文stringをそのまま転記し、前後空白・改行を保持し、単位や%を付けない。schemaVersion 1と既存fieldを維持する。外部consumerが追加fieldを受け入れる実機検証は未実施。
+- Commandの`switchNumber`は既存machine referenceを保持する。管理TSTATのTH表示ラベルへの破壊的置換は、外部consumer契約が未確認のため見送り。UI用ラベル解決と保存参照IDを混同しない。
+- 26.10.7へ戻す場合は先にバックアップする。旧版で保存すると`thermostatNumber` / `masterAssignmentId` / `nextThermostatNumber` / `InspectionMark.valueMode`等の新しい情報を保持できない場合がある。新版の修正で旧版の読込処理が変わるわけではない。
+
+## 2026-10-27 Scene Text互換性（ローカル候補・未配布）
+
+- `SceneCircuitSetting`へ任意の`valueMode: "text"`を追加。欠落は従来のStandard。`percentage`はstringのまま、Textは条件別値の文字併記であり実機制御式ではない。InspectionMarkは任意の`valueMode`/`previousValueMode`を保持する。
+- Project/Share JSONは既存保存経路で任意modeと複数行本文を保持する。旧データを移行書込みする必要はない。設定リンク/コピー/回路グループ同期は本文とmodeを一体で運ぶ。
+- XC APIのendpoint/target ID/CAS契約は不変更。設定を編集する外部consumerは、TextをparseFloatや単位削除で変換しないこと。XC実クライアントのText対応は未検証。
+- LD/Lutron specは既存string値の転送を維持する。Textを条件式/機器値へ変換する新処理はない。LD側の自由記述受入は未検証であり、自動適用の成功とは扱わない。
+- Excelは文字列/richTextとしてTextと改行を保持し、式として解釈しない。PMS/DoorMagnetの見出し分離、TSTAT、Project (All Tabs)はExcel表示/構成の追加で、復元用JSONを置換しない。
+- Project (All Tabs)は開始時のプロジェクトsnapshotを出力し、未確定Inspection/LowHighドラフトは含めない。必要な値は先に確定する。出力操作による自動保存・Revision作成はない。Mixed Inspectionのモードのみ変更では各本文を保持し、本文の空入力とは別操作にする。
+
+## 2026-10-27 TSTAT Area共通制御の互換性（開発local確認済み・未配布）
+
+- `HvacAssignment.thermostatNumber`、`RoomType.nextThermostatNumber`、`SwitchEntry.tstatBinding: { areaId, assignmentIds }`を任意metadataとして追加。TH表示番号は保存IDや`hvac:<id>:metric` target IDの代用ではない。既endpoint/target ID/CAS契約は変えない。
+- Master/Slaveとも登録連動の対象とし、同Areaは既`kind:tstat`のswitchGroupと設定1組を共有する。Area未設定・所属機器のない保存設定・競合グループは適用状態を区別し、移動/削除で元設定を消さない。旧データの表示だけで空設定を書込生成しない。
+- CFSの保存/再読込・Room copy・Undo/Revision復元は番号予約とbindingを保持する。外部consumerの読書きは未検証のため、これら任意metadataを落とす更新を安全とみなさない。XC/LD実クライアントの対応や物理制御の成功を表すものではない。
+- TSTAT/Project ExcelのNoと既知Command参照はTH表示へ解決する。Excelは閲覧用で復元用JSONを置換しない。参照画像のpresetは未確認のため、初期枠は空の設定を基準にし、画像固有のFunction/Trigger/時間・値を推測しない。通常利用環境への反映・公開は未実施。
+
+## 2026-10-28 Master参照・表示追補（開発候補・未配布）
+
+- 任意`HvacAssignment.masterAssignmentId?: string`は同RoomTypeのMaster機器IDを保存する。TH表示番号やArea共通occupancy bindingとは別。旧欠落を自動連結せず、既無効参照は保持/警告する。新選択は自己/Slave/不明/重複IDを拒否し、protocol/Areaの独自制限は加えない。
+- storage/Project/Share JSONとRevisionは任意参照を保持し、RoomType copyで既知assignment IDをremapする。既endpoint/target ID/CASは変えず、外部consumerが任意参照を落とす更新の互換性は未検証。
+- TSTAT/Project Excelは既列を保持してReference Master列を追加しTHだけへ解決する。CFSのDevice表示はThermostat、Slave説明はMaster: TH1程度とし、物理assignment単位でAreaを結合する。登録/役割/Area/動作設定のUIはSwitch > Thermostatへ集約するが、保存型/内部ID/metric targetは変更しない。Door表示は`Door Magnet Scene`へ統一するが保存group keyは変更しない。
+- Programming Nameの50文字超警告は解決済み本文のcode point数に対する表示だけ。名前/テンプレ/target/保存契約/操作権限は不変更、Excelは本文と赤太字だけを出力し警告文は含めない。XC/LD実consumer、実機、通常利用環境への反映/公開は未実施。
+
 ## Purpose
 
 CFS updates often change project data, CFS output cells, inspection targets, or export payloads. When that happens, external consumers must be updated together so XC inspection, Lutron Designer export, and project backup/export stay consistent.

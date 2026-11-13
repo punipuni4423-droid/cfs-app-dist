@@ -1,7 +1,11 @@
 ﻿"use client";
 
+import AddRowButton from "./AddRowButton";
+import ViewModeBar, { type ViewMode } from "./ViewModeBar";
+import TstatOverview from "./TstatOverview";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { byScenePalladiomBacklightTargets } from "../lib/useCfsZoneRows";
+import { thermostatCollectionRows, thermostatControlDisplayNumber } from "../lib/tstatOccupancy";
 import type { ReactNode } from "react";
 import SettingOverlayFrame from "./setting-overlay/SettingOverlayFrame";
 import SceneValueSettingPanel from "./setting-overlay/SceneValueSettingPanel";
@@ -15,6 +19,7 @@ import type {
   HvacSeason,
   LocationMaster,
   Scene,
+  SceneValueMode,
   BacklightLevelSetting,
   SwitchEntry,
   SwitchKind,
@@ -30,7 +35,6 @@ import {
 import { useDragReorder } from "../lib/useDragReorder";
 import { backlightStrongColor } from "../lib/backlightColors";
 import { buildSettingLinkGroups } from "../lib/settingLinkGroups";
-import ActionIconButton from "./ActionIconButton";
 import DragHandle from "./DragHandle";
 import AutoGrowTextarea from "./AutoGrowTextarea";
 import Combobox from "./Combobox";
@@ -82,8 +86,19 @@ import {
   unlinkSwitchSettingSelection,
 } from "../lib/switchSettingLinks";
 import { createAppId } from '../lib/id';
+import { copySwitchButton, reorderSwitchButtonFunction, switchButtonCopyTargets } from "../lib/switchButtonCopy";
+import { hasTstatBindingQuarantine } from "../lib/tstatBindingQuarantine";
+import OperationActions, { type OperationActionGroup } from "./OperationActions";
+import SectionHeading from "./SectionHeading";
+import operationStyles from "./OperationActions.module.css";
+import { checkedOperationPasteRows, copyOperation, operationPasteTargets, pasteOperation, type OperationClipboard, type OperationScope } from "../lib/switchOperationClipboard";
+import OperationPasteDialog from "./OperationPasteDialog";
+import { canUseStandardValue, setSceneSettingModes } from "../lib/sceneValueMode";
 
 interface SwitchViewProps {
+  hideKindSelector?: boolean;
+  thermostatRegistrationPanel?: ReactNode;
+  thermostatWarnings?: readonly string[];
   switches: SwitchEntry[];
   scenes: Scene[];
   locations: LocationMaster[];
@@ -101,6 +116,7 @@ interface SwitchViewProps {
   onBacklightLevelsChange?: (next: BacklightLevelSetting[]) => void;
   revisionChanges?: RevisionFieldChanges;
   canEdit?: boolean;
+  buttonCopyBlocked?: boolean;
   externalSettingRequest?: SwitchSettingOverlayRequest | null;
   overlayHostOnly?: boolean;
 }
@@ -124,12 +140,12 @@ function getPercent(sw: SwitchEntry, circuitId: string): string {
   return sw.buttonSetting.circuitSettings.find((s) => s.circuitId === circuitId)?.percentage ?? "";
 }
 
-function setCircuitSetting(sw: SwitchEntry, circuitId: string, percentage: string): SwitchEntry {
+function setCircuitSetting(sw: SwitchEntry, circuitId: string, percentage: string, mode?: SceneValueMode): SwitchEntry {
   return {
     ...sw,
     buttonSetting: {
       ...sw.buttonSetting,
-      circuitSettings: setSceneSettingValue(sw.buttonSetting.circuitSettings, circuitId, percentage),
+      circuitSettings: setSceneSettingValue(sw.buttonSetting.circuitSettings, circuitId, percentage, mode),
     },
   };
 }
@@ -141,7 +157,7 @@ function isCurtainTarget(target: SettingTarget): boolean {
 function visibleButtonFunction(sw: SwitchEntry): string {
   const value = sw.buttonFunction.trim();
   if (!value) return "";
-  if (sw.kind === "pir" && value === "PIR") return "";
+  if ((sw.kind === "pir" || sw.kind === "tstat") && value === "PIR") return "";
   if (
     (sw.kind === "lutronPd" || sw.kind === "lutronPico") &&
     value === sw.buttonLabel
@@ -169,6 +185,15 @@ function nextQsmNumber(switches: SwitchEntry[]): string {
   return `QSM${next}`;
 }
 
+/** Automatic repairs must not turn display-only Thermostat scaffolds into edits. */
+function normalizeNonThermostatRows(rows: SwitchEntry[], normalize: (source: SwitchEntry[]) => SwitchEntry[]): SwitchEntry[] {
+  const source = rows.filter(row => row.kind !== "tstat" && !hasTstatBindingQuarantine(row));
+  const next = normalize(source);
+  if (next === source) return rows;
+  let index = 0;
+  return rows.map(row => row.kind === "tstat" || hasTstatBindingQuarantine(row) ? row : next[index++]);
+}
+
 export default function SwitchView({
   switches,
   scenes,
@@ -187,8 +212,12 @@ export default function SwitchView({
   onBacklightLevelsChange,
   revisionChanges = {},
   canEdit = true,
+  buttonCopyBlocked = false,
   externalSettingRequest = null,
   overlayHostOnly = false,
+  hideKindSelector = false,
+  thermostatRegistrationPanel,
+  thermostatWarnings = [],
 }: SwitchViewProps) {
   const [expandedFunctionIds, setExpandedFunctionIds] = useState<Set<string>>(new Set());
   const [expandedBacklightIds, setExpandedBacklightIds] = useState<Set<string>>(new Set());
@@ -196,6 +225,12 @@ export default function SwitchView({
   // Bulk setting: checked row ids and which panel type is applying to them.
   const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set());
   const [bulkApplyMode, setBulkApplyMode] = useState<"scene" | "backlight" | null>(null);
+  const [buttonClipboard, setButtonClipboard] = useState<{ sourceId: string; kind: SwitchKind } | null>(null);
+  const [pasteError, setPasteError] = useState("");
+  const [operationClipboard, setOperationClipboard] = useState<OperationClipboard | null>(null);
+  const [pasteScope, setPasteScope] = useState<OperationScope | null>(null);
+  const [draggingFunctionId, setDraggingFunctionId] = useState<string | null>(null);
+  const [functionDropTarget, setFunctionDropTarget] = useState<{ id: string; position: "before" | "after" } | null>(null);
   const consumedExternalRequestIdRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -203,6 +238,10 @@ export default function SwitchView({
     // Selections are per kind tab; keep stale ids from another tab out.
     setBulkSelectedIds(new Set());
     setBulkApplyMode(null);
+    setPasteError("");
+    setPasteScope(null);
+    setDraggingFunctionId(null);
+    setFunctionDropTarget(null);
   }, [activeKind, overlayHostOnly]);
   const [areaBulkValues, setAreaBulkValues] = useState<Record<string, string>>({});
   const drag = useDragReorder(switches, commitSwitches, (sw) => sw.id, (sw) => switchGroupId(sw));
@@ -232,13 +271,15 @@ export default function SwitchView({
 
   useEffect(() => {
     if (overlayHostOnly) return;
-    const next = dedupeSwitchIds(switches);
-    if (next !== switches && canEdit) onChange((current) => dedupeSwitchIds(current));
+    const next = normalizeNonThermostatRows(switches, dedupeSwitchIds);
+    if (next !== switches && canEdit) onChange((current) => normalizeNonThermostatRows(current, dedupeSwitchIds));
   }, [switches, onChange, canEdit, overlayHostOnly]);
 
+  const showControlTable = activeKind !== "tstat" || hvacAssignments.length > 0;
   const filteredSwitches = useMemo(
-    () => switches.filter((s) => s.kind === activeKind),
-    [switches, activeKind],
+    () => activeKind === "tstat" ? thermostatCollectionRows(switches, hvacAssignments)
+      : switches.filter((row) => row.kind === activeKind),
+    [switches, activeKind, hvacAssignments],
   );
 
   const groupedSwitches = useMemo(() => {
@@ -297,10 +338,10 @@ export default function SwitchView({
   );
 
   useEffect(() => {
-    if (overlayHostOnly) return;
-    const normalized = normalizeQsmAssignments(switches);
-    if (normalized !== switches && canEdit) onChange(normalized);
-  }, [normalizeQsmAssignments, switches, onChange, canEdit, overlayHostOnly]);
+    if (overlayHostOnly || hideKindSelector) return;
+    const normalized = normalizeNonThermostatRows(switches, normalizeQsmAssignments);
+    if (normalized !== switches && canEdit) onChange((current) => normalizeNonThermostatRows(current, normalizeQsmAssignments));
+  }, [normalizeQsmAssignments, switches, onChange, canEdit, overlayHostOnly, hideKindSelector]);
 
   const highlightedKinds = useMemo(() => {
     const kinds = new Set<SwitchKind>();
@@ -385,26 +426,32 @@ export default function SwitchView({
   );
 
   useEffect(() => {
-    if (overlayHostOnly) return;
-    const next = syncContactSwitchesWithCciOptions(switches, cciOptions);
+    if (overlayHostOnly || hideKindSelector) return;
+    const next = normalizeNonThermostatRows(switches, rows => syncContactSwitchesWithCciOptions(rows, cciOptions));
     if (next !== switches && canEdit) {
-      onChange((current) => syncContactSwitchesWithCciOptions(current, cciOptions));
+      onChange((current) => normalizeNonThermostatRows(current, rows => syncContactSwitchesWithCciOptions(rows, cciOptions)));
     }
-  }, [cciOptions, switches, onChange, canEdit, overlayHostOnly]);
+  }, [cciOptions, switches, onChange, canEdit, overlayHostOnly, hideKindSelector]);
 
   const hasButtonCount = activeKind === "lutronPd" || activeKind === "lutronPico";
   const hasCciDeviceColumn = activeKind === "contact";
   const isCommand = activeKind === "command";
   const isPir = activeKind === "pir";
+  const isTstat = activeKind === "tstat";
+  const [thermostatViewMode, setThermostatViewMode] = useState<ViewMode>("edit");
+  const showThermostatOverview = isTstat && thermostatRegistrationPanel != null && thermostatViewMode === "overview";
   const isQsm = activeKind === "qsm";
-  const hasPriorityColumn = !isCommand && !isPir && !isQsm;
+  const kindOptions = thermostatRegistrationPanel != null
+    ? [...SWITCH_KIND_OPTIONS, { value: "tstat" as const, label: "Thermostat" }]
+    : SWITCH_KIND_OPTIONS;
+  const hasPriorityColumn = !isCommand && !isPir && !isQsm && !isTstat;
   // Bulk-select column (left of Function Setting). QSM has no setting columns.
   const hasBulkColumn = !isQsm;
   const colCount = (isCommand
     ? 10
     : isQsm
       ? 5
-      : 11 + (hasButtonCount ? 2 : 0) + (hasCciDeviceColumn ? 2 : 0) + (hasPriorityColumn ? 1 : 0)) +
+      : 10 + (hasButtonCount ? 4 : 0) + (hasCciDeviceColumn ? 2 : 0) + (hasPriorityColumn ? 1 : 0)) +
     (hasBulkColumn ? 1 : 0);
 
   const priorityFunctionCounts = useMemo(() => {
@@ -495,6 +542,7 @@ export default function SwitchView({
       switchName: head.switchName,
       cciAssignment: head.cciAssignment,
       allocation: activeKind === "pir" ? head.allocation : newRow.allocation,
+      ...(head.tstatBinding ? { tstatBinding: { ...head.tstatBinding, assignmentIds: [...head.tstatBinding.assignmentIds] } } : {}),
       buttonCount: head.buttonCount,
       buttonLabel: buttonLabel ?? head.buttonLabel,
       buttonFunction: "",
@@ -528,12 +576,14 @@ export default function SwitchView({
   }
 
   function switchNumberHeader(): string {
+    if (isTstat) return "TH";
     if (isCommand) return "Command Name";
     if (activeKind === "pir") return "PIR";
     return "Switch #";
   }
 
   function switchNameHeader(): string {
+    if (isTstat) return "Area";
     if (isCommand) return "Switch #";
     return "Switch Name";
   }
@@ -769,21 +819,46 @@ export default function SwitchView({
     return "";
   }, []);
 
-  function handleTargetValueChange(sw: SwitchEntry, target: SettingTarget, raw: string): void {
+  function targetValueMode(sw: SwitchEntry, target: SettingTarget): SceneValueMode {
+    return settingTargetIds(target).some((id) => sw.buttonSetting.circuitSettings.find((setting) => setting.circuitId === id)?.valueMode === "text") ? "text" : "standard";
+  }
+
+  function targetAllowsStandard(sw: SwitchEntry, target: SettingTarget): boolean {
+    return settingTargetIds(target).every(id => canUseStandardValue(getPercent(sw, id), target.dimmingType));
+  }
+
+  function handleTargetModeOnlyChange(sw: SwitchEntry, target: SettingTarget, mode: SceneValueMode): void {
+    if (!canEdit || (mode === "standard" && !targetAllowsStandard(sw, target))) return;
+    commitSwitches(current => {
+      const row = current.find(candidate => candidate.id === sw.id);
+      if (!row) return current;
+      const circuitSettings = setSceneSettingModes(row.buttonSetting.circuitSettings, settingTargetIds(target), mode, target.dimmingType);
+      if (!circuitSettings) return current;
+      return current.map(candidate => candidate.id === row.id
+        ? { ...candidate, buttonSetting: { ...candidate.buttonSetting, circuitSettings } }
+        : candidate);
+    });
+  }
+
+  function handleTargetValueChange(sw: SwitchEntry, target: SettingTarget, raw: string, mode: SceneValueMode = "standard"): void {
+    if (!canEdit) return;
+    if (mode === "standard" && !canUseStandardValue(raw, target.dimmingType)) return;
     const value =
+      mode === "text" ||
       target.isOnOff ||
       ["Raise", "Lower", "0.5 sec", "Blinking (Short)", "Blinking (Long)"].includes(raw)
         ? raw
         : clampPercentValue(raw);
     updateButtonSetting(sw.id, (current, row) =>
       settingTargetIds(target).reduce(
-        (next, id) => setCircuitSetting(next, id, value),
+        (next, id) => setCircuitSetting(next, id, value, mode),
         { ...row, buttonSetting: current },
       ).buttonSetting,
     );
   }
 
   function stepTargetPercent(sw: SwitchEntry, target: SettingTarget, delta: number): void {
+    if (targetValueMode(sw, target) === "text") return;
     handleTargetValueChange(sw, target, stepPercentValue(getTargetValue(sw, target), delta));
   }
 
@@ -803,7 +878,7 @@ export default function SwitchView({
     updateButtonSetting(sw.id, (current, row) =>
       areaTargets.reduce(
         (next, target) =>
-          !target.isOnOff && !isCurtainTarget(target)
+          !target.isOnOff && !isCurtainTarget(target) && targetValueMode(next, target) !== "text"
             ? settingTargetIds(target).reduce((acc, id) => setCircuitSetting(acc, id, value), next)
             : next,
         { ...row, buttonSetting: current },
@@ -819,11 +894,12 @@ export default function SwitchView({
   ): void {
     updateButtonSetting(sw.id, (current, row) =>
       areaTargets.reduce((next, target) => {
+        if (mode !== "clear" && targetValueMode(next, target) === "text") return next;
         if (isCurtainTarget(target) && mode !== "clear") return next;
         const value = settingValueForBulkMode(mode, target.isOnOff, areaBulkValues[key] || "");
         return value === null
           ? next
-          : settingTargetIds(target).reduce((acc, id) => setCircuitSetting(acc, id, value), next);
+          : settingTargetIds(target).reduce((acc, id) => setCircuitSetting(acc, id, value, "standard"), next);
       }, { ...row, buttonSetting: current }).buttonSetting,
     );
   }
@@ -972,6 +1048,7 @@ export default function SwitchView({
   }
 
   function copySwitch(groupRows: SwitchEntry[]): void {
+    if (groupRows.some(hasTstatBindingQuarantine)) return;
     if (groupRows.length === 0) return;
     const newGroupId = createAppId();
     const copiedRows = groupRows.map((row) => ({
@@ -997,7 +1074,10 @@ export default function SwitchView({
     ]);
   }
 
+
   function removeSwitchGroup(groupRows: SwitchEntry[]): void {
+    if (groupRows.some(hasTstatBindingQuarantine)) return;
+    if (!canEdit || buttonCopyBlocked) return;
     const groupId = switchGroupId(groupRows[0]);
     setExpandedFunctionIds(new Set());
     setExpandedBacklightIds(new Set());
@@ -1005,6 +1085,8 @@ export default function SwitchView({
   }
 
   function removeFunctionRow(row: SwitchEntry, groupRows: SwitchEntry[]): void {
+    if (hasTstatBindingQuarantine(row)) return;
+    if (!canEdit || buttonCopyBlocked) return;
     if (groupRows.length <= 1) return;
     setExpandedFunctionIds((prev) => {
       if (!prev.has(row.id)) return prev;
@@ -1019,6 +1101,169 @@ export default function SwitchView({
       return next;
     });
     commitSwitches((current) => normalizeQsmAssignments(current.filter((item) => item.id !== row.id)));
+  }
+
+  function isCopiedAction(sw: SwitchEntry, scope: OperationScope): boolean {
+    if (operationClipboard?.scope !== scope || operationClipboard.kind !== sw.kind) return false;
+    return scope === "function"
+      ? operationClipboard.sourceId === sw.id
+      : operationClipboard.sourceGroupId === switchGroupId(sw);
+  }
+
+  function isCopiedButton(sw: SwitchEntry): boolean {
+    return copiedButtonRow?.kind === sw.kind && switchGroupId(copiedButtonRow) === switchGroupId(sw)
+      && copiedButtonRow.buttonLabel === sw.buttonLabel;
+  }
+
+  function copyAction(sw: SwitchEntry, scope: OperationScope): void {
+    if (!canEdit || buttonCopyBlocked) return;
+    if (isCopiedAction(sw, scope)) {
+      cancelCopy();
+      return;
+    }
+    const clipboard = copyOperation(switches, sw.id, scope, locations);
+    if (!clipboard) return;
+    setButtonClipboard(null);
+    setOperationClipboard(clipboard);
+    setPasteScope(null);
+    setPasteError("");
+  }
+
+  function copyButton(sw: SwitchEntry): void {
+    if (!canEdit || buttonCopyBlocked || hasTstatBindingQuarantine(sw)) return;
+    if (isCopiedButton(sw)) {
+      cancelCopy();
+      return;
+    }
+    setOperationClipboard(null);
+    setButtonClipboard({ sourceId: sw.id, kind: sw.kind });
+    setPasteScope(null);
+    setPasteError("");
+  }
+
+  function cancelCopy(): void {
+    if (!canEdit) return;
+    setOperationClipboard(null);
+    setButtonClipboard(null);
+    setPasteScope(null);
+    setPasteError("");
+  }
+
+  function pasteActions(ids: string[]): boolean {
+    if (!canEdit || buttonCopyBlocked || !operationClipboard || pasteScope !== operationClipboard.scope) return false;
+    const next = pasteOperation(switches, operationClipboard, ids, createAppId);
+    if (next === switches) return false;
+    commitSwitches(current => pasteOperation(current, operationClipboard, ids, createAppId));
+    setPasteScope(null); return true;
+  }
+  const functionClipboard = operationClipboard?.scope === "function" ? operationClipboard : null;
+  const directClipboard = buttonClipboard ?? functionClipboard;
+  const copiedButtonRow = buttonClipboard ? switches.find(row => row.id === buttonClipboard.sourceId) : undefined;
+  const directPasteTargets = useMemo(() => {
+    const targets = buttonClipboard
+      ? switchButtonCopyTargets(switches, buttonClipboard.sourceId)
+      : functionClipboard ? operationPasteTargets(switches, functionClipboard) : [];
+    return new Map(targets.map(target => [target.id, target]));
+  }, [switches, buttonClipboard, functionClipboard]);
+  const checkedPaste = checkedOperationPasteRows(bulkSelectedIds, directPasteTargets);
+  const toolbarPasteIds = new Set(directClipboard?.kind === activeKind ? checkedPaste.ids : []);
+  const directPasteLabel = buttonClipboard ? "Paste Button" : "Paste Function";
+
+  function pasteDirect(ids: string[], clearChecked: boolean): void {
+    if (!canEdit || buttonCopyBlocked || !directClipboard || directClipboard.kind !== activeKind || !ids.length) return;
+    const blockedTarget = ids.find(id => !directPasteTargets.has(id) || directPasteTargets.get(id)?.reason);
+    if (blockedTarget) {
+      setPasteError(directPasteTargets.get(blockedTarget)?.reason ?? "This row cannot receive the copied settings.");
+      return;
+    }
+    const apply = (current: SwitchEntry[]) => buttonClipboard
+      ? copySwitchButton(current, buttonClipboard.sourceId, ids, createAppId)
+      : functionClipboard ? pasteOperation(current, functionClipboard, ids, createAppId) : current;
+    const next = apply(switches);
+    if (next === switches) {
+      setPasteError("Paste could not be applied. Check priority and destination compatibility.");
+      return;
+    }
+    commitSwitches(current => current === switches ? next : apply(current));
+    cancelCopy();
+    if (clearChecked) setBulkSelectedIds(new Set());
+  }
+
+  function functionOperations(sw: SwitchEntry, groupRows: SwitchEntry[], isFirst: boolean, isButtonFirst: boolean): OperationActionGroup[] {
+    const blocked = !canEdit || buttonCopyBlocked || hasTstatBindingQuarantine(sw);
+    const copied = isCopiedAction(sw, "function");
+    const target = functionClipboard ? directPasteTargets.get(sw.id) : undefined;
+    const pasteReason = target?.reason ?? (target ? undefined : "This row cannot receive the copied settings.");
+    const groups: OperationActionGroup[] = [{
+      id: "function",
+      actions: [{ id: "copy-function", icon: "copy", label: "Copy Function", "aria-pressed": copied, className: "btn-secondary btn-sm switch-copy-source", onClick: () => copyAction(sw, "function"), disabled: blocked },
+      { id: "paste-function", icon: "paste", label: "Paste Function", title: functionClipboard ? pasteReason : undefined,
+        className: functionClipboard && toolbarPasteIds.has(sw.id) ? "btn-secondary btn-sm switch-paste-in-toolbar" : "btn-secondary btn-sm",
+        onClick: () => pasteDirect([sw.id], false),
+        disabled: blocked || !functionClipboard || Boolean(pasteReason) }, {
+        id: "remove-function",
+        icon: "minus",
+        label: "Delete Function Row",
+        className: "btn-secondary btn-sm",
+        onClick: () => removeFunctionRow(sw, groupRows),
+        title: groupRows.length <= 1 ? "Use Delete Switch to remove the last row" : "Delete this function row",
+        disabled: blocked || groupRows.length <= 1,
+      }],
+    }];
+    if ((!hasButtonCount && !isCommand && isFirst) || (hasButtonCount && isButtonFirst)) groups[0].actions = [...groups[0].actions, {
+      id: "add-function", icon: "plus", label: "Add Function", className: "btn-secondary btn-sm", onClick: () => { if (!blocked) addFunctionRow(groupRows, hasButtonCount ? sw.buttonLabel || "-" : undefined); }, disabled: blocked,
+    }];
+    return groups;
+  }
+
+  function buttonOperations(sw: SwitchEntry, buttonRows: SwitchEntry[]): OperationActionGroup[] {
+    const blocked = !canEdit || buttonCopyBlocked || buttonRows.some(hasTstatBindingQuarantine)
+      || !sw.buttonLabel.trim() || sw.buttonLabel === "-";
+    const copied = isCopiedButton(sw);
+    const target = buttonClipboard ? directPasteTargets.get(sw.id) : undefined;
+    return [{
+      id: "button",
+      actions: [
+        { id: "copy-button", icon: "copy", label: "Copy Button", "aria-pressed": copied,
+          className: "btn-secondary btn-sm switch-copy-source", onClick: () => copyButton(sw), disabled: blocked },
+        { id: "paste-button", icon: "paste", label: "Paste Button",
+          className: buttonClipboard && toolbarPasteIds.has(sw.id) ? "btn-secondary btn-sm switch-paste-in-toolbar" : "btn-secondary btn-sm",
+          title: buttonClipboard ? target?.reason ?? (target ? undefined : "This button cannot receive the copied settings.") : undefined,
+          onClick: () => pasteDirect([sw.id], false), disabled: blocked || !target || Boolean(target.reason) },
+      ],
+    }];
+  }
+
+  function moveButtonFunction(source: string, target: string, position: "before" | "after"): void {
+    if (!canEdit || buttonCopyBlocked || reorderSwitchButtonFunction(switches, source, target, position) === switches) return;
+    commitSwitches(current => reorderSwitchButtonFunction(current, source, target, position));
+  }
+  function switchOperations(sw: SwitchEntry, groupRows: SwitchEntry[]): OperationActionGroup[] {
+    const blocked = !canEdit || buttonCopyBlocked || groupRows.some(hasTstatBindingQuarantine);
+    return [{
+        id: "device",
+        label: isTstat ? "Area control" : undefined,
+        actions: [{ id: "copy-switch", icon: "copy", label: "Copy Switch Settings",
+          "aria-pressed": isCopiedAction(sw, "switch"),
+          className: "btn-secondary btn-sm switch-copy-source", onClick: () => copyAction(sw, "switch"), disabled: blocked },
+        { id: "paste-switch", icon: "paste", label: "Paste Switch Settings", className: "btn-secondary btn-sm", onClick: () => setPasteScope("switch"), disabled: blocked || operationClipboard?.scope !== "switch" || operationClipboard.kind !== sw.kind }, {
+          id: "copy-device",
+          icon: "copy",
+          label: "Duplicate Switch",
+          title: "Create a new switch with the same registration and functions",
+          className: "btn-secondary btn-sm",
+          onClick: () => { if (!blocked) copySwitch(groupRows); },
+          disabled: blocked || Boolean(sw.tstatBinding),
+        }, {
+          id: "remove-device",
+          icon: "trash",
+          label: "Delete Switch",
+          className: "btn-danger-ghost",
+          onClick: () => removeSwitchGroup(groupRows),
+          title: sw.tstatBinding ? "Remove Thermostats in the registration table; Area controls are retained" : "Delete this switch and all its functions",
+          disabled: blocked || Boolean(sw.tstatBinding),
+        }],
+      }];
   }
 
   function backlightConditionValue(value: string): string {
@@ -1069,17 +1314,12 @@ export default function SwitchView({
     const selectedTargets = new Set(
       sw.backlightTarget.split(",").map((value) => value.trim()).filter(Boolean),
     );
-    const updateTargets = (targetId: string, checked: boolean): void => {
-      const next = new Set(selectedTargets);
-      if (checked) next.add(targetId);
-      else next.delete(targetId);
-      updateSwitch(sw.id, { backlightTarget: Array.from(next).join(",") });
-    };
 
     return (
       <BacklightSettingPanel
         targets={byScenePalladiomSwitches.map(target => ({ id: switchGroupId(target), label: [target.switchNumber, target.switchName].filter(Boolean).join(" - ") || "(No switch #)" }))}
-        selection={{ mode: "editable", selectedIds: selectedTargets, onToggle: updateTargets, onClear: () => updateSwitch(sw.id, { backlightTarget: "" }) }}
+        selection={{ mode: "editable", selectedIds: selectedTargets,
+          onChange: next => updateSwitch(sw.id, { backlightTarget: Array.from(next).join(",") }) }}
         condition={backlightConditionValue(sw.backlightCondition)}
         conditions={backlightConditions}
         onConditionChange={value => updateSwitch(sw.id, { backlightCondition: value })}
@@ -1185,6 +1425,10 @@ export default function SwitchView({
         }}
         valueForTarget={target => getTargetValue(sw, target)}
         onTargetValueChange={(target, value) => handleTargetValueChange(sw, target, value)}
+        modeForTarget={target => targetValueMode(sw, target)}
+        onTargetModeChange={(target, value, mode) => handleTargetValueChange(sw, target, value, mode)}
+        onTargetModeOnlyChange={(target, mode) => handleTargetModeOnlyChange(sw, target, mode)}
+        standardAllowedForTarget={target => targetAllowsStandard(sw, target)}
         onTargetStep={(target, delta) => stepTargetPercent(sw, target, delta)}
       >
             <HvacSettingPanel
@@ -1244,13 +1488,17 @@ export default function SwitchView({
 
   return (
     <section className="card card-padded fade-in">
-      <div
+      {pasteError ? <p className="muted-text" role="alert">{pasteError}</p> : null}
+      {directClipboard?.kind === activeKind && checkedPaste.reasons.length > 0
+        ? <p className="sr-only" role="status">{checkedPaste.reasons.join(" ")}</p> : null}
+      {pasteScope && operationClipboard?.scope === pasteScope && operationClipboard.kind === activeKind ? <OperationPasteDialog key={`${pasteScope}:${operationClipboard.sourceId}`} clipboard={operationClipboard} targets={operationPasteTargets(switches, operationClipboard, locations)} canEdit={canEdit && !buttonCopyBlocked} onClose={() => setPasteScope(null)} onPaste={pasteActions} /> : null}
+      {!hideKindSelector ? <div
         className="scene-area-bar"
         role="tablist"
         aria-label="Switch type"
         style={{ marginBottom: "0.75rem" }}
       >
-        {SWITCH_KIND_OPTIONS.map((opt) => (
+        {kindOptions.map((opt) => (
           <button
             key={opt.value}
             type="button"
@@ -1266,7 +1514,24 @@ export default function SwitchView({
             {opt.label}
           </button>
         ))}
-      </div>
+      </div> : null}
+
+      {isTstat && thermostatRegistrationPanel != null ? (
+        <ViewModeBar ariaLabel="Thermostat view mode" mode={thermostatViewMode}
+          onChange={setThermostatViewMode} testIdPrefix="thermostat-mode" />
+      ) : null}
+      {showThermostatOverview ? (
+        <TstatOverview assignments={hvacAssignments} seasons={hvacSeasons} locations={locations} />
+      ) : null}
+      <div hidden={showThermostatOverview}>
+      {isTstat && thermostatRegistrationPanel != null ? (
+        <section aria-label="Thermostat registration">
+          {thermostatRegistrationPanel}
+          <SectionHeading>Thermostat Collection</SectionHeading>
+          {thermostatWarnings.map(warning => <p className="muted-text" key={warning}>{warning}</p>)}
+          {!showControlTable ? <p className="muted-text">Register a thermostat to show its controls.</p> : null}
+        </section>
+      ) : null}
 
       <>
       {isPir ? (
@@ -1357,12 +1622,16 @@ export default function SwitchView({
         <span className="muted-pill" aria-live="polite">
           {filteredSwitches.length} items
         </span>
-        {hasBulkColumn ? (
+        {hasBulkColumn && showControlTable ? (
           <>
             <span className="toolbar-spacer" />
-            <span className="muted-pill" aria-live="polite">
-              {bulkSelectedIds.size} checked
-            </span>
+            <button type="button" className="btn btn-secondary btn-sm switch-bulk-paste"
+              style={{ visibility: directClipboard?.kind === activeKind && bulkSelectedIds.size > 0 ? "visible" : "hidden" }}
+              title={checkedPaste.reasons.length ? checkedPaste.reasons.join(" ") : undefined}
+              disabled={!canEdit || buttonCopyBlocked || directClipboard?.kind !== activeKind || checkedPaste.ids.length === 0}
+              onClick={() => pasteDirect(checkedPaste.ids, true)}>
+              {directPasteLabel} to {checkedPaste.ids.length} {checkedPaste.ids.length === 1 ? "row" : "rows"}
+            </button>
             <button
               type="button"
               className="btn btn-secondary btn-sm"
@@ -1404,9 +1673,12 @@ export default function SwitchView({
             </button>
           </>
         ) : null}
+        <button type="button" className={`btn btn-sm ${buttonClipboard || operationClipboard ? "btn-primary" : "btn-secondary"}`}
+          title="Clear copied settings" disabled={!canEdit || (!buttonClipboard && !operationClipboard)}
+          onClick={cancelCopy}>Clear</button>
       </div>
 
-      <ResizableMatrixScroll className="table-workspace-scroll" variant="large">
+      {showControlTable ? <ResizableMatrixScroll className="table-workspace-scroll" variant="large">
         <table className="matrix-table master-table switch-table">
           <colgroup>
             <col className="table-col-drag" />
@@ -1434,15 +1706,16 @@ export default function SwitchView({
                 )}
                 {hasButtonCount ? <col className="switch-col-button-count" /> : null}
                 {hasButtonCount ? <col className="switch-col-button-label" /> : null}
-                {!isCommand ? <col className="switch-col-add" /> : null}
+                {hasButtonCount ? <col className="switch-col-function-drag" /> : null}
                 <col className="switch-col-function" />
                 {hasPriorityColumn ? <col className="switch-col-priority" /> : null}
                 <col className="switch-col-condition" />
                 <col className="switch-col-bulk-select" />
                 <col className="switch-col-setting" />
                 <col className="switch-col-setting" />
-                <col className="switch-col-row-operation" />
-                <col className="switch-col-operation" />
+                <col className={operationStyles.column} />
+                {hasButtonCount ? <col className="switch-col-button-operation" /> : null}
+                <col className={operationStyles.column} />
               </>
             )}
           </colgroup>
@@ -1454,7 +1727,7 @@ export default function SwitchView({
                 <>
                   <th>QSM</th>
                   <th>Assigned PIR</th>
-                  <th className="col-center">Operation</th>
+                  <th className="col-center">Switch Operation</th>
                 </>
               ) : (
                 <>
@@ -1473,7 +1746,7 @@ export default function SwitchView({
                   )}
                   {hasButtonCount ? <th>Buttons</th> : null}
                   {hasButtonCount ? <th>Button</th> : null}
-                  {!isCommand ? <th className="col-center">+</th> : null}
+                  {hasButtonCount ? <th aria-label="Function order" /> : null}
                   <th>{isCommand ? "Button" : "Function"}</th>
                   {hasPriorityColumn ? <th className="col-center">Priority</th> : null}
                   <th>Trigger Condition</th>
@@ -1492,8 +1765,9 @@ export default function SwitchView({
                   </th>
                   <th className="col-center">Function Setting</th>
                   <th className="col-center">Backlight Setting</th>
-                  <th className="col-center">Row</th>
-                  <th className="col-center">Switch</th>
+                  <th className="col-center">Function Operation</th>
+                  {hasButtonCount ? <th className="col-center">Button Operation</th> : null}
+                  <th className="col-center">Switch Operation</th>
                 </>
               )}
             </tr>
@@ -1509,15 +1783,14 @@ export default function SwitchView({
               groupedSwitches.map((groupRows) => {
                 const groupId = switchGroupId(groupRows[0]);
                 const groupRowSpan = groupRows.length;
-                const buttonInfo = new Map<string, { isFirst: boolean; rowSpan: number }>();
+                const buttonInfo = new Map<string, { index: number; rows: SwitchEntry[] }>();
                 if (hasButtonCount) {
                   for (const row of groupRows) {
                     const label = row.buttonLabel || "-";
                     if (buttonInfo.has(row.id)) continue;
                     const rows = groupRows.filter((candidate) => (candidate.buttonLabel || "-") === label);
-                    const span = rows.length;
                     rows.forEach((candidate, idx) => {
-                      buttonInfo.set(candidate.id, { isFirst: idx === 0, rowSpan: span });
+                      buttonInfo.set(candidate.id, { index: idx, rows });
                     });
                   }
                 }
@@ -1587,25 +1860,29 @@ export default function SwitchView({
                             )}
                           </td>
                           <td className="col-center">
-                            <ActionIconButton
-                              icon="trash"
-                              label="Delete QSM"
-                              className="btn-danger-ghost"
-                              onClick={() => removeSwitchGroup(groupRows)}
-                              title="Delete QSM"
-                              disabled={!canEdit}
-                            />
+                            <OperationActions groups={[{
+                              id: "qsm",
+                              actions: [{ id: "duplicate-qsm", icon: "copy", label: "Duplicate QSM", title: "Create an independent QSM registration without copying PIR assignments", className: "btn-secondary btn-sm", onClick: () => { if (canEdit && !buttonCopyBlocked) addSwitch(); }, disabled: !canEdit || buttonCopyBlocked }, { id: "remove-qsm", icon: "trash", label: "Delete QSM", className: "btn-danger-ghost", onClick: () => removeSwitchGroup(groupRows), disabled: !canEdit || buttonCopyBlocked }],
+                            }]} />
+                            <small className="muted-text">Function / Paste not applicable: QSM registration only.</small>
                           </td>
                         </tr>
                       );
                     })() : groupRows.map((sw, rowIndex) => {
                       const isFirst = rowIndex === 0;
+                      const button = buttonInfo.get(sw.id);
+                      const canMoveFunction = canEdit && !buttonCopyBlocked && Boolean(button && button.rows.length > 1
+                        && sw.buttonLabel.trim() && sw.buttonLabel !== "-" && !button.rows.some(hasTstatBindingQuarantine));
                       const selectedCci = cciSelection(sw);
                       const selectedCciAddresses = cciAddressOptions(selectedCci.deviceKey);
                       const isDragging = drag.draggingKey === groupId;
                       const isDropTarget = drag.dragOverInfo?.targetKey === groupId;
-                      const isBeforeDrop = isDropTarget && drag.dragOverInfo?.position === "before" && isFirst;
-                      const isAfterDrop = isDropTarget && drag.dragOverInfo?.position === "after" && rowIndex === groupRows.length - 1;
+                      const isBeforeDrop = draggingFunctionId
+                        ? functionDropTarget?.id === sw.id && functionDropTarget.position === "before"
+                        : isDropTarget && drag.dragOverInfo?.position === "before" && isFirst;
+                      const isAfterDrop = draggingFunctionId
+                        ? functionDropTarget?.id === sw.id && functionDropTarget.position === "after"
+                        : isDropTarget && drag.dragOverInfo?.position === "after" && rowIndex === groupRows.length - 1;
                       const selectedPirOptions = isPir ? selectedPirInstances(sw) : [];
                       // T-35: group color/symbol for permanently linked rows.
                       // T-62: the 🔗 checkbox-cell badge was removed; linked
@@ -1615,15 +1892,39 @@ export default function SwitchView({
                         ? settingLinkGroups.get(sw.settingLinkGroupId)
                         : undefined;
                       return (
-                        <Fragment key={`${sw.id}-${rowIndex}`}>
+                        <Fragment key={sw.id}>
                           <tr
+                            data-switch-row-id={sw.id}
                             className={[
-                              isDragging ? "row-dragging" : "",
+                              isDragging || draggingFunctionId === sw.id ? "row-dragging" : "",
                               isBeforeDrop ? "drop-before" : "",
                               isAfterDrop ? "drop-after" : "",
                             ].filter(Boolean).join(" ")}
-                            onDragOver={(e) => drag.onDragOver(e, groupId)}
-                            onDrop={(e) => drag.onDrop(e, groupId)}
+                            onDragOver={(e) => {
+                              if (!draggingFunctionId) return drag.onDragOver(e, groupId);
+                              if (!canMoveFunction || draggingFunctionId === sw.id || !button?.rows.some(row => row.id === draggingFunctionId)) {
+                                setFunctionDropTarget(null);
+                                return;
+                              }
+                              e.preventDefault();
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              const position = e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+                              setFunctionDropTarget(current => current?.id === sw.id && current.position === position
+                                ? current : { id: sw.id, position });
+                            }}
+                            onDragLeave={(e) => {
+                              if (draggingFunctionId && e.relatedTarget instanceof Node && !e.currentTarget.contains(e.relatedTarget)) {
+                                setFunctionDropTarget(current => current?.id === sw.id ? null : current);
+                              }
+                            }}
+                            onDrop={(e) => {
+                              if (!draggingFunctionId) return drag.onDrop(e, groupId);
+                              e.preventDefault();
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              moveButtonFunction(draggingFunctionId, sw.id, e.clientY < rect.top + rect.height / 2 ? "before" : "after");
+                              setDraggingFunctionId(null);
+                              setFunctionDropTarget(null);
+                            }}
                           >
                             {isFirst ? (
                               <td className="col-center drag-handle-cell" rowSpan={groupRowSpan}>
@@ -1688,6 +1989,8 @@ export default function SwitchView({
                                       </option>
                                     ))}
                                   </select>
+                                 ) : isTstat && sw.tstatBinding ? (
+                                   <span className="cell-readonly">{thermostatControlDisplayNumber(sw, hvacAssignments) || "Unassigned TSTAT"}</span>
                                  ) : isCommand ? (
                                    <AutoGrowTextarea
                                      value={sw.switchName}
@@ -1753,6 +2056,8 @@ export default function SwitchView({
                                     onChange={(value) => updateGroup(groupId, "switchNumber", value)}
                                     disabled={!canEdit}
                                   />
+                                ) : isTstat && sw.tstatBinding ? (
+                                  <span className="cell-readonly">{locations.find((area) => area.id === sw.tstatBinding?.areaId)?.name || "Unassigned"}</span>
                                 ) : (
                                   <AutoGrowTextarea
                                     value={sw.switchName}
@@ -1791,39 +2096,41 @@ export default function SwitchView({
                                 </select>
                               </td>
                             ) : null}
-                            {hasButtonCount && buttonInfo.get(sw.id)?.isFirst ? (
-                              <td rowSpan={buttonInfo.get(sw.id)?.rowSpan ?? 1} className={revisionCellClass(sw.id, ["buttonLabel"])}>
+                            {button?.index === 0 ? (
+                              <td rowSpan={button.rows.length} className={revisionCellClass(sw.id, ["buttonLabel"])}>
                                 <span className="cell-readonly switch-button-badge">
                                   {sw.buttonLabel || "-"}
                                 </span>
                               </td>
                             ) : null}
-                            {isFirst ? (
-                              !hasButtonCount && !isCommand ? (
-                              <td className="col-center" rowSpan={groupRowSpan}>
-                                <button
-                                  type="button"
-                                  className="btn-add-circuit"
-                                  onClick={() => addFunctionRow(groupRows)}
-                                  title="Add function"
-                                  disabled={!canEdit}
-                                >
-                                  +
-                                </button>
-                              </td>
-                              ) : null
-                            ) : null}
-                            {hasButtonCount && buttonInfo.get(sw.id)?.isFirst ? (
-                              <td className="col-center" rowSpan={buttonInfo.get(sw.id)?.rowSpan ?? 1}>
-                                <button
-                                  type="button"
-                                  className="btn-add-circuit"
-                                  onClick={() => addFunctionRow(groupRows, sw.buttonLabel || "-")}
-                                  title="Add function"
-                                  disabled={!canEdit}
-                                >
-                                  +
-                                </button>
+                            {button ? (
+                              <td className="col-center drag-handle-cell">
+                                <DragHandle
+                                  draggable={canMoveFunction}
+                                  tabIndex={canMoveFunction ? 0 : undefined}
+                                  glyph="⋮⋮"
+                                  aria-label="Reorder Function with Up and Down"
+                                  title="Drag or use Up and Down to reorder this Function"
+                                  onDragStart={(event) => {
+                                    event.stopPropagation();
+                                    if (!canMoveFunction) { event.preventDefault(); return; }
+                                    event.dataTransfer.effectAllowed = "move";
+                                    event.dataTransfer.setData("text/plain", sw.id);
+                                    setDraggingFunctionId(sw.id);
+                                  }}
+                                  onDragEnd={() => {
+                                    setDraggingFunctionId(null);
+                                    setFunctionDropTarget(null);
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (!canMoveFunction || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    const up = event.key === "ArrowUp";
+                                    const target = button.rows[button.index + (up ? -1 : 1)];
+                                    if (target) moveButtonFunction(sw.id, target.id, up ? "before" : "after");
+                                  }}
+                                />
                               </td>
                             ) : null}
                             <td className={revisionCellClass(sw.id, ["buttonFunction"])}>
@@ -1949,44 +2256,15 @@ export default function SwitchView({
                                 );
                               })()}
                             </td>
-                            <td className="col-center switch-row-operation-cell">
-                              <div className="switch-row-operation-stack">
-                                <ActionIconButton
-                                  icon="minus"
-                                  label="Delete Function Row"
-                                  className="btn-secondary btn-sm"
-                                  onClick={() => removeFunctionRow(sw, groupRows)}
-                                  title={
-                                    groupRows.length <= 1
-                                      ? "Use Delete Switch to remove the last row"
-                                      : "Delete this function row"
-                                  }
-                                  disabled={!canEdit || groupRows.length <= 1}
-                                />
-                              </div>
+                            <td className="col-center switch-operation-cell">
+                              <OperationActions groups={functionOperations(sw, groupRows, isFirst, button?.index === 0)} />
                             </td>
-                            {isFirst ? (
-                              <td className="col-center switch-operation-cell" rowSpan={groupRowSpan}>
-                                <div className="switch-operation-stack">
-                                  <ActionIconButton
-                                    icon="copy"
-                                    label="Copy Switch"
-                                    className="btn-secondary btn-sm"
-                                    onClick={() => copySwitch(groupRows)}
-                                    title="Copy Switch"
-                                    disabled={!canEdit}
-                                  />
-                                  <ActionIconButton
-                                    icon="trash"
-                                    label="Delete Switch"
-                                    className="btn-danger-ghost"
-                                    onClick={() => removeSwitchGroup(groupRows)}
-                                    title="Delete Switch"
-                                    disabled={!canEdit}
-                                  />
-                                </div>
+                            {button?.index === 0 ? (
+                              <td className="col-center switch-operation-cell" rowSpan={button.rows.length}>
+                                <OperationActions groups={buttonOperations(sw, button.rows)} />
                               </td>
                             ) : null}
+                            {isFirst ? <td className="col-center switch-operation-cell" rowSpan={groupRowSpan}><OperationActions groups={switchOperations(sw, groupRows)} /></td> : null}
                           </tr>
                         </Fragment>
                       );
@@ -1996,19 +2274,12 @@ export default function SwitchView({
               })
             )}
           </tbody>
-          <tfoot>
-            <tr className="add-row-tr">
-              <td colSpan={colCount}>
-                <button className="btn-add-row" onClick={addSwitch} title="Add row" disabled={!canEdit}>
-                  + Add Row
-                </button>
-              </td>
-            </tr>
-          </tfoot>
+          {!isTstat ? <AddRowButton colSpan={colCount} onClick={addSwitch} disabled={!canEdit} title="Add row" /> : null}
         </table>
-      </ResizableMatrixScroll>
-      {renderSettingOverlay()}
+      </ResizableMatrixScroll> : null}
+      {showThermostatOverview ? null : renderSettingOverlay()}
       </>
+      </div>
     </section>
   );
 }

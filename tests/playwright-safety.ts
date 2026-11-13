@@ -17,7 +17,7 @@ export const isolatedSpecs = [
   '**/_manual_screenshots.spec.ts', '**/_manual_inspection_screenshots.spec.ts', '**/_visual_topbar.spec.ts',
   '**/_project_export_ld_compat.spec.ts', '**/_lutron_spec_ui.spec.ts', '**/verify-fill.spec.ts',
   '**/_api_access_ui.spec.ts', '**/_api_access.spec.ts', '**/_migration_api.spec.ts', '**/_trash_concurrency.spec.ts',
-  '**/_api_access_ports.spec.ts',
+  '**/_api_access_ports.spec.ts', '**/_app_update_startup_lock_api.spec.ts',
 ];
 export function testStorageState() {
   if (process.env.CFS_TEST_AUTH !== '1') return undefined;

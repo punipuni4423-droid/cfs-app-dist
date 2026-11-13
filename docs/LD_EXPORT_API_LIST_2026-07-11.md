@@ -1,6 +1,24 @@
 # LD / Lutron Designer Export API List - 2026-07-11
 
+## 2026-11-02 隔離された制御（ローカル候補・未配布）
+
+不正なTSTAT参照は元のJSON値を保持して非活性に隔離します。Lutron specの通常Switch出力には隔離制御を含めず、識別warningを返します。forensic raw/previousQuarantineをLD payloadへ追加しません。Project JSONでの保全とLD bridge契約は別です。旧版は隔離を認識しないため、戻す前のバックアップが必要です。実LD consumer確認は未実施です。
+
+## 2026-11-02 Text出力metadata（ローカル候補・未配布）
+
+Lutron specのlevels/directLevels/circuitOverridesは、Text時だけ任意の`valueMode: "text"`を出力します。既存`value`本文は空白・改行ごとそのままで、単位や%を付けません。mode欠落はStandard、schemaVersionは1を維持します。Commandの`switchNumber`は既存machine referenceを保持し、TH表示名への破壊的置換はconsumer契約未確認のため見送っています。LD実クライアントでの追加field受入・実機適用は未検証です。
+
+## 2026-10-27 Text設定の追加（ローカル候補・未配布）
+
+endpoint/target ID/bridgeの変更はありません。CFS内部には任意の`valueMode: "text"`が加わりますが、既存Lutron specの設定値は従来どおりstringの本文を保持します。自由記述を条件式や機器の制御値として解釈する新処理はありません。LD側での自由記述受入・実機適用は未検証です。プロジェクトExcelは閲覧用であり、LD bridge JSONを置換しません。
+
+### TSTAT共通制御の追補（開発local確認済み・未配布）
+
+TH表示番号とArea共通制御のbindingはCFS内部の任意metadataです。機器ID・既HVAC metric target ID・LD bridgeを置換しません。TSTAT/Project ExcelのTH表記は表示の追加であり、LD側で人感イベント動作が登録・検証された意味ではありません。画像固有preset・LD実クライアント・実機動作は未確認です。保存互換性の詳細は[互換メモ](EXTERNAL_EXPORT_API_SYNC_MEMO_2026-07-11.md)のTSTAT共通制御の追補を参照してください。
+
 ## Status
+
+2026-10-28開発候補ではSlaveの物理Master参照は任意`HvacAssignment.masterAssignmentId`で保持し、TH表示やArea占有bindingと分離します。既LD bridge/target IDは不変更です。Programming Nameは本人指定の50文字を超える場合にCFS/Excelで赤太字警告を表示しますが、値の切捨てや出力禁止は行いません。code point数での表示警告であり、LD実consumer/実機での入力検証や制御登録を実施した意味ではありません。
 
 This is the current official API/reference list for CFS output used by Lutron Designer automation.
 

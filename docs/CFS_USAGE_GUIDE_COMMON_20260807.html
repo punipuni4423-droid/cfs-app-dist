@@ -413,7 +413,7 @@
       <table class="compact-table">
         <thead><tr><th>画面</th><th>ボタン/列</th><th>機能</th></tr></thead>
         <tbody>
-          <tr><td>Device Assign</td><td>On/Off / Dimming、DALI、HVAC</td><td>機器種別別に割り当て行を切り替えます。</td></tr>
+          <tr><td>Device Assign</td><td>On/Off / Dimming、DALI、Lutron Curtain</td><td>機器種別別に割り当て行を切り替えます。ThermostatはSwitch内で登録します。</td></tr>
           <tr><td>Device Assign</td><td>Show Reserved / Hide Reserved</td><td>Reserved行を表示/非表示にします。非表示時も列は左詰めせず、上詰めで表示します。</td></tr>
           <tr><td>Device Assign</td><td>Circuit # / Input</td><td>LightingはCircuit番号、CCIは入力起点、CCOはDry Contactリストまたは自由入力を選択します。</td></tr>
           <tr><td>Device Assign</td><td>Detail</td><td>Circuit # / Inputが空の場合は入力しない運用です。CCOではCircuitがある場合、CFS上でDetail空欄時にCircuitを表示します。</td></tr>
@@ -451,7 +451,7 @@
           <tr><td>Scene</td><td>From PMS Scene</td><td>From PMS、Check-in/Check-out、PMS VAR: EnableのようなPMS連動列を登録します。</td></tr>
           <tr><td>Scene</td><td>Door Magnet Scene</td><td>ドアマグネットなどを起点にしたWelcome Sceneなどを登録します。</td></tr>
           <tr><td>Scene</td><td>Setting / Backlight Setting</td><td>Sceneの照明値、Area Scene参照、Backlight条件を設定します。BacklightのTargetは、通常設定・一括適用ともBy SceneのPalladiomだけを表示する確認用一覧です。割当変更はBacklightタブで行います。CFSのBacklight Logic行は別基準でBy SceneまたはBaseを対象とします。</td></tr>
-          <tr><td>Switch</td><td>Palladiom / CCI / Pico / PIR / QSM</td><td>スイッチ種別を切り替えます。CCIは動作の起点であり、CFSのBase列には通常表示しません。</td></tr>
+          <tr><td>Switch</td><td>Palladiom / CCI / Pico / PIR / Thermostat / QSM</td><td>スイッチ種別を切り替えます。Thermostatは機器登録、Master / Slave、Area、動作設定をこの中で行います。CCIは動作の起点であり、CFSのBase列には通常表示しません。</td></tr>
           <tr><td>Switch</td><td>Switch # / Name / Button / Trigger Condition</td><td>スイッチ番号、名称、ボタン、起動条件を設定します。</td></tr>
           <tr><td>Switch</td><td>Setting</td><td>Area Scene呼び出し、直接%値、On/Offなどを設定します。Refresh/Relax/NightはBedroomのArea Sceneとして呼ぶ運用です。</td></tr>
         </tbody>
@@ -528,6 +528,7 @@
       <p>Remarksタブの <code>Excel Export</code> は、All Roomsに含まれるRemarksと同じ内容・書式の1シートを出力します。Excelも短い列を保ちながら長文列に残りの幅を配分し、読みやすい全体幅を超える長文を折り返します。画面サイズやEdit列幅には依存せず、同じシート内の列幅は共通です。Tableがオフの表は保持されますが出力されません。</p>
       <p>CFSタブの <code>Excel Export → All Rooms</code> では、各Room Typeのシートに続けて <code>Remarks</code> シートを同梱します。メモの順番でタイトル・本文(改行を保持)・有効な表を出力し、表は内容に応じた列幅と折り返し、罫線を使います。Tableがオフの表は出力しません。メモが0件ならシートを省略します。同名のRoom Typeがある場合は、Remarks側を <code>Remarks (2)</code> などの連番名にします。</p>
       <p><code>This Room Type</code> は従来どおり現在のRoom Typeだけを出力し、Remarksは含めません。Sub Window・Fixed WindowからのAll Rooms出力にも、同じプロジェクトのRemarksが含まれます。</p>
+      <p>2026年10月27日の未配布追補では、CFSのシーン名の文字色・太字と、Off／0%／0の青文字もExcelへ反映します。同じセル内にシーン名と設定値が並ぶ場合も、行ごとの色を保ちます。All Roomsは各Room Typeのシーン登録順の配色を使用します。</p>
     </section>
 
     <section id="cfs" class="card">
@@ -849,6 +850,25 @@
     </section>
 
     <p class="footer-note">この取説のスクショは、実データを含まないManual Demo Projectで取得しています。画面構成とボタン配置は2026年8月7日時点のアプリに基づきます。2026年9月7日追記分(Remarksタブ、CFS編集モード)のスクショは、実データを含まないSample Hotel(ダミーデータ)で新規取得しており、Git fabad06時点のアプリに基づきます。</p>
+    <section id="scene-text-project-excel">
+      <h2>2026年10月27日追加：Scene文字入力とExcel</h2>
+      <div class="note">この追補は開発環境で確認した未配布の機能です。通常利用環境への反映は別途行います。既存の画面例は追加機能の配置や保存結果を示すものではありません。</div>
+      <p>CFSの上段見出しはPMSが<code>Scene</code>、ドアマグネットが<code>Door Magnet Scene</code>です。旧表示設定は初回に両グループへ継承し、その後は別々に表示・並べ替えできます。</p>
+      <p>Scene／Area Scene／Switch／Commandの設定セルでは、入力欄の左の<code>123（Standard）</code>／<code>Ab（Text）</code>ボタンで直接切り替えます。切替だけで行や設定paneの高さ・スクロール・入力フォーカスを変えず、明示resizeを保持します。Textでは「在室：50%」「不在：Off」のような複数行を記述できます。Standardでは対応する数値やOn／Offなどを使い、自由文を新しく確定しません。条件の自動切替は行いません。改行・本文・入力モードは保存やInspectionのUndo／Redo／Reset／Revertでも保持します。標準入力へ変換できない文章はTextのまま維持し、既存データの文章を読込時に削除しません。</p>
+      <p>SwitchのFunction Operationは行Function、Switch Operationは機器全体のFunction内容をCopy／Paste／Deleteします。Pasteは毎回貼付先を未選択から選び、登録・配線・Area・PIR/QSM所属・Thermostat bindingは変更しません。同種だけが対象で、Palladiom／Picoのボタン構成不一致は理由付きで選択不可です。既Copy Buttonと新規Duplicateは別操作です。Commandは1行単位、QSMは登録専用のためFunction／Pasteは非適用です。Thermostat共有Area controlの削除保護を維持します。</p>
+      <p>Inspectionで値が混在する範囲は、<code>Input</code>のモードだけを変更しても各セルの本文を保持します。モード切替と本文を空にする操作は別です。Editの設定確定・取消と、Inspectionの検査ドラフト確定・<code>Revert</code>を区別してください。Project出力へ含めるInspection変更は終了時の確認で、Low End・High Endは専用バーの<code>Confirm</code>で先に確定します。</p>
+      <p><code>Switch &gt; Thermostat</code>の<code>Excel Export</code>は<code>TSTAT</code>と<code>TSTAT Seasons</code>を出力します。CFSの<code>Excel Export &gt; Project (All Tabs)</code>はプロジェクトの編集内容から全RoomType・各タブを1つのExcelへまとめます。未確定のInspection / LowHighドラフトは含まれないため、必要な値は先に確定してください。表示フィルターは無視し、出力だけで保存やRevision作成を行いません。先頭の<code>Project Index</code>でシートと適用外理由を確認できます。</p>
+      <p><code>Switch &gt; Thermostat</code>に機器登録、Master / Slave、Area、動作設定をまとめます。登録機器は<code>TH1</code>、<code>TH2</code>…と表示します。Master / Slaveとも同じAreaでは設定1組を共有します。Function、Trigger Condition、Function Setting、Backlight Settingを編集し、CFS表でも同じ設定を確認できます。Area未設定は機器別の未適用状態です。旧データは表示だけで新設定を保存せず、Area移動・削除後の元設定も保持して案内します。実機の人感イベント動作を確認したこととは区別してください。</p>
+      <p>TSTATの初期枠はPIRと同じ空の設定を基準にしています。参照画像は未確認のため、画像固有のFunction／Trigger／時間・値のプリセットは含みません。必要な値を確認してから設定してください。通常UndoやRevision復元でも、別の機器へ既発行のTH番号を再利用しません。</p>
+      <p>CFSシートのシーン名の文字色・太字とOff／0%／0の青文字は、単一RoomType・All Rooms・Project出力へ反映します。同じセル内のシーン名と設定値も行ごとの書式を保持します。</p>
+      <p>Excelは閲覧・提出用です。復元用の<code>Download Backup</code>（JSON）は従来どおり別途保存してください。</p>
+      <h3>2026年10月28日追補：Master参照と名前長の警告（開発候補・未配布）</h3>
+      <p>ドアマグネットの表示名は<code>Door Magnet Scene</code>です。CFS見出しでは単語の途中を分断せず、Scene画面・Excelも同じ表示にします。保存IDや既存の表示順・非表示設定は変えません。</p>
+      <p><code>Switch &gt; Thermostat</code>でSlave行の<code>Reference Master</code>を開き、一意なTH番号から同じRoomTypeのMasterを選びます。異なるArea/Control Typeも候補です。未選択の旧データは自動連結しません。保存後、同じSlave行を再表示して選択先を確認できます。この物理参照はArea共通の人感設定とは別です。</p>
+      <p>参照先を削除した場合は<code>Unavailable Master</code>、参照先をSlaveへ変更した場合は<code>not Master</code>と表示します。元参照を残し、別のMasterへ勝手に変更しません。新しいMasterを選ぶか<code>Not selected</code>で明示的に解除します。Slave自身をMasterへ変えた場合の旧参照は未適用のまま保持します。Area移動でも機器への参照を保持し、TSTAT/Project ExcelとCFSのHVAC表示に人可読名を反映します。</p>
+      <p>CFSのDevice表示は<code>Thermostat</code>、Slaveの参照は<code>Master: TH1</code>のような簡潔な表記です。Areaセルは同じ物理機器の行だけを結合し、同Areaの別Thermostatや照明行とは結合しません。</p>
+      <p>Programming Nameが50文字を超える場合は赤太字だけで表示し、専用の短縮コメントやtooltipは付けません。50文字以下は通常表示です。解決済み本文のUnicode code point数で数え、空白を含め、画面上の折返しは数えません。Edit・InspectionMode・閲覧でも本文に応じて色を付け、保存・コピー・出力は止めません。名前を自動で短くしません。Excelは名前の赤太字を保持しますが、LD実機側への入力は未検証です。</p>
+    </section>
   </main>
 </body>
 </html>

@@ -1,6 +1,9 @@
 ﻿"use client";
 
-import { useState } from "react";
+import AddRowButton from "./AddRowButton";
+import ViewModeBar, { type ViewMode } from "./ViewModeBar";
+import BacklightOverview from "./BacklightOverview";
+import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { BacklightLevelSetting, RevisionFieldChanges, RoomScene, SwitchEntry } from "../types";
 import { createDefaultBacklightLevels, normalizeBacklightLevels } from "../lib/constants";
 import { useDragReorder } from "../lib/useDragReorder";
@@ -8,12 +11,17 @@ import ActionIconButton from "./ActionIconButton";
 import DragHandle from "./DragHandle";
 import AutoGrowTextarea from "./AutoGrowTextarea";
 import { createAppId } from '../lib/id';
+import { roomTypeExcelFilename } from "../lib/excelExportNames";
 
 const BY_SCENE_VALUE = "__byScene";
 
 interface BacklightViewProps {
+  projectName: string;
+  roomTypeName: string;
+  roomTypeRevision: string;
   switches: SwitchEntry[];
   backlightLevels?: BacklightLevelSetting[];
+  flushNameRef: RefObject<(() => boolean) | null>;
   // Updater form applies against the CURRENT state; array snapshots built from
   // the props could overwrite edits made moments earlier (By-Scene un-setting).
   onChange: (next: SwitchEntry[] | ((current: SwitchEntry[]) => SwitchEntry[])) => void;
@@ -67,8 +75,12 @@ function groupBacklightSceneValue(entries: SwitchEntry[]): string {
 }
 
 export default function BacklightView({
+  projectName,
+  roomTypeName,
+  roomTypeRevision,
   switches,
   backlightLevels,
+  flushNameRef,
   onChange,
   onBacklightLevelsChange,
   roomScenes = [],
@@ -83,12 +95,69 @@ export default function BacklightView({
     return [...items, sw];
   }, []);
   const canEditBacklightLevels = canEdit && (Boolean(onBacklightLevelsChange) || palladiomSwitches.length > 0);
+  const [viewMode, setViewMode] = useState<ViewMode>("edit");
   const [bulkAssignIds, setBulkAssignIds] = useState<Set<string>>(new Set());
   const [bulkAssignValue, setBulkAssignValue] = useState<string>(BY_SCENE_VALUE);
+  const exportingRef = useRef(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
 
-  const levels = normalizeBacklightLevels(backlightLevels);
+  const [editingName, setEditingName] = useState<{ key: string; value: string } | null>(null);
+  const pendingNameRef = useRef<typeof editingName>(null);
+  const commitNameRef = useRef(commitLevelName);
+  useLayoutEffect(() => { commitNameRef.current = commitLevelName; });
+  const flushPendingName = useCallback((updateInput = true): boolean => {
+    const draft = pendingNameRef.current;
+    if (!draft) return false;
+    pendingNameRef.current = null;
+    if (updateInput) setEditingName(null);
+    return commitNameRef.current(draft);
+  }, []);
+  useLayoutEffect(() => {
+    flushNameRef.current = flushPendingName;
+    return () => {
+      flushNameRef.current = null;
+      flushPendingName(false);
+    };
+  }, [flushNameRef, flushPendingName]);
+  const levels = normalizeBacklightLevels(backlightLevels, { migrateLegacyMasterOn: false });
   const drag = useDragReorder(levels, updateAllPalladiomLevels, (level) => level.key);
   const assignmentDrag = useDragReorder(switches, commitSwitches, (sw) => sw.id, (sw) => switchGroupId(sw));
+
+  async function exportBacklight(): Promise<void> {
+    if (exportingRef.current) return;
+    exportingRef.current = true;
+    setExporting(true);
+    setExportError("");
+    const snapshot = { backlightLevels: levels, switches };
+    try {
+      const [ExcelJSModule, { appendBacklightExcelSheet }] = await Promise.all([
+        import("exceljs"),
+        import("../lib/projectExcelExport"),
+      ]);
+      const ExcelJS = ExcelJSModule.default ?? ExcelJSModule;
+      const workbook = new ExcelJS.Workbook();
+      appendBacklightExcelSheet(workbook, snapshot);
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer as ArrayBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = roomTypeExcelFilename(projectName, { name: roomTypeName, revision: roomTypeRevision }, "Backlight");
+      try {
+        document.body.appendChild(link);
+        link.click();
+      } finally {
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+    } catch {
+      setExportError("Excel export failed. Please try again.");
+    } finally {
+      exportingRef.current = false;
+      setExporting(false);
+    }
+  }
 
   function commitSwitches(next: SwitchEntry[] | ((current: SwitchEntry[]) => SwitchEntry[])): void {
     if (!canEdit) return;
@@ -145,8 +214,19 @@ export default function BacklightView({
     ]);
   }
 
-  function renameLevel(levelKey: string, name: string): void {
-    updateLevel(levelKey, { name });
+  function commitLevelName({ key, value }: NonNullable<typeof editingName>): boolean {
+    const level = levels.find((item) => item.key === key);
+    if (!canEditBacklightLevels || !level) return false;
+    const name = normalizeBacklightLevels([{ ...level, name: value }], { migrateLegacyMasterOn: false })[0].name;
+    if (name === level.name) return false;
+    updateLevel(key, { name });
+    return true;
+  }
+
+  function editLevelName(key: string, value: string): void {
+    const draft = { key, value };
+    pendingNameRef.current = draft;
+    setEditingName(draft);
   }
 
   function removeLevel(levelKey: string): void {
@@ -238,9 +318,20 @@ export default function BacklightView({
 
   return (
     <section className="card card-padded fade-in">
+      <ViewModeBar ariaLabel="Backlight view mode" mode={viewMode} onChange={(mode) => {
+        flushPendingName();
+        setViewMode(mode);
+      }} testIdPrefix="backlight-mode" />
+      {viewMode === "overview" ? <BacklightOverview levels={levels} switches={switches} roomScenes={roomScenes} /> : null}
+      <div hidden={viewMode === "overview"}>
       <div className="toolbar">
         <strong>Backlight Logic</strong>
+        <span className="toolbar-spacer" />
+        <button type="button" className="btn btn-secondary btn-sm" onClick={() => { void exportBacklight(); }} disabled={exporting}>
+          {exporting ? "Exporting..." : "Excel Export"}
+        </button>
       </div>
+      {exportError ? <p role="alert">{exportError}</p> : null}
       <div className="matrix-scroll">
         <table className="matrix-table master-table switch-table">
           <colgroup>
@@ -289,8 +380,14 @@ export default function BacklightView({
                 <td className="col-center">{index + 1}</td>
                 <td className={backlightLogicChanged ? "revision-changed-cell" : ""}>
                   <AutoGrowTextarea
-                    value={level.name}
-                    onChange={(value) => renameLevel(level.key, value)}
+                    value={editingName?.key === level.key ? editingName.value : level.name}
+                    onChange={(value) => editLevelName(level.key, value)}
+                    onBlur={() => flushPendingName()}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229) return;
+                      event.preventDefault();
+                      flushPendingName();
+                    }}
                     disabled={!canEditBacklightLevels}
                   />
                 </td>
@@ -322,24 +419,13 @@ export default function BacklightView({
               </tr>
             ))}
           </tbody>
-          <tfoot>
-            <tr className="add-row-tr">
-              <td colSpan={7}>
-                <button className="btn-add-row" onClick={addBacklightScene} disabled={!canEditBacklightLevels}>
-                  + Backlight Scene Add
-                </button>
-              </td>
-            </tr>
-          </tfoot>
+          <AddRowButton colSpan={7} onClick={addBacklightScene} disabled={!canEditBacklightLevels} />
         </table>
       </div>
 
       <div className="toolbar" style={{ marginTop: "1rem" }}>
         <strong>Palladiom Backlight Assignment</strong>
         <span className="toolbar-spacer" />
-        <span className="muted-pill" aria-live="polite">
-          {bulkAssignIds.size} checked
-        </span>
         <select
           className="cell-input backlight-bulk-assign-select"
           value={bulkAssignValue}
@@ -494,6 +580,7 @@ export default function BacklightView({
             )}
           </tbody>
         </table>
+      </div>
       </div>
     </section>
   );

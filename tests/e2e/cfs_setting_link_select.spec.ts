@@ -164,8 +164,8 @@ for (const kind of ['switch', 'scene'] as const) {
     await page.goto('/');
     await openProjectCfs(page, projectId);
     await selectToolbarButton(page).click();
-    const first = settingLinkCheck(page, kind === 'switch' ? /^Select 3 \/ PD-3 \// : /^Select Scene \/ Check Out \/ Relax Scene/);
-    const second = settingLinkCheck(page, kind === 'switch' ? /^Select 1 \/ PD-1 \// : /^Select Scene \/ Check In \/ Welcome Scene/);
+    const first = settingLinkCheck(page, kind === 'switch' ? /^Select 3 \/ PD-3 \// : /^Select DoorMagnetScene \/ Check Out \/ Relax Scene/);
+    const second = settingLinkCheck(page, kind === 'switch' ? /^Select 1 \/ PD-1 \// : /^Select DoorMagnetScene \/ Check In \/ Welcome Scene/);
     await first.check();
     await second.check();
     await expect(page.locator('.cfs-header-column-controls.is-link-source input[type=checkbox]')).toHaveAttribute('aria-label', await first.getAttribute('aria-label') as string);
@@ -195,7 +195,7 @@ for (const kind of ['switch', 'scene'] as const) {
     seedProject(project);
     await page.goto('/'); await openProjectCfs(page, projectId); await selectToolbarButton(page).click();
     if (kind === 'switch') await selectSwitchColumns(page, [3, 1]);
-    else await selectSceneColumns(page, [/^Select Scene \/ Check Out \/ Relax Scene/, /^Select Scene \/ Check In \/ Welcome Scene/]);
+    else await selectSceneColumns(page, [/^Select DoorMagnetScene \/ Check Out \/ Relax Scene/, /^Select DoorMagnetScene \/ Check In \/ Welcome Scene/]);
     await expect(page.locator('.cfs-setting-link-source-label')).toContainText(kind === 'switch' ? 'PD-3' : 'Relax Scene');
     await page.setViewportSize({ width: 2400, height: 900 });
     await page.locator('.cfs-header-column-controls.is-link-source').evaluate((element) => element.scrollIntoView({ block: 'nearest', inline: 'end' }));
@@ -457,9 +457,9 @@ test("CFS Select links Scene columns and Room Scene saves propagate through the 
   await openProjectCfs(page, "T84 Link Scene");
 
   await selectToolbarButton(page).click();
-  await settingLinkCheck(page, /^Select Scene \/ Check In \/ Welcome Scene/).check();
+  await settingLinkCheck(page, /^Select DoorMagnetScene \/ Check In \/ Welcome Scene/).check();
   await expect(page.locator(".cfs-setting-link-select-grid input[type=checkbox]:disabled")).toHaveCount(6);
-  await selectSceneColumns(page, [/^Select Scene \/ Check Out \/ Relax Scene/]);
+  await selectSceneColumns(page, [/^Select DoorMagnetScene \/ Check Out \/ Relax Scene/]);
   await expect(page.locator(".cfs-setting-link-selected-count")).toHaveText("2 selected");
   await expect(linkToolbarButton(page)).toBeEnabled();
   await linkToolbarButton(page).click();

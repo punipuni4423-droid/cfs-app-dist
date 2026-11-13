@@ -639,6 +639,7 @@ export default function AreaSceneOverview({
                             className={cellClassName(cell)}
                             data-testid={`area-scene-cell-${targetTestId}-${index}`}
                             aria-label={cell.state === "na" ? "not applicable" : undefined}
+                            style={cell.displayValue.includes("\n") ? { whiteSpace: "pre-wrap" } : undefined}
                           >
                             {cell.state === "value" ? cell.displayValue : cell.state === "empty" ? "-" : ""}
                           </td>

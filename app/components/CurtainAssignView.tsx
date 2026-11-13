@@ -1,5 +1,6 @@
 "use client";
 
+import AddRowButton from "./AddRowButton";
 import type { CurtainAssignment, LocationMaster, RevisionFieldChanges } from "../types";
 import { createEmptyCurtainAssignment } from "../lib/constants";
 import { useDragReorder } from "../lib/useDragReorder";
@@ -174,15 +175,7 @@ export default function CurtainAssignView({
               })
             )}
           </tbody>
-          <tfoot>
-            <tr className="add-row-tr">
-              <td colSpan={COL_COUNT}>
-                <button className="btn-add-row" onClick={addRow} title="Add Row" disabled={!canEdit}>
-                  + Add Row
-                </button>
-              </td>
-            </tr>
-          </tfoot>
+          <AddRowButton colSpan={COL_COUNT} onClick={addRow} disabled={!canEdit} title="Add Row" />
         </table>
       </ResizableMatrixScroll>
     </>

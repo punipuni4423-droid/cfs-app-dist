@@ -1,4 +1,5 @@
-import type { CircuitEntry, SceneCircuitSetting } from "../types";
+import type { CircuitEntry, SceneCircuitSetting, SceneValueMode } from "../types";
+import { normalizeSettingValue, settingValueMode } from "./sceneValueMode";
 
 export function circuitGroupKey(circuit: Pick<CircuitEntry, "id" | "circuitGroupId">): string {
   return circuit.circuitGroupId.trim() || circuit.id;
@@ -67,12 +68,17 @@ export function sceneSettingValueForCircuitGroup(
   circuits: readonly CircuitEntry[],
   circuit: CircuitEntry,
 ): string {
-  const byCircuitId = new Map(settings.map((setting) => [setting.circuitId, setting.percentage]));
+  const byCircuitId = new Map(settings.map((setting) => [setting.circuitId, setting]));
   for (const member of circuitGroupMembers(circuits, circuit)) {
-    const value = byCircuitId.get(member.id)?.trim();
-    if (value) return value;
+    const setting = byCircuitId.get(member.id);
+    if (setting?.percentage.trim()) return normalizeSettingValue(setting.percentage, settingValueMode(setting));
   }
   return "";
+}
+
+export function sceneSettingModeForCircuitGroup(settings: readonly SceneCircuitSetting[], circuits: readonly CircuitEntry[], circuit: CircuitEntry): SceneValueMode {
+  const ids = new Set(circuitGroupMembers(circuits, circuit).map((member) => member.id));
+  return settings.some((setting) => ids.has(setting.circuitId) && setting.valueMode === "text") ? "text" : "standard";
 }
 
 export function setSceneSettingValueForCircuitGroup(
@@ -80,16 +86,19 @@ export function setSceneSettingValueForCircuitGroup(
   circuits: readonly CircuitEntry[],
   circuit: CircuitEntry,
   value: string,
+  mode?: SceneValueMode,
 ): SceneCircuitSetting[] {
   const targetIds = new Set(circuitGroupMembers(circuits, circuit).map((member) => member.id));
-  const trimmed = value.trim();
+  const source = settings.find((setting) => targetIds.has(setting.circuitId));
+  const nextMode = mode ?? settingValueMode(source);
+  const trimmed = normalizeSettingValue(value, nextMode);
   const retained = settings
     .filter((setting) => !targetIds.has(setting.circuitId))
     .map((setting) => ({ ...setting }));
-  if (!trimmed) return retained;
+  if (!trimmed && nextMode !== "text") return retained;
   return [
     ...retained,
-    ...Array.from(targetIds).map((circuitId) => ({ circuitId, percentage: trimmed })),
+    ...Array.from(targetIds).map((circuitId) => ({ circuitId, percentage: trimmed, ...(nextMode === "text" ? { valueMode: "text" as const } : {}) })),
   ];
 }
 
@@ -107,7 +116,7 @@ export function normalizeSceneSettingsByCircuitGroup(
     idsByGroup.set(key, ids);
   }
 
-  const valueByGroup = new Map<string, string>();
+  const valueByGroup = new Map<string, SceneCircuitSetting>();
   const syntheticSettings: SceneCircuitSetting[] = [];
   for (const setting of sourceSettings) {
     const circuit = circuitById.get(setting.circuitId);
@@ -115,10 +124,10 @@ export function normalizeSceneSettingsByCircuitGroup(
       syntheticSettings.push({ ...setting });
       continue;
     }
-    const value = setting.percentage.trim();
-    if (!value) continue;
+    const value = normalizeSettingValue(setting.percentage, settingValueMode(setting));
+    if (!value && setting.valueMode !== "text") continue;
     const key = circuitGroupKey(circuit);
-    if (!valueByGroup.has(key)) valueByGroup.set(key, value);
+    if (!valueByGroup.has(key)) valueByGroup.set(key, { ...setting, percentage: value });
   }
 
   const normalized = [...syntheticSettings];
@@ -126,7 +135,7 @@ export function normalizeSceneSettingsByCircuitGroup(
     const value = valueByGroup.get(key);
     if (!value) continue;
     for (const circuitId of ids) {
-      normalized.push({ circuitId, percentage: value });
+      normalized.push({ ...value, circuitId });
     }
   }
   return normalized;
@@ -140,7 +149,8 @@ export function sameSceneSettings(
     [...(settings ?? [])]
       .map((setting) => ({
         circuitId: setting.circuitId,
-        percentage: setting.percentage.trim(),
+        percentage: normalizeSettingValue(setting.percentage, settingValueMode(setting)),
+        valueMode: settingValueMode(setting),
       }))
       .sort((a, b) =>
         a.circuitId === b.circuitId

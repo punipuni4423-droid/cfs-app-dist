@@ -19,7 +19,7 @@ export function switchGroupId(sw: SwitchEntry): string {
 }
 
 export function supportsPriorityFunction(sw: SwitchEntry): boolean {
-  return sw.kind !== "command" && sw.kind !== "pir" && sw.kind !== "qsm";
+  return sw.kind !== "command" && sw.kind !== "pir" && sw.kind !== "qsm" && !(sw.kind === "tstat" && sw.tstatBinding);
 }
 
 export function switchPriorityFunctionGroupKey(sw: SwitchEntry): string {

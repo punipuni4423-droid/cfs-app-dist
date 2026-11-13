@@ -46,10 +46,9 @@ export async function open(page: Page) {
 export async function tab(page: Page, name: string) { await page.getByRole('tab', { name, exact: true }).click(); }
 export function panel(page: Page) { return page.locator('.setting-overlay-panel'); }
 export async function close(page: Page) { await panel(page).getByRole('button', { name: 'Close', exact: true }).click(); }
-export async function targets(page: Page) { return (await panel(page).locator('.switch-target-option').allTextContents()).map(v => v.trim()).sort(); }
+export async function targets(page: Page) { return (await panel(page).locator('.switch-target-list .switch-target-option').allTextContents()).map(v => v.trim()).sort(); }
 export async function readOnlyTargets(scope: Locator) {
-  const inputs = scope.locator('.switch-target-list input');
-  for (const input of await inputs.all()) { expect.soft(await input.isChecked()).toBeTruthy(); expect.soft(await input.isDisabled()).toBeTruthy(); }
+  await expect.soft(scope.locator('.switch-target-list input')).toHaveCount(0);
   await expect.soft(scope.locator('.switch-target-list button:not([disabled]), .switch-target-list select:not([disabled])')).toHaveCount(0);
 }
 export async function scenePanel(page: Page, bulk: boolean) {

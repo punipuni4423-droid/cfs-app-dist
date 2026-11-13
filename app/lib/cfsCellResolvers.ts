@@ -1,8 +1,9 @@
 import type { Scene, SwitchEntry } from "../types";
 import type { CfsZoneRow, FunctionColumn } from "./cfsTableModel";
 import { cfsTargetsForRow } from "./cfsTargets";
+import { normalizeSettingValue, settingValueMode, settingValuesEqual } from "./sceneValueMode";
 import {
-  areaSceneDisplayName, cellValues, formatLevel, normalizeLevelForCompare,
+  areaSceneDisplayName, cellValues, formatLevel, formatSettingLevel, normalizeLevelForCompare,
   roomSceneCellValue, roomSceneHasAreaSceneValue, roomSceneSelectedAreaSceneId,
   roomSceneSettingValue, roomSceneUsesAreaSceneValue, sceneMatchesArea,
   sceneRawValuesForCircuit, sceneRawValuesForTarget, sceneValueForCircuit,
@@ -21,9 +22,10 @@ export interface CfsCellValueContext {
 export function createCfsCellResolvers(context: CfsCellValueContext) {
   const { scenesById, showAreaSceneNames, displayBacklightCondition } = context;
   function targetDisplayValues(row: CfsZoneRow, col: FunctionColumn): string[] {
-    return uniqueNonEmptyValues(cfsTargetsForRow(row).flatMap((target) => {
-      const direct = (col.roomScene?.settings ?? col.source?.buttonSetting.circuitSettings ?? [])
-        .find((setting) => setting.circuitId === target.targetId)?.percentage.trim() ?? "";
+    return Array.from(new Set(cfsTargetsForRow(row).flatMap((target) => {
+      const directSetting = (col.roomScene?.settings ?? col.source?.buttonSetting.circuitSettings ?? [])
+        .find((setting) => setting.circuitId === target.targetId);
+      const direct = directSetting ? normalizeSettingValue(directSetting.percentage, settingValueMode(directSetting)) : "";
       const scenes = col.roomScene
         ? [scenesById.get(roomSceneSelectedAreaSceneId(col.roomScene, target.areaId))]
         : col.source ? selectedSceneIdsForSwitch(col.source).map((id) => scenesById.get(id))
@@ -34,7 +36,7 @@ export function createCfsCellResolvers(context: CfsCellValueContext) {
       const name = !direct && showAreaSceneNames && scene ? areaSceneDisplayName(scene) : "";
       // This path is only used for CCO targets, whose labels are not percentages.
       return name ? [name, raw] : [raw];
-    }));
+    }).filter((value) => value.trim() !== "")));
   }
   function rawFunctionValues(row: CfsZoneRow, col: FunctionColumn): string[] {
     const draft = context.inspectionDisplayValues?.(row, col);
@@ -50,9 +52,13 @@ export function createCfsCellResolvers(context: CfsCellValueContext) {
       const dimmingType = row.hvacMetric || "HVAC";
       if (col.roomScene) return [roomSceneSettingValue(col.roomScene, row.hvacSettingId, dimmingType) || ""];
       if (!col.source) return [""];
-      const direct = col.source.buttonSetting.circuitSettings.find((setting) => setting.circuitId === row.hvacSettingId)?.percentage ?? "";
-      if (direct.trim()) return [formatLevel(direct, dimmingType)];
-      return sceneRawValuesForTarget(col.source, row.hvacSettingId, row.locationId, scenesById).map((value) => formatLevel(value, dimmingType)).filter(Boolean);
+      const direct = col.source.buttonSetting.circuitSettings.find((setting) => setting.circuitId === row.hvacSettingId);
+      if (direct?.percentage.trim()) return [formatSettingLevel(direct, dimmingType)];
+      return selectedSceneIdsForSwitch(col.source).map((id) => scenesById.get(id))
+        .filter((scene): scene is Scene => Boolean(scene) && sceneMatchesArea(scene!, row.locationId))
+        .map((scene) => scene.settings.find((setting) => setting.circuitId === row.hvacSettingId))
+        .filter((setting) => Boolean(setting?.percentage.trim()))
+        .map((setting) => formatSettingLevel(setting, dimmingType));
     }
     if (row.circuits.length === 0) {
       const targets = cfsTargetsForRow(row);
@@ -77,9 +83,13 @@ export function createCfsCellResolvers(context: CfsCellValueContext) {
     const sw = col.source;
     if (!sw || row.isBacklight || row.circuits.length === 0) return false;
     return row.circuits.some((item) => {
-      const direct = sw.buttonSetting.circuitSettings.find((setting) => setting.circuitId === item.circuit.id)?.percentage.trim() ?? "";
-      return Boolean(direct) && sceneRawValuesForCircuit(sw, item.circuit, scenesById)
-        .some((value) => normalizeLevelForCompare(value) !== normalizeLevelForCompare(direct));
+      const direct = sw.buttonSetting.circuitSettings.find((setting) => setting.circuitId === item.circuit.id);
+      return Boolean(direct?.percentage.trim()) && selectedSceneIdsForSwitch(sw)
+        .map((id) => scenesById.get(id)).filter((scene) => scene && sceneMatchesArea(scene, item.circuit.area))
+        .some((scene) => {
+          const setting = scene?.settings.find((entry) => entry.circuitId === item.circuit.id);
+          return Boolean(setting?.percentage.trim()) && !settingValuesEqual(setting!.percentage, settingValueMode(setting), direct!.percentage, settingValueMode(direct));
+        });
     });
   }
   function hasAreaSceneValueCell(row: CfsZoneRow, col: FunctionColumn): boolean {

@@ -9,8 +9,6 @@ import type {
   DeviceMaster,
   DryContactEntry,
   FixtureMaster,
-  HvacAssignment,
-  HvacSeason,
   InputMaster,
   LocationMaster,
   RevisionFieldChanges,
@@ -39,7 +37,6 @@ import Combobox, { type ComboboxOptionInput } from "./Combobox";
 import DuplicationBanner from "./DuplicationBanner";
 import DeviceSelectModal from "./DeviceSelectModal";
 import CurtainAssignView from "./CurtainAssignView";
-import HvacAssignView from "./HvacAssignView";
 import ActionIconButton from "./ActionIconButton";
 import DragHandle from "./DragHandle";
 import AutoGrowTextarea from "./AutoGrowTextarea";
@@ -49,8 +46,6 @@ import { ccoLightingCircuit, clearLightingAssignment, hasCcoLightingOwner, isCco
 
 interface DeviceAssignViewProps {
   assignments: DeviceAssignment[];
-  hvacAssignments: HvacAssignment[];
-  hvacSeasons: HvacSeason[];
   curtainAssignments?: CurtainAssignment[];
   devices: DeviceMaster[];
   inputMasters: InputMaster[];
@@ -59,8 +54,6 @@ interface DeviceAssignViewProps {
   circuits: CircuitEntry[];
   dryContacts: DryContactEntry[];
   onChange: (next: DeviceAssignment[]) => void;
-  onHvacAssignmentsChange: (next: HvacAssignment[]) => void;
-  onHvacSeasonsChange: (next: HvacSeason[]) => void;
   onCurtainAssignmentsChange?: (next: CurtainAssignment[]) => void;
   revisionChanges?: RevisionFieldChanges;
   curtainRevisionChanges?: RevisionFieldChanges;
@@ -68,7 +61,7 @@ interface DeviceAssignViewProps {
 }
 
 type CircuitMode = "designer" | "internal";
-type DeviceAssignMode = "fixed" | "dali" | "hvac" | "curtain";
+type DeviceAssignMode = "fixed" | "dali" | "curtain";
 
 const PAIR_SWAP_DT = "application/x-grms-pair-swap";
 const DEVICE_ASSIGN_HIDE_RESERVED_KEY = "device-assign-hide-reserved-v1";
@@ -138,8 +131,6 @@ function moveZoneExtras(base: DeviceAssignment, source: DeviceAssignment): Devic
 
 export default function DeviceAssignView({
   assignments,
-  hvacAssignments,
-  hvacSeasons,
   curtainAssignments = [],
   devices,
   inputMasters,
@@ -148,8 +139,6 @@ export default function DeviceAssignView({
   circuits,
   dryContacts,
   onChange,
-  onHvacAssignmentsChange,
-  onHvacSeasonsChange,
   onCurtainAssignmentsChange,
   revisionChanges = {},
   curtainRevisionChanges = {},
@@ -1549,7 +1538,6 @@ export default function DeviceAssignView({
   }, [tabVisible, deviceAssignMode, devices, lineBlockInfo]);
 
   const isDali = deviceAssignMode === "dali";
-  const isHvac = deviceAssignMode === "hvac";
   const isCurtain = deviceAssignMode === "curtain";
   // T-32: +2 for the Low End / High End columns (placed before Zone / Address).
   const colCount = isDali ? 14 : 11;
@@ -1724,15 +1712,6 @@ export default function DeviceAssignView({
         <button
           type="button"
           role="tab"
-          aria-selected={deviceAssignMode === "hvac"}
-          className={`scene-area-chip${deviceAssignMode === "hvac" ? " scene-area-chip-active" : ""}`}
-          onClick={() => setDeviceAssignMode("hvac")}
-        >
-          HVAC
-        </button>
-        <button
-          type="button"
-          role="tab"
           aria-selected={deviceAssignMode === "curtain"}
           className={`scene-area-chip${deviceAssignMode === "curtain" ? " scene-area-chip-active" : ""}`}
           onClick={() => setDeviceAssignMode("curtain")}
@@ -1741,16 +1720,7 @@ export default function DeviceAssignView({
         </button>
       </div>
 
-      {isHvac ? (
-        <HvacAssignView
-          assignments={hvacAssignments}
-          seasons={hvacSeasons}
-          locations={locations}
-          onAssignmentsChange={onHvacAssignmentsChange}
-          onSeasonsChange={onHvacSeasonsChange}
-          canEdit={canEdit}
-        />
-      ) : isCurtain ? (
+      {isCurtain ? (
         <CurtainAssignView
           assignments={curtainAssignments}
           locations={locations}

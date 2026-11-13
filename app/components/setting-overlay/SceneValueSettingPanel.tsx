@@ -1,9 +1,10 @@
 "use client";
 import type { ReactNode } from "react";
-import type { LocationMaster, Scene } from "../../types";
+import type { LocationMaster, Scene, SceneValueMode } from "../../types";
 import type { SettingTarget, SettingTargetGroup } from "../../lib/settingTargets";
 import type { BulkSettingMode } from "../../lib/settingValues";
 import CurtainActionButtons from "../CurtainActionButtons";
+import SceneTextValueControl from "../SceneTextValueControl";
 
 interface SceneValueSettingPanelProps {
   areasWithScenes: LocationMaster[];
@@ -25,6 +26,10 @@ interface SceneValueSettingPanelProps {
   valueForTarget: (target: SettingTarget) => string;
   onTargetValueChange: (target: SettingTarget, value: string) => void;
   onTargetStep: (target: SettingTarget, delta: number) => void;
+  modeForTarget?: (target: SettingTarget) => SceneValueMode;
+  onTargetModeChange?: (target: SettingTarget, value: string, mode: SceneValueMode) => void;
+  onTargetModeOnlyChange?: (target: SettingTarget, mode: SceneValueMode) => void;
+  standardAllowedForTarget?: (target: SettingTarget) => boolean;
   renderValueInput?: (target: SettingTarget, value: string) => ReactNode;
   cardClassName?: string;
   children?: ReactNode;
@@ -32,7 +37,7 @@ interface SceneValueSettingPanelProps {
 function isCurtainTarget(target: SettingTarget): boolean {
   return target.isCurtain === true || target.dimmingType === "Curtain";
 }
-export default function SceneValueSettingPanel({ areasWithScenes, scenes, targetGroups, canEdit, sceneForArea, onSceneForAreaChange, isAreaExpanded, onAreaToggle, areaHasSetting, bulk, valueForTarget, onTargetValueChange, onTargetStep, renderValueInput, cardClassName = '', children }: SceneValueSettingPanelProps): ReactNode {
+export default function SceneValueSettingPanel({ areasWithScenes, scenes, targetGroups, canEdit, sceneForArea, onSceneForAreaChange, isAreaExpanded, onAreaToggle, areaHasSetting, bulk, valueForTarget, onTargetValueChange, onTargetStep, modeForTarget, onTargetModeChange, onTargetModeOnlyChange, standardAllowedForTarget, renderValueInput, cardClassName = '', children }: SceneValueSettingPanelProps): ReactNode {
     return (
       <div className={`scene-card switch-setting-card ${cardClassName}`}>
         <div className="switch-setting-layout">
@@ -171,7 +176,37 @@ export default function SceneValueSettingPanel({ areasWithScenes, scenes, target
                                     <td><span className="cell-readonly">{target.dimmingType || "-"}</span></td>
                                     <td><span className="cell-readonly">{target.detail}</span></td>
                                     <td>
-                                      {isCurtainTarget(target) ? (
+                                      {onTargetModeChange && !isCurtainTarget(target) ? (
+                                        <SceneTextValueControl value={value} mode={modeForTarget?.(target) ?? "standard"}
+                                          dimmingType={target.dimmingType} label={target.circuitNumber || target.id} disabled={!canEdit}
+                                          standardAllowed={standardAllowedForTarget?.(target)}
+                                          onModeChange={mode => onTargetModeOnlyChange ? onTargetModeOnlyChange(target, mode) : onTargetModeChange(target, value, mode)}
+                                          onChange={(next, mode) => onTargetModeChange(target, next, mode)}>
+                                          {renderStandardTargetControl(target, value)}
+                                        </SceneTextValueControl>
+                                      ) : renderStandardTargetControl(target, value)}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        </>
+                      ) : null}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            {children}
+          </div>
+        </div>
+      </div>
+    );
+
+  function renderStandardTargetControl(target: SettingTarget, value: string): ReactNode {
+    return isCurtainTarget(target) ? (
                                         <CurtainActionButtons
                                           value={value}
                                           onChange={(nextValue) => onTargetValueChange(target, nextValue)}
@@ -240,24 +275,6 @@ export default function SceneValueSettingPanel({ areasWithScenes, scenes, target
                                             ))}
                                           </div>
                                         </div>
-                                      )}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                        </>
-                      ) : null}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-            {children}
-          </div>
-        </div>
-      </div>
-    );
+                                      );
+  }
   }

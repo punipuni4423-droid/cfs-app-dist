@@ -32,6 +32,8 @@ export interface RoomType {
   dryContacts?: DryContactEntry[];
   deviceAssignments: DeviceAssignment[];
   hvacAssignments: HvacAssignment[];
+  // Allocated on an explicit TSTAT edit; never a physical/metric target ID.
+  nextThermostatNumber?: number;
   hvacSeasons: HvacSeason[];
   curtainAssignments?: CurtainAssignment[];
   cfsRowDisplay?: CfsRowDisplaySettings;
@@ -106,6 +108,8 @@ export interface InspectionMark {
   label: string;
   previousValue: string;
   value: string;
+  previousValueMode?: SceneValueMode;
+  valueMode?: SceneValueMode;
   markedAt: string;
 }
 
@@ -238,6 +242,9 @@ export type HvacThermostatRole = 'Master' | 'Slave';
 
 export interface HvacAssignment {
   id: string;
+  thermostatNumber?: number;
+  // Physical Master assignment ID, separate from TH labels and Area occupancy control.
+  masterAssignmentId?: string;
   protocol: HvacProtocol;
   thermostatRole: HvacThermostatRole;
   area: string;
@@ -272,12 +279,15 @@ export interface CfsRowDisplaySettings {
   hidden: CfsRowKind[];
 }
 
-// Per-circuit percentage setting inside a Scene.
+export type SceneValueMode = 'standard' | 'text';
+
+// Per-circuit setting. Missing valueMode keeps the legacy typed controls.
 export interface SceneCircuitSetting {
   // CircuitEntry.id this setting targets.
   circuitId: string;
   // Percentage as a string ('' means unset/inherit).
   percentage: string;
+  valueMode?: SceneValueMode;
 }
 
 // A single lighting scene defined inside an Area, scoped to a RoomType.
@@ -342,11 +352,23 @@ export interface BacklightLevelSetting {
   inactive: string;
 }
 
+/** Canonical forensic envelope; unknown future wrappers are retained too. */
+export interface TstatBindingQuarantine {
+  version: 1;
+  reason: 'invalid-binding';
+  raw: unknown;
+  previousQuarantine?: unknown;
+}
+
 export interface SwitchEntry {
   id: string;
   // Physical switch grouping. Multiple rows/functions share this id.
   switchGroupId: string;
   kind: SwitchKind;
+  // Managed TSTAT control membership. Legacy tstat rows without this stay intact.
+  tstatBinding?: { areaId: string; assignmentIds: string[] };
+  // Own-property presence is authoritative, including unknown/malformed wrappers.
+  tstatBindingQuarantine?: unknown;
   switchNumber: string;
   switchName: string;
   cciAssignment: string;

@@ -256,7 +256,6 @@ export function cfsBaseColumnValues(
 ): string[] {
   if (row.isBacklight) {
     if (key === "device") return ["Backlight Logic"];
-    if (key === "detail") return row.circuits.map((item) => item.detail || "-");
     return [];
   }
 

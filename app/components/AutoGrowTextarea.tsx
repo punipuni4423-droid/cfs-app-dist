@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef, type KeyboardEventHandler } from "react";
 
 interface AutoGrowTextareaProps {
   value: string;
   onChange: (value: string) => void;
+  onBlur?: (value: string) => void;
+  onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
   placeholder?: string;
   className?: string;
   disabled?: boolean;
@@ -13,6 +15,8 @@ interface AutoGrowTextareaProps {
 export default function AutoGrowTextarea({
   value,
   onChange,
+  onBlur,
+  onKeyDown,
   placeholder,
   className = "",
   disabled = false,
@@ -42,6 +46,8 @@ export default function AutoGrowTextarea({
         requestAnimationFrame(resize);
       }}
       onInput={resize}
+      onBlur={onBlur ? (event) => onBlur(event.currentTarget.value) : undefined}
+      onKeyDown={onKeyDown}
       placeholder={placeholder}
       disabled={disabled}
     />

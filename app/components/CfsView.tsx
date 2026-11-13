@@ -1,6 +1,8 @@
 ﻿"use client";
 
+import { projectExcelFilename, roomTypeExcelFilename, uniqueRoomTypeExcelSheetName } from "../lib/excelExportNames";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { uniqueExcelSheetName } from "../lib/excelSheetName";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { createPortal, flushSync } from "react-dom";
 import PendingCfsDialog from "./PendingCfsDialog";
@@ -24,10 +26,13 @@ import type {
   ProgrammingNameSettings,
   ProgrammingNameToken,
   ProjectRemark,
+  ProjectData,
   RevisionFieldChanges,
   RoomType,
   RoomScene,
   Scene,
+  SceneCircuitSetting,
+  SceneValueMode,
   SwitchEntry,
   TriggerMaster,
 } from "../types";
@@ -50,9 +55,12 @@ import {
 } from "../lib/cfsValueResolver";
 import {
   BACKLIGHT_LOGIC_MERGE_KEYS,
+  cfsBacklightHeading,
   BASE_COLUMNS,
   CFS_FUNCTION_COLUMN_WIDTH,
   OTHER_AREA_ID,
+  buildThermostatAreaMergeInfo,
+  cfsDeviceFilterKey,
   orderBaseColumns,
   type BaseColumn,
   type BaseColumnKey,
@@ -63,6 +71,8 @@ import {
   type MergeInfo,
 } from "../lib/cfsTableModel";
 import { appendCfsSheet, loadExcelJs, type CfsExcelHeaderGroups, type CfsExcelSheetModel } from "../lib/cfsExcelExport";
+import { buildSceneNameColors, isOffLikeDisplayValue, sceneNameColor } from "../lib/cfsDisplayTextStyle";
+import { programmingNameWarning } from "../lib/programmingNameWarning";
 import { appendRemarksSheet } from "../lib/remarksExcelExport";
 import { createCfsCellResolvers } from "../lib/cfsCellResolvers";
 import {
@@ -95,6 +105,14 @@ import {
   normalizeProgrammingNameSettings,
 } from "../lib/programmingNameSettings";
 import { isPmsScene, sortRoomScenesByGroup } from "../lib/roomScenes";
+import { DOOR_MAGNET_SCENE_GROUP_KEY, roomSceneColumnGroupKey, roomSceneColumnGroupLabel, SCENE_COLUMN_GROUP_VERSION, upgradeSceneColumnGroupKeys } from "../lib/cfsSceneColumnGroups";
+import { canUseStandardValue, normalizeSettingValue, settingValueMode, settingValuesEqual } from "../lib/sceneValueMode";
+import SceneTextValueControl from "./SceneTextValueControl";
+import { deriveTstatOccupancy, isCfsSwitchControlActive, thermostatControlDisplayNumber, tstatCommandReferenceLabel } from "../lib/tstatOccupancy";
+import { excludedCfsThermostatSwitchIds } from "../lib/cfsThermostatColumns";
+import { cfsBacklightDisplayRowId, groupCfsBacklightRows } from "../lib/cfsBacklightRows";
+import { appendProjectExcelSheets } from "../lib/projectExcelExport";
+import { circuitsForRoomType } from "../lib/roomTypeSync";
 import { CFS_ROW_DISPLAY_OPTIONS, normalizeCfsRowDisplaySettings } from "../lib/cfsRowDisplay";
 import { buildSettingLinkGroups } from "../lib/settingLinkGroups";
 import {
@@ -128,12 +146,14 @@ interface CfsViewProps {
   circuits: CircuitEntry[];
   projectRoomTypeEntries?: CfsProjectExcelRoomTypeEntry[];
   projectRemarks?: ProjectRemark[];
+  projectExcelSnapshot?: ProjectData;
+  wattPerPdu?: number;
   devices: DeviceMaster[];
   // T-33: fixture masters for the zone Total VA column. Optional so read-only
   // embeddings without fixture data keep working (the column shows "-").
   fixtures?: FixtureMaster[];
   locations: LocationMaster[];
-  onScenesChange?: (next: Scene[]) => void;
+  onScenesChange?: (next: Scene[] | ((current: Scene[]) => Scene[])) => void;
   onRoomScenesChange?: (next: RoomScene[] | ((current: RoomScene[]) => RoomScene[])) => void;
   onDeviceAssignmentsChange?: (next: DeviceAssignment[]) => void;
   onSwitchesChange?: (next: SwitchEntry[] | ((current: SwitchEntry[]) => SwitchEntry[])) => void;
@@ -230,10 +250,12 @@ interface InspectionDraftRef extends InspectionTarget {
   sourceId: string;
   label: string;
   previousValue: string;
+  previousValueMode?: SceneValueMode;
 }
 
 interface InspectionDraft extends InspectionDraftRef {
   value: string;
+  valueMode?: SceneValueMode;
 }
 
 interface InspectionHistorySnapshot {
@@ -306,7 +328,7 @@ interface InspectionCellCoord {
 interface InspectionClipboard {
   width: number;
   height: number;
-  values: Array<Array<string | null>>;
+  values: Array<Array<{ value: string; mode: SceneValueMode } | null>>;
 }
 
 interface CfsScrollEndSpace {
@@ -383,6 +405,7 @@ interface CfsStoredSeedPrefs {
   hiddenBaseColumns?: BaseColumnKey[];
   baseColumnOrder?: BaseColumnKey[];
   functionColumnGroupOrder?: string[];
+  sceneColumnGroupVersion?: number;
 }
 
 // Per-project entry: seed settings plus project-id-based state that must
@@ -755,36 +778,6 @@ function pirHeaderLabels(sw: SwitchEntry, locations: LocationMaster[]): string[]
   return fallback && fallback !== "-" ? [fallback] : [];
 }
 
-function isOffLikeDisplayValue(value: string): boolean {
-  const trimmed = value.trim();
-  return trimmed === "Off" || trimmed === "0%" || trimmed === "0";
-}
-
-// Deterministic color per Area Scene NAME: the same scene name gets the same
-// color in every area and room type (2026-08-24). Off-like names keep the
-// shared blue from the off-value rule instead.
-const SCENE_NAME_COLORS = [
-  "#b45309", // amber-700
-  "#0f766e", // teal-700
-  "#7c3aed", // violet-600
-  "#be185d", // pink-700
-  "#166534", // green-800
-  "#0369a1", // sky-700
-  "#a16207", // yellow-700
-  "#dc2626", // red-600
-  "#4d7c0f", // lime-700
-  "#6d28d9", // purple-700
-];
-
-function sceneNameColor(name: string): string {
-  const normalized = name.trim().toLowerCase();
-  let hash = 0;
-  for (let index = 0; index < normalized.length; index += 1) {
-    hash = (hash * 31 + normalized.charCodeAt(index)) >>> 0;
-  }
-  return SCENE_NAME_COLORS[hash % SCENE_NAME_COLORS.length];
-}
-
 function renderStack(
   values: string[],
   placeholder = "-",
@@ -807,7 +800,7 @@ function renderStack(
         return (
           <div
             key={`${text}-${index}`}
-            style={nameStyle}
+            style={{ ...nameStyle, ...(text.includes("\n") ? { whiteSpace: "pre-wrap" } : {}) }}
             className={`cfs-cell-line${sceneName ? " cfs-scene-name-line" : ""}${
               offLike ? " cfs-off-value-line" : ""
             }`}
@@ -820,11 +813,14 @@ function renderStack(
   );
 }
 
-function safeExcelFilePart(value: string, fallback: string): string {
-  return value
-    .trim()
-    .replace(/[\\/:*?"<>|]/g, "_")
-    .replace(/\s+/g, "_") || fallback;
+function renderProgrammingNameStack(values: string[]): ReactNode {
+  return <div>{(values.length ? values : ["-"]).map((name, index) => {
+    const warning = programmingNameWarning(name);
+    if (!warning) return <div key={`${index}-${name}`}>{renderStack([name])}</div>;
+    return <div key={`${index}-${name}`} className="cfs-programming-name">
+      <span className="cfs-programming-name-over-limit" style={name.includes("\n") ? { whiteSpace: "pre-wrap" } : undefined}>{name}</span>
+    </div>;
+  })}</div>;
 }
 
 function cloneInspectionData<T>(value: T): T {
@@ -832,28 +828,8 @@ function cloneInspectionData<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function safeExcelSheetName(value: string, fallback: string, usedNames: Set<string>): string {
-  // Excel forbids boundary apostrophes and the reserved name History as well
-  // as its usual invalid characters. Recheck boundaries after truncation.
-  const normalize = (name: string): string => name
-    .replace(/[\[\]:*?\/\\]/g, "_")
-    .replace(/\s+/g, " ")
-    .replace(/^[\s']+|[\s']+$/g, "")
-    .slice(0, 31)
-    .replace(/[\uD800-\uDBFF]$/, "")
-    .replace(/^[\s']+|[\s']+$/g, "");
-  const cleaned = normalize(value) || normalize(fallback) || "Sheet";
-  const base = cleaned.toLowerCase() === "history" ? `${cleaned}_` : cleaned;
-  let candidate = base;
-  let suffix = 2;
-  while (usedNames.has(candidate.toLowerCase())) {
-    const suffixText = ` (${suffix})`;
-    candidate = `${base.slice(0, Math.max(1, 31 - suffixText.length))}${suffixText}`;
-    suffix += 1;
-  }
-  usedNames.add(candidate.toLowerCase());
-  return candidate;
-}
+// CFS retains its per-room fallback; the shared primitive owns Excel constraints.
+const safeExcelSheetName = uniqueExcelSheetName;
 
 function buildPirGroupNumbersFor(switches: readonly SwitchEntry[]): Map<string, number> {
   const map = new Map<string, number>();
@@ -903,10 +879,14 @@ function buildSwitchByCommandReferenceFor(
   return map;
 }
 
-function buildFunctionColumnsForRoomType(roomType: RoomType, locations: LocationMaster[]): FunctionColumn[] {
+function buildFunctionColumnsForRoomType(storedRoomType: RoomType, locations: LocationMaster[]): FunctionColumn[] {
+  const { switches, columnLabels } = deriveTstatOccupancy(storedRoomType);
+  const excludedThermostatColumns = excludedCfsThermostatSwitchIds(storedRoomType, switches);
+  const roomType = { ...storedRoomType, switches };
+  const activeSwitches = roomType.switches.filter(sw => isCfsSwitchControlActive(sw, roomType.hvacAssignments, roomType.switches));
   const pirGroupNumbers = buildPirGroupNumbersFor(roomType.switches);
-  const switchRowsByNumber = buildSwitchRowsByNumberFor(roomType.switches);
-  const switchByCommandReference = buildSwitchByCommandReferenceFor(roomType.switches, pirGroupNumbers);
+  const switchRowsByNumber = buildSwitchRowsByNumberFor(activeSwitches);
+  const switchByCommandReference = buildSwitchByCommandReferenceFor(activeSwitches, pirGroupNumbers);
 
   const sceneColumns: FunctionColumn[] = sortRoomScenesByGroup(roomType.roomScenes)
     .filter((scene) =>
@@ -916,13 +896,14 @@ function buildFunctionColumnsForRoomType(roomType: RoomType, locations: Location
       (scene.areaSceneSelections ?? []).some((selection) => selection.sceneId.trim() !== ""),
     )
     .map((scene) => {
-      const groupKey = normalizedColumnGroupKey("scene", "Scene");
+      const groupLabel = roomSceneColumnGroupLabel(scene);
+      const groupKey = roomSceneColumnGroupKey(scene);
       return {
         id: `scene:${scene.id}`,
         category: "scene",
         switchGroupKey: groupKey,
         buttonKey: `${groupKey}\u0000${scene.phase}`,
-        switchNumber: "Scene",
+        switchNumber: groupLabel,
         switchName: "",
         button: roomSceneButtonLabel(scene),
         functionName: isPmsScene(scene) ? roomScenePmsFunctionName(scene) : roomSceneFunctionName(scene),
@@ -939,7 +920,11 @@ function buildFunctionColumnsForRoomType(roomType: RoomType, locations: Location
       const commandReference = sw.switchNumber.trim();
       const referencedRows = switchRowsByNumber.get(commandReference) ?? [];
       const referencedSwitch = referencedRows[0] ?? switchByCommandReference.get(commandReference);
-      const switchNumber = referencedSwitch ? displaySwitchNumber(referencedSwitch) : sw.switchNumber.trim() || "-";
+      const switchNumber = referencedSwitch
+        ? referencedSwitch.kind === "tstat"
+          ? thermostatControlDisplayNumber(referencedSwitch, roomType.hvacAssignments)
+          : displaySwitchNumber(referencedSwitch)
+        : tstatCommandReferenceLabel(sw, roomType.switches, roomType.hvacAssignments).trim() || "-";
       const switchName = referencedSwitch ? displaySwitchName(referencedSwitch) : "-";
       const buttonLabel =
         referencedSwitch?.kind === "pir"
@@ -963,8 +948,9 @@ function buildFunctionColumnsForRoomType(roomType: RoomType, locations: Location
       };
     });
 
-  const switchColumns: FunctionColumn[] = roomType.switches
-    .filter((sw) => sw.kind !== "command" && sw.kind !== "qsm" && Boolean(sw.switchNumber.trim() || sw.switchName.trim()))
+  const switchColumns: FunctionColumn[] = activeSwitches
+    .filter((sw) => sw.kind !== "command" && sw.kind !== "qsm" && !excludedThermostatColumns.has(sw.id)
+      && Boolean(sw.switchNumber.trim() || sw.switchName.trim()))
     .map((sw, sourceOrder) => {
       const pirLogicNo = pirGroupNumbers.get(switchGroupId(sw)) ?? 1;
       const resolvedNumber = sw.kind === "pir" ? "PIR" : displaySwitchNumber(sw);
@@ -978,10 +964,10 @@ function buildFunctionColumnsForRoomType(roomType: RoomType, locations: Location
         sourceOrder,
         switchGroupKey: groupKey,
         buttonKey: `${groupKey}\u0000${sw.kind === "pir" ? pirButton : buttonGroupKey(sw)}`,
-        switchNumber: resolvedNumber,
+        switchNumber: columnLabels.get(sw.id) ?? resolvedNumber,
         switchName: resolvedName,
         button: sw.kind === "pir" ? pirButton : buttonGroupKey(sw),
-        functionName: sw.kind === "pir" ? displayPirFunctionName(sw) : displayFunctionName(sw),
+        functionName: sw.kind === "pir" || sw.tstatBinding ? displayPirFunctionName(sw) : displayFunctionName(sw),
         condition: sw.condition.trim(),
         kind: sw.kind,
         source: sw,
@@ -1149,29 +1135,6 @@ function buildDaliGroupMergeInfoFor(rows: readonly CfsZoneRow[]): Map<string, Me
   return map;
 }
 
-function buildBacklightMergeInfoFor(rows: readonly CfsZoneRow[]): Map<string, MergeInfo> {
-  const map = new Map<string, MergeInfo>();
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    if (!row.isBacklight) {
-      map.set(row.id, { isFirst: true, rowSpan: 1 });
-      continue;
-    }
-    const prev = rows[index - 1];
-    if (index > 0 && prev?.isBacklight) {
-      map.set(row.id, { isFirst: false, rowSpan: 0 });
-      continue;
-    }
-    let rowSpan = 1;
-    for (let nextIndex = index + 1; nextIndex < rows.length; nextIndex += 1) {
-      if (!rows[nextIndex].isBacklight) break;
-      rowSpan += 1;
-    }
-    map.set(row.id, { isFirst: true, rowSpan });
-  }
-  return map;
-}
-
 function buildExcelMergeInfoFor(rows: readonly CfsZoneRow[], numberMode: "designer" | "internal"): CfsExcelSheetModel["mergeInfo"] {
   return {
     device: buildMergeInfo(rows, (row) => `${row.device}\u0000${row.deviceNum}`),
@@ -1179,7 +1142,6 @@ function buildExcelMergeInfoFor(rows: readonly CfsZoneRow[], numberMode: "design
     designer: buildMergeInfo(rows, (row) => `${row.device}\u0000${row.deviceNum}\u0000${rowNumberValues(row, numberMode).join("|")}`),
     zone: buildMergeInfo(rows, (row) => `${row.device}\u0000${row.deviceNum}\u0000${row.group}\u0000${rowZoneValues(row).join("|")}`),
     daliGroup: buildDaliGroupMergeInfoFor(rows),
-    backlight: buildBacklightMergeInfoFor(rows),
   };
 }
 
@@ -1215,10 +1177,12 @@ function displayBacklightConditionFromMap(
 export default function CfsView({
   projectName,
   projectId = "",
-  roomType,
+  roomType: storedRoomType,
   circuits,
   projectRoomTypeEntries,
   projectRemarks = [],
+  projectExcelSnapshot,
+  wattPerPdu = 3.3,
   devices,
   fixtures = [],
   locations,
@@ -1250,6 +1214,7 @@ export default function CfsView({
   onInspectionHistoryChange,
   revisionDiff,
 }: CfsViewProps) {
+  const roomType = useMemo(() => ({ ...storedRoomType, switches: deriveTstatOccupancy(storedRoomType).switches }), [storedRoomType]);
   const [sortMode, setSortMode] = useState<CfsSortMode>("device");
   const [selectedAreaIds, setSelectedAreaIds] = useState<Set<string>>(new Set());
   const [numberMode, setNumberMode] = useState<"designer" | "internal">("designer");
@@ -1374,8 +1339,8 @@ export default function CfsView({
   inspectionSaveContextRef.current = { scope: inspectionSaveScope, roomId: roomType.id, canEdit,
     epoch: oldInspectionContext.epoch + (oldInspectionContext.scope !== inspectionSaveScope
       || oldInspectionContext.roomId !== roomType.id || oldInspectionContext.canEdit !== canEdit ? 1 : 0) };
-  const latestInspectionRef = useRef({ roomType, inspectionDrafts, onInspectionModeStart, onInspectionModeFinish, buildInspectionAppliedState });
-  latestInspectionRef.current = { roomType, inspectionDrafts, onInspectionModeStart, onInspectionModeFinish, buildInspectionAppliedState };
+  const latestInspectionRef = useRef({ roomType, storedRoomType, inspectionDrafts, onInspectionModeStart, onInspectionModeFinish, buildInspectionAppliedState });
+  latestInspectionRef.current = { roomType, storedRoomType, inspectionDrafts, onInspectionModeStart, onInspectionModeFinish, buildInspectionAppliedState };
   useEffect(() => () => { inspectionSaveContextRef.current.epoch += 1; }, []);
   const pointerDraggedFunctionColumnGroupKeyRef = useRef("");
   const mouseDraggedFunctionColumnGroupKeyRef = useRef("");
@@ -1513,8 +1478,8 @@ export default function CfsView({
     [backlightConditionNameByValue],
   );
   const linkGraph = useMemo(
-    () => buildCfsLinkageGraph({ roomType, circuits, locations }),
-    [circuits, locations, roomType],
+    () => buildCfsLinkageGraph({ roomType: storedRoomType, circuits, locations }),
+    [circuits, locations, storedRoomType],
   );
   const linkIssueTargetIds = useMemo(() => {
     const ids = new Set<string>();
@@ -1650,6 +1615,9 @@ export default function CfsView({
     [inspectionMarkList],
   );
   const staleHvacRepairPlan = useMemo(() => analyzeStaleHvacLinks(roomType), [roomType]);
+  const inspectionBaselineMarkKeys = useMemo(() => inspectionSessionBaseline
+    ? new Set(inspectionSessionBaseline.inspectionMarks.map(mark => inspectionDraftKey(mark.sourceType, mark.sourceId, mark.targetId)))
+    : null, [inspectionSessionBaseline]);
   const revisionDiffSets = useMemo(() => {
     if (!revisionDiff) return null;
     return {
@@ -1753,7 +1721,7 @@ export default function CfsView({
   const availableDeviceFilters = useMemo(() => {
     const map = new Map<string, string>();
     for (const row of allZoneRowsForFilters) {
-      const key = `${row.device}\u0000${row.deviceNum}`;
+      const key = cfsDeviceFilterKey(row);
       const label = row.deviceNum ? `${row.device} #${row.deviceNum}` : row.device;
       map.set(key, label);
     }
@@ -1763,21 +1731,11 @@ export default function CfsView({
   // Palette order follows the room type's Area Scene registration order so
   // every distinct scene name gets a distinct color (same name = same color
   // across areas). Hash fallback only covers names not registered here.
-  const sceneNameColors = useMemo(() => {
-    const map = new Map<string, string>();
-    let index = 0;
-    for (const scene of roomType.scenes) {
-      const key = scene.name.trim().toLowerCase();
-      if (!key || isOffLikeDisplayValue(scene.name) || map.has(key)) continue;
-      map.set(key, SCENE_NAME_COLORS[index % SCENE_NAME_COLORS.length]);
-      index += 1;
-    }
-    return map;
-  }, [roomType.scenes]);
+  const sceneNameColors = useMemo(() => buildSceneNameColors(roomType.scenes), [roomType.scenes]);
 
   const functionColumns = useMemo<FunctionColumn[]>(
-    () => buildFunctionColumnsForRoomType(roomType, locations),
-    [locations, roomType],
+    () => buildFunctionColumnsForRoomType(storedRoomType, locations),
+    [locations, storedRoomType],
   );
 
   useEffect(() => {
@@ -1825,10 +1783,16 @@ export default function CfsView({
       // expanded into column ids once the current room type's groups exist.
       setHiddenFunctionColumns(new Set());
       setHiddenFunctionColumnGroupKeys(
-        new Set(Array.isArray(parsed.hiddenFunctionColumnGroups) ? parsed.hiddenFunctionColumnGroups : []),
+        new Set(upgradeSceneColumnGroupKeys(
+          Array.isArray(parsed.hiddenFunctionColumnGroups) ? parsed.hiddenFunctionColumnGroups : [],
+          parsed.sceneColumnGroupVersion,
+        )),
       );
       setBaseColumnOrder(Array.isArray(parsed.baseColumnOrder) ? parsed.baseColumnOrder : []);
-      setFunctionColumnGroupOrder(Array.isArray(parsed.functionColumnGroupOrder) ? parsed.functionColumnGroupOrder : []);
+      setFunctionColumnGroupOrder(upgradeSceneColumnGroupKeys(
+        Array.isArray(parsed.functionColumnGroupOrder) ? parsed.functionColumnGroupOrder : [],
+        parsed.sceneColumnGroupVersion,
+      ));
       setShowBacklightColorHighlight(parsed.showBacklightColorHighlight !== false);
       // T-60: link-line selection (hidden set). Missing field = all visible.
       // The retired T-58 field showSettingLinkHeaders is ignored on purpose.
@@ -1877,6 +1841,7 @@ export default function CfsView({
         hiddenBaseColumns: Array.from(hiddenBaseColumns),
         baseColumnOrder,
         functionColumnGroupOrder,
+        sceneColumnGroupVersion: SCENE_COLUMN_GROUP_VERSION,
       };
       // Read-modify-write keeps other projects' entries intact.
       const stored = readStoredCfsPrefsV2();
@@ -2271,9 +2236,13 @@ export default function CfsView({
     setCfsEditMode(false);
   }, [canEnterCfsEditMode]);
 
+  const groupedZoneRows = useMemo(
+    () => groupCfsBacklightRows(zoneRows, functionColumns, roomType),
+    [zoneRows, functionColumns, roomType],
+  );
   const displaySortedRows =
     sortMode === "programmingName"
-      ? zoneRows
+      ? groupedZoneRows
           .map((row, index) => ({
             row,
             index,
@@ -2288,14 +2257,16 @@ export default function CfsView({
             return a.index - b.index;
           })
           .map((item) => item.row)
-      : zoneRows;
+      : groupedZoneRows;
   const displayedRows = hideReservedRows
     ? displaySortedRows.filter((row) => !isReservedCfsRow(row))
     : displaySortedRows;
   const inspectionSelectionRect = useMemo(() => {
     if (!inspectionSelectionStart || !inspectionSelectionEnd) return null;
-    const startRowIndex = displayedRows.findIndex((row) => row.id === inspectionSelectionStart.rowId);
-    const endRowIndex = displayedRows.findIndex((row) => row.id === inspectionSelectionEnd.rowId);
+    const startRowId = cfsBacklightDisplayRowId(displayedRows, inspectionSelectionStart.rowId);
+    const endRowId = cfsBacklightDisplayRowId(displayedRows, inspectionSelectionEnd.rowId);
+    const startRowIndex = displayedRows.findIndex((row) => row.id === startRowId);
+    const endRowIndex = displayedRows.findIndex((row) => row.id === endRowId);
     const startColIndex = visibleFunctionColumns.findIndex((col) => col.id === inspectionSelectionStart.colId);
     const endColIndex = visibleFunctionColumns.findIndex((col) => col.id === inspectionSelectionEnd.colId);
     if (startRowIndex < 0 || endRowIndex < 0 || startColIndex < 0 || endColIndex < 0) return null;
@@ -2518,10 +2489,10 @@ export default function CfsView({
 
   function copyInspectionSelection(): void {
     if (!inspectionSelectionRect) return;
-    const values: Array<Array<string | null>> = [];
+    const values: InspectionClipboard["values"] = [];
     for (let rowIndex = inspectionSelectionRect.top; rowIndex <= inspectionSelectionRect.bottom; rowIndex += 1) {
       const row = displayedRows[rowIndex];
-      const line: Array<string | null> = [];
+      const line: InspectionClipboard["values"][number] = [];
       for (let colIndex = inspectionSelectionRect.left; colIndex <= inspectionSelectionRect.right; colIndex += 1) {
         const col = visibleFunctionColumns[colIndex];
         if (!row || !col) {
@@ -2529,7 +2500,7 @@ export default function CfsView({
           continue;
         }
         const model = inspectionCellModel(row, col);
-        line.push(model.editable && model.placeholder !== "Mixed" ? model.value : null);
+        line.push(model.editable && model.placeholder !== "Mixed" ? { value: model.value, mode: model.valueMode ?? "standard" } : null);
       }
       values.push(line);
     }
@@ -2557,7 +2528,7 @@ export default function CfsView({
         if (!col) continue;
         const value = line[colOffset];
         if (value === null || value === undefined) continue;
-        changeInspectionCell(row, col, value);
+        changeInspectionCell(row, col, value.value, value.mode);
       }
     }
   }
@@ -2717,6 +2688,7 @@ export default function CfsView({
     () => buildMergeInfo(displayedRows, (row) => `${row.device}\u0000${row.deviceNum}\u0000${row.group}\u0000${rowZoneValues(row).join("|")}`),
     [displayedRows],
   );
+  const thermostatAreaMergeInfo = useMemo(() => buildThermostatAreaMergeInfo(displayedRows), [displayedRows]);
   const daliGroupMergeInfo = useMemo(() => {
     const map = new Map<string, { isFirst: boolean; rowSpan: number }>();
     for (let index = 0; index < displayedRows.length; index += 1) {
@@ -2737,28 +2709,6 @@ export default function CfsView({
         const next = displayedRows[nextIndex];
         const nextKey = next.isDali ? `${next.device}\u0000${next.deviceNum}\u0000${next.group || ""}` : "";
         if (nextKey !== key) break;
-        rowSpan += 1;
-      }
-      map.set(row.id, { isFirst: true, rowSpan });
-    }
-    return map;
-  }, [displayedRows]);
-  const backlightMergeInfo = useMemo(() => {
-    const map = new Map<string, { isFirst: boolean; rowSpan: number }>();
-    for (let index = 0; index < displayedRows.length; index += 1) {
-      const row = displayedRows[index];
-      if (!row.isBacklight) {
-        map.set(row.id, { isFirst: true, rowSpan: 1 });
-        continue;
-      }
-      const prev = displayedRows[index - 1];
-      if (index > 0 && prev?.isBacklight) {
-        map.set(row.id, { isFirst: false, rowSpan: 0 });
-        continue;
-      }
-      let rowSpan = 1;
-      for (let nextIndex = index + 1; nextIndex < displayedRows.length; nextIndex += 1) {
-        if (!displayedRows[nextIndex].isBacklight) break;
         rowSpan += 1;
       }
       map.set(row.id, { isFirst: true, rowSpan });
@@ -3101,6 +3051,7 @@ export default function CfsView({
 
   function buildCurrentCfsExcelSheetModel(): CfsExcelSheetModel {
     return {
+      sceneNameColors,
       visibleBaseColumns,
       visibleFunctionColumns,
       displayedRows,
@@ -3116,7 +3067,6 @@ export default function CfsView({
         designer: designerMergeInfo,
         zone: zoneMergeInfo,
         daliGroup: daliGroupMergeInfo,
-        backlight: backlightMergeInfo,
       },
       highlights: {
         ffe: showFfeHighlight,
@@ -3140,16 +3090,24 @@ export default function CfsView({
     };
   }
 
-  function buildProjectCfsExcelSheetModel(entry: CfsProjectExcelRoomTypeEntry): CfsExcelSheetModel {
+  function buildProjectCfsExcelSheetModel(entry: CfsProjectExcelRoomTypeEntry,
+    exportContext?: { project: ProjectData; devices: DeviceMaster[] }): CfsExcelSheetModel {
+    const completeProject = Boolean(exportContext);
+    const entryLocations = exportContext?.project.locations ?? locations;
+    const entryFixtures = exportContext?.project.fixtures ?? fixtures;
+    const entryDevices = exportContext?.devices ?? devices;
+    const entryProgrammingName = exportContext
+      ? normalizeProgrammingNameSettings(exportContext.project.settings?.programmingName) : activeProgrammingNameSettings;
+    const entryLocationById = new Map(entryLocations.map((location) => [location.id, location]));
     const targetRoomType = entry.roomType;
     const targetCircuits = entry.circuits;
     const baseValuesForEntry = createCfsBaseValueResolver({
-      locations, devices, programmingNameSettings: activeProgrammingNameSettings,
-      circuits: targetCircuits, fixtures, deviceAssignments: targetRoomType.deviceAssignments,
+      locations: entryLocations, devices: entryDevices, programmingNameSettings: entryProgrammingName,
+      circuits: targetCircuits, fixtures: entryFixtures, deviceAssignments: targetRoomType.deviceAssignments,
     }, numberMode);
     const isActiveEntry = targetRoomType.id === roomType.id;
     const targetSharedCfsRowDisplay = normalizeCfsRowDisplaySettings(targetRoomType.cfsRowDisplay);
-    const targetCfsRowDisplay = isActiveEntry
+    const targetCfsRowDisplay = completeProject ? targetSharedCfsRowDisplay : isActiveEntry
       ? activeCfsRowDisplay
       : canEdit
         ? targetSharedCfsRowDisplay
@@ -3159,7 +3117,7 @@ export default function CfsView({
     const targetAreaAddressByAssignmentCircuit = buildAreaAddressAssignmentMap(
       targetRoomType.deviceAssignments,
       targetCircuits,
-      locations,
+      entryLocations,
     );
     const targetPalladiomBySceneTargets = new Map<string, SwitchEntry>();
     for (const sw of targetRoomType.switches) {
@@ -3168,20 +3126,22 @@ export default function CfsView({
       const key = switchGroupId(sw);
       if (!targetPalladiomBySceneTargets.has(key)) targetPalladiomBySceneTargets.set(key, sw);
     }
-    const targetRows = buildCfsZoneRows({
+    const rawTargetRows = buildCfsZoneRows({
       roomType: targetRoomType,
       circuits: targetCircuits,
-      locations,
-      locationById,
+      locations: entryLocations,
+      locationById: entryLocationById,
       areaAddressByAssignmentCircuit: targetAreaAddressByAssignmentCircuit,
       palladiomBySceneTargets: targetPalladiomBySceneTargets,
       selectedAreaIds: new Set<string>(),
       hiddenDeviceKeys: new Set<string>(),
-      showCciRows,
+      showCciRows: completeProject || showCciRows,
       sortMode,
       rowKindOrder: targetCfsRowDisplay.order,
-      hiddenRowKinds: new Set(targetCfsRowDisplay.hidden),
+      hiddenRowKinds: new Set(completeProject ? [] : targetCfsRowDisplay.hidden),
     });
+    const targetFunctionColumns = buildFunctionColumnsForRoomType(targetRoomType, entryLocations);
+    const targetRows = groupCfsBacklightRows(rawTargetRows, targetFunctionColumns, targetRoomType);
     const targetSortedRows =
       sortMode === "programmingName"
         ? targetRows
@@ -3200,10 +3160,9 @@ export default function CfsView({
             })
             .map((item) => item.row)
         : targetRows;
-    const targetDisplayedRows = hideReservedRows
+    const targetDisplayedRows = !completeProject && hideReservedRows
       ? targetSortedRows.filter((row) => !isReservedCfsRow(row))
       : targetSortedRows;
-    const targetFunctionColumns = buildFunctionColumnsForRoomType(targetRoomType, locations);
     const targetFunctionColumnGroups = buildFunctionColumnGroupsFor(targetFunctionColumns);
     const orderedTargetFunctionColumnGroups = orderFunctionColumnGroupsFor(
       targetFunctionColumnGroups,
@@ -3211,7 +3170,7 @@ export default function CfsView({
     );
     const hiddenTargetFunctionColumns = hiddenFunctionColumnIdsFor(
       targetFunctionColumnGroups,
-      hiddenFunctionColumnGroupKeys,
+      completeProject ? new Set<string>() : hiddenFunctionColumnGroupKeys,
     );
     const targetVisibleFunctionColumns = orderedTargetFunctionColumnGroups
       .flatMap((group) => group.columns)
@@ -3222,7 +3181,7 @@ export default function CfsView({
       (targetRoomType.inspectionMarks ?? []).map((mark) => [inspectionDraftKey(mark.sourceType, mark.sourceId, mark.targetId), mark]),
     );
     const entryCellResolvers = createCfsCellResolvers({
-      scenesById: targetScenesById, showAreaSceneNames,
+      scenesById: targetScenesById, showAreaSceneNames: completeProject || showAreaSceneNames,
       displayBacklightCondition: (value, source) => displayBacklightConditionFromMap(targetBacklightConditionNameByValue, value, source),
     });
 
@@ -3262,7 +3221,8 @@ export default function CfsView({
     }
 
     return {
-      visibleBaseColumns,
+      sceneNameColors: buildSceneNameColors(targetRoomType.scenes),
+      visibleBaseColumns: completeProject ? orderBaseColumns(baseColumnOrder) : visibleBaseColumns,
       visibleFunctionColumns: targetVisibleFunctionColumns,
       displayedRows: targetDisplayedRows,
       headerGroups: buildExcelHeaderGroupsFor(targetVisibleFunctionColumns),
@@ -3300,7 +3260,7 @@ export default function CfsView({
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${safeExcelFilePart(projectName, "Project")}_${safeExcelFilePart(roomType.name, "Room")}_CFS_view.xlsx`;
+    link.download = roomTypeExcelFilename(projectName, roomType, "CFS_view");
     link.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
@@ -3313,7 +3273,7 @@ export default function CfsView({
       const workbook = new ExcelJS.Workbook();
       const usedSheetNames = new Set<string>();
       projectCfsExportEntries.forEach((entry, index) => {
-        const sheetName = safeExcelSheetName(entry.roomType.name, `Room ${index + 1}`, usedSheetNames);
+        const sheetName = uniqueRoomTypeExcelSheetName(entry.roomType, usedSheetNames, undefined, `Room ${index + 1}`);
         appendCfsSheet(workbook, sheetName, buildProjectCfsExcelSheetModel(entry));
       });
       if (projectRemarks.length > 0) {
@@ -3326,7 +3286,37 @@ export default function CfsView({
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${safeExcelFilePart(projectName, "Project")}_CFS_ALL.xlsx`;
+      link.download = projectExcelFilename(projectName, "CFS_ALL", new Date());
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } finally {
+      setIsProjectExcelExporting(false);
+    }
+  }
+
+  async function exportAllProjectTabsToExcel(): Promise<void> {
+    if (!projectExcelSnapshot || isProjectExcelExporting) return;
+    // Capture once before asynchronous module loading. Export never edits,
+    // saves, visits tabs, or overlays a second Inspection draft on this data.
+    const snapshot = cloneInspectionData(projectExcelSnapshot);
+    const snapshotDevices = cloneInspectionData(devices);
+    const snapshotWattPerPdu = wattPerPdu;
+    setIsProjectExcelExporting(true);
+    try {
+      const ExcelJS = await loadExcelJs();
+      const workbook = new ExcelJS.Workbook();
+      appendProjectExcelSheets(workbook, snapshot, {
+        devices: snapshotDevices,
+        wattPerPdu: snapshotWattPerPdu,
+        buildCfsModel: (targetRoomType) => buildProjectCfsExcelSheetModel({
+          roomType: targetRoomType, circuits: circuitsForRoomType(snapshot, targetRoomType),
+        }, { project: snapshot, devices: snapshotDevices }),
+      });
+      const buffer = await workbook.xlsx.writeBuffer();
+      const url = URL.createObjectURL(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = projectExcelFilename(snapshot.name, "Project", new Date());
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } finally {
@@ -3679,28 +3669,36 @@ export default function CfsView({
     return `${sourceType}:${sourceId}:${targetId}`;
   }
 
-  function sourceValueFromInspectionPayload(
+  function sourceSettingFromInspectionPayload(
     payload: Pick<InspectionCompletionPayload, "scenes" | "roomScenes" | "switches">,
     sourceType: InspectionDraftSource,
     sourceId: string,
     targetId: string,
-  ): string {
+  ): SceneCircuitSetting | undefined {
     if (sourceType === "areaScene") {
       return payload.scenes
         .find((scene) => scene.id === sourceId)
-        ?.settings.find((setting) => setting.circuitId === targetId)
-        ?.percentage.trim() ?? "";
+        ?.settings.find((setting) => setting.circuitId === targetId);
     }
     if (sourceType === "roomScene") {
       return payload.roomScenes
         .find((scene) => scene.id === sourceId)
-        ?.settings.find((setting) => setting.circuitId === targetId)
-        ?.percentage.trim() ?? "";
+        ?.settings.find((setting) => setting.circuitId === targetId);
     }
     return payload.switches
       .find((sw) => sw.id === sourceId)
-      ?.buttonSetting.circuitSettings.find((setting) => setting.circuitId === targetId)
-      ?.percentage.trim() ?? "";
+      ?.buttonSetting.circuitSettings.find((setting) => setting.circuitId === targetId);
+  }
+
+  function sourceValueFromInspectionPayload(payload: Pick<InspectionCompletionPayload, "scenes" | "roomScenes" | "switches">,
+    sourceType: InspectionDraftSource, sourceId: string, targetId: string): string {
+    const setting = sourceSettingFromInspectionPayload(payload, sourceType, sourceId, targetId);
+    return setting ? normalizeSettingValue(setting.percentage, settingValueMode(setting)) : "";
+  }
+
+  function sourceModeForInspectionDraft(sourceType: InspectionDraftSource, sourceId: string, targetId: string, sessionStart = false): SceneValueMode {
+    const payload = sessionStart && inspectionSessionBaseline ? inspectionSessionBaseline : roomType;
+    return settingValueMode(sourceSettingFromInspectionPayload(payload, sourceType, sourceId, targetId));
   }
 
   function sourceValueForInspectionDraft(sourceType: InspectionDraftSource, sourceId: string, targetId: string): string {
@@ -3736,6 +3734,7 @@ export default function CfsView({
       sourceId,
       label,
       previousValue: inspectionSessionStartValueForDraft(sourceType, sourceId, target.targetId),
+      previousValueMode: sourceModeForInspectionDraft(sourceType, sourceId, target.targetId, true),
     };
   }
 
@@ -3806,17 +3805,15 @@ export default function CfsView({
 
   function rawInspectionValueForTarget(col: FunctionColumn, targetId: string, areaId: string): string {
     if (col.roomScene) {
-      const direct = col.roomScene.settings.find((setting) => setting.circuitId === targetId)?.percentage.trim() ?? "";
-      if (direct) return direct;
+      const direct = col.roomScene.settings.find((setting) => setting.circuitId === targetId);
+      if (direct?.percentage.trim()) return normalizeSettingValue(direct.percentage, settingValueMode(direct));
       const areaSceneId = roomSceneSelectedAreaSceneId(col.roomScene, areaId);
       const areaScene = scenesById.get(areaSceneId);
       return areaScene ? sceneValueForCircuit(areaScene, targetId) : "";
     }
     if (!col.source) return "";
-    const direct = col.source.buttonSetting.circuitSettings
-      .find((setting) => setting.circuitId === targetId)
-      ?.percentage.trim() ?? "";
-    if (direct) return direct;
+    const direct = col.source.buttonSetting.circuitSettings.find((setting) => setting.circuitId === targetId);
+    if (direct?.percentage.trim()) return normalizeSettingValue(direct.percentage, settingValueMode(direct));
     const sceneIds = sceneIdsForSwitchTarget(col.source, targetId, areaId);
     return sceneIds
       .map((sceneId) => {
@@ -3826,61 +3823,85 @@ export default function CfsView({
       .find(Boolean) ?? "";
   }
 
+  function rawInspectionModeForTarget(col: FunctionColumn, targetId: string, areaId: string): SceneValueMode {
+    const direct = (col.roomScene?.settings ?? col.source?.buttonSetting.circuitSettings ?? []).find((setting) => setting.circuitId === targetId);
+    if (direct?.percentage.trim()) return settingValueMode(direct);
+    const sceneIds = col.roomScene ? [roomSceneSelectedAreaSceneId(col.roomScene, areaId)]
+      : col.source ? sceneIdsForSwitchTarget(col.source, targetId, areaId) : [];
+    for (const sceneId of sceneIds) {
+      const setting = scenesById.get(sceneId)?.settings.find((entry) => entry.circuitId === targetId);
+      if (setting?.percentage.trim()) return settingValueMode(setting);
+    }
+    return settingValueMode(direct);
+  }
+
   function inspectionCellModel(row: CfsZoneRow, col: FunctionColumn): {
     editable: boolean;
     value: string;
     placeholder: string;
     dimmingType: string;
+    valueMode?: SceneValueMode;
+    standardAllowed?: boolean;
   } {
     if (row.isBacklight || row.isHvac || row.isCci) return { editable: false, value: "", placeholder: "-", dimmingType: "" };
     if (!col.roomScene && !col.source) return { editable: false, value: "", placeholder: "-", dimmingType: "" };
     const targets = rowTargetIds(row);
     if (targets.length === 0) return { editable: false, value: "", placeholder: "-", dimmingType: "" };
     if (targets.some(isReadonlyInspectionTarget)) return { editable: false, value: "", placeholder: "-", dimmingType: "" };
-    const rawValues = uniqueValues(
+    const rawValues = Array.from(new Set(
       targets.map((target) => {
         const draft = draftForInspectionTarget(col, target);
         return draft?.value ?? rawInspectionValueForTarget(col, target.targetId, target.areaId);
-      }),
-    );
+      }).filter((value) => value !== ""),
+    ));
     const dimmingType = targetDimmingType(row);
-    if (rawValues.length <= 1) {
-      return { editable: true, value: rawValues[0] ?? "", placeholder: "Uneffected", dimmingType };
+    const modes = new Set(targets.map((target) => draftForInspectionTarget(col, target)?.valueMode ?? rawInspectionModeForTarget(col, target.targetId, target.areaId)));
+    const valueMode = modes.has("text") ? "text" : "standard";
+    const standardAllowed = targets.every((target) => canUseStandardValue(
+      draftForInspectionTarget(col, target)?.value ?? rawInspectionValueForTarget(col, target.targetId, target.areaId), dimmingType,
+    ));
+    if (rawValues.length <= 1 && modes.size <= 1) {
+      return { editable: true, value: rawValues[0] ?? "", placeholder: "Uneffected", dimmingType, valueMode, standardAllowed };
     }
-    return { editable: true, value: "", placeholder: "Mixed", dimmingType };
+    return { editable: true, value: "", placeholder: "Mixed", dimmingType, valueMode, standardAllowed };
   }
 
   function inspectionOriginalDisplayValue(row: CfsZoneRow, col: FunctionColumn, dimmingType: string): string {
     const refs = activeInspectionDraftRefsForCell(row, col);
     if (refs.length === 0) return "Uneffected";
     const values = Array.from(
-      new Set(refs.map((ref) => (inspectionBaselineValues[ref.key] ?? ref.previousValue).trim())),
+      new Set(refs.map((ref) => normalizeSettingValue(inspectionBaselineValues[ref.key] ?? ref.previousValue, ref.previousValueMode ?? "standard"))),
     );
     if (values.length > 1) return "Mixed";
     const value = values[0] ?? "";
-    return value ? formatInspectionValue(value, dimmingType) : "Uneffected";
+    const modes = new Set(refs.map((ref) => ref.previousValueMode ?? "standard"));
+    if (modes.size > 1) return "Mixed";
+    return value ? formatInspectionValue(value, dimmingType, refs[0]?.previousValueMode ?? "standard") : "Uneffected";
   }
 
-  function updateSceneValue(nextScenes: Scene[], sceneId: string, targetId: string, value: string): Scene[] {
+  function updateSceneValue(nextScenes: Scene[], sceneId: string, targetId: string, value: string, mode?: SceneValueMode): Scene[] {
     return nextScenes.map((scene) =>
-      scene.id === sceneId ? { ...scene, settings: setSettingsValue(scene.settings, targetId, value) } : scene,
+      scene.id === sceneId ? { ...scene, settings: setSettingsValue(scene.settings, targetId, value, mode) } : scene,
     );
   }
 
-  function updateRoomSceneValue(nextRoomScenes: RoomScene[], roomSceneId: string, targetId: string, value: string): RoomScene[] {
+  function updateRoomSceneValue(nextRoomScenes: RoomScene[], roomSceneId: string, targetId: string, value: string, mode?: SceneValueMode): RoomScene[] {
     return nextRoomScenes.map((scene) =>
-      scene.id === roomSceneId ? { ...scene, settings: setSettingsValue(scene.settings, targetId, value) } : scene,
+      scene.id === roomSceneId ? { ...scene, settings: setSettingsValue(scene.settings, targetId, value, mode) } : scene,
     );
   }
 
-  function updateSwitchValue(nextSwitches: SwitchEntry[], switchId: string, targetId: string, value: string): SwitchEntry[] {
-    return nextSwitches.map((sw) =>
+  function updateSwitchValue(nextSwitches: SwitchEntry[], switchId: string, targetId: string, value: string, mode?: SceneValueMode): SwitchEntry[] {
+    const stored = nextSwitches.some((sw) => sw.id === switchId);
+    const virtual = stored ? undefined : roomType.switches.find((sw) => sw.id === switchId && sw.tstatBinding);
+    const rows = virtual ? [...nextSwitches, virtual] : nextSwitches;
+    return rows.map((sw) =>
       sw.id === switchId
         ? {
             ...sw,
             buttonSetting: {
               ...sw.buttonSetting,
-              circuitSettings: setSettingsValue(sw.buttonSetting.circuitSettings, targetId, value),
+              circuitSettings: setSettingsValue(sw.buttonSetting.circuitSettings, targetId, value, mode),
             },
           }
         : sw,
@@ -3905,7 +3926,9 @@ export default function CfsView({
         existing.scope === scope &&
         existing.label === draft.label &&
         existing.previousValue === draft.previousValue &&
-        existing.value === draft.value
+        existing.value === draft.value &&
+        (existing.valueMode ?? "standard") === (draft.valueMode ?? "standard") &&
+        (existing.previousValueMode ?? "standard") === (draft.previousValueMode ?? "standard")
       ) {
         byKey.set(key, existing);
         continue;
@@ -3919,6 +3942,8 @@ export default function CfsView({
         label: draft.label,
         previousValue: draft.previousValue,
         value: draft.value,
+        valueMode: draft.valueMode,
+        previousValueMode: draft.previousValueMode,
         markedAt,
       });
     }
@@ -3929,7 +3954,8 @@ export default function CfsView({
     return {
       scenes: cloneInspectionData(roomType.scenes),
       roomScenes: cloneInspectionData(roomType.roomScenes),
-      switches: cloneInspectionData(roomType.switches),
+      // Display-only legacy TSTAT scaffolds must disappear again on Revert/Cancel.
+      switches: cloneInspectionData(storedRoomType.switches),
       inspectionMarks: cloneInspectionData(inspectionMarkList),
     };
   }
@@ -3941,11 +3967,11 @@ export default function CfsView({
 
     for (const draft of drafts) {
       if (draft.sourceType === "areaScene") {
-        nextScenes = updateSceneValue(nextScenes, draft.sourceId, draft.targetId, draft.value);
+        nextScenes = updateSceneValue(nextScenes, draft.sourceId, draft.targetId, draft.value, draft.valueMode ?? "standard");
       } else if (draft.sourceType === "roomScene") {
-        nextRoomScenes = updateRoomSceneValue(nextRoomScenes, draft.sourceId, draft.targetId, draft.value);
+        nextRoomScenes = updateRoomSceneValue(nextRoomScenes, draft.sourceId, draft.targetId, draft.value, draft.valueMode ?? "standard");
       } else {
-        nextSwitches = updateSwitchValue(nextSwitches, draft.sourceId, draft.targetId, draft.value);
+        nextSwitches = updateSwitchValue(nextSwitches, draft.sourceId, draft.targetId, draft.value, draft.valueMode ?? "standard");
       }
     }
 
@@ -3959,15 +3985,28 @@ export default function CfsView({
     };
   }
 
-  function changeInspectionCell(row: CfsZoneRow, col: FunctionColumn, value: string): void {
+  function changeInspectionCell(row: CfsZoneRow, col: FunctionColumn, value: string, requestedMode?: SceneValueMode, changeKind: "value" | "mode" = "value"): void {
+    if (!canEdit || !inspectionMode || inspectionSavePendingRef.current) return;
     const model = inspectionCellModel(row, col);
     if (!model.editable) return;
-    const normalizedValue = normalizeInspectionInput(value, model.dimmingType);
+    const valueMode = requestedMode ?? model.valueMode ?? "standard";
+    // Guard the writeback too (paste/other callers need not pass through an input).
+    // Legacy loaded Standard bodies remain untouched until an explicit valid edit.
+    if (changeKind === "value" && valueMode === "standard" && !canUseStandardValue(value, model.dimmingType)) return;
+    const normalizedValue = normalizeInspectionInput(value, model.dimmingType, valueMode);
     const refs = activeInspectionDraftRefsForCell(row, col);
     if (refs.length === 0) return;
+    // A mixed display value is a placeholder, never the body of its targets.
+    // Mode changes retain each target's body; typing (including clearing) replaces it.
+    const nextValueForRef = (ref: InspectionDraftRef) => changeKind === "mode"
+      ? inspectionDrafts[ref.key]?.value ?? sourceValueForInspectionDraft(ref.sourceType, ref.sourceId, ref.targetId)
+      : normalizedValue;
+    if (changeKind === "mode" && valueMode === "standard"
+      && refs.some((ref) => !canUseStandardValue(nextValueForRef(ref), model.dimmingType))) return;
     const changesValue = refs.some((ref) => {
       const currentValue = inspectionDrafts[ref.key]?.value ?? sourceValueForInspectionDraft(ref.sourceType, ref.sourceId, ref.targetId);
-      return normalizeLevelForCompare(currentValue) !== normalizeLevelForCompare(normalizedValue);
+      const currentMode = inspectionDrafts[ref.key]?.valueMode ?? sourceModeForInspectionDraft(ref.sourceType, ref.sourceId, ref.targetId);
+      return !settingValuesEqual(currentValue, currentMode, nextValueForRef(ref), valueMode);
     });
     if (!changesValue) return;
 
@@ -3987,10 +4026,11 @@ export default function CfsView({
     setInspectionDrafts((prev) => {
       const next = { ...prev };
       for (const ref of refs) {
-        if (normalizeLevelForCompare(normalizedValue) === normalizeLevelForCompare(ref.previousValue)) {
+        const nextValue = nextValueForRef(ref);
+        if (settingValuesEqual(nextValue, valueMode, ref.previousValue, ref.previousValueMode ?? "standard")) {
           delete next[ref.key];
         } else {
-          next[ref.key] = { ...ref, value: normalizedValue };
+          next[ref.key] = { ...ref, value: nextValue, valueMode };
         }
       }
       return next;
@@ -3998,61 +4038,16 @@ export default function CfsView({
   }
 
   function resetInspectionPopoverCell(row: CfsZoneRow, col: FunctionColumn): void {
-    const refs = allInspectionDraftRefsForCell(row, col);
-    if (refs.length > 0) {
+    const keys = new Set(allInspectionDraftRefsForCell(row, col).map(ref => ref.key));
+    if (keys.size > 0 && inspectionSessionBaseline) {
       pushInspectionHistorySnapshot();
-      setInspectionDrafts((prev) => {
-        let changed = false;
-        const next = { ...prev };
-        for (const ref of refs) {
-          const sessionStartValue = inspectionSessionStartValueForDraft(ref.sourceType, ref.sourceId, ref.targetId);
-          const currentSourceValue = sourceValueForInspectionDraft(ref.sourceType, ref.sourceId, ref.targetId);
-          const sourceAlreadyMatchesSessionStart =
-            normalizeLevelForCompare(currentSourceValue) === normalizeLevelForCompare(sessionStartValue);
-          if (sourceAlreadyMatchesSessionStart) {
-            if (Object.prototype.hasOwnProperty.call(next, ref.key)) {
-              delete next[ref.key];
-              changed = true;
-            }
-          } else {
-            const resetDraft: InspectionDraft = {
-              ...ref,
-              previousValue: sessionStartValue,
-              value: sessionStartValue,
-            };
-            const existing = next[ref.key];
-            if (
-              !existing ||
-              normalizeLevelForCompare(existing.value) !== normalizeLevelForCompare(resetDraft.value) ||
-              normalizeLevelForCompare(existing.previousValue) !== normalizeLevelForCompare(resetDraft.previousValue)
-            ) {
-              next[ref.key] = resetDraft;
-              changed = true;
-            }
-          }
-        }
-        return changed ? next : prev;
-      });
-      setInspectionBaselineValues((prev) => {
-        let changed = false;
-        const next = { ...prev };
-        for (const ref of refs) {
-          const sessionStartValue = inspectionSessionStartValueForDraft(ref.sourceType, ref.sourceId, ref.targetId);
-          const currentSourceValue = sourceValueForInspectionDraft(ref.sourceType, ref.sourceId, ref.targetId);
-          const sourceAlreadyMatchesSessionStart =
-            normalizeLevelForCompare(currentSourceValue) === normalizeLevelForCompare(sessionStartValue);
-          if (sourceAlreadyMatchesSessionStart) {
-            if (Object.prototype.hasOwnProperty.call(next, ref.key)) {
-              delete next[ref.key];
-              changed = true;
-            }
-          } else if (next[ref.key] !== sessionStartValue) {
-            next[ref.key] = sessionStartValue;
-            changed = true;
-          }
-        }
-        return changed ? next : prev;
-      });
+      // Live edits are rebuilt from the session baseline and remaining drafts.
+      // Writing a draft with the baseline value would create another edit mark.
+      inspectionDraftsTouchedRef.current = true;
+      const withoutResetKeys = <T,>(current: Record<string, T>): Record<string, T> =>
+        Object.fromEntries(Object.entries(current).filter(([key]) => !keys.has(key)));
+      setInspectionDrafts(withoutResetKeys);
+      setInspectionBaselineValues(withoutResetKeys);
     }
     setInspectionPopover(null);
   }
@@ -4158,7 +4153,7 @@ export default function CfsView({
       // Capture the current room and callback, never the pre-await closure.
       const latest = latestInspectionRef.current;
       const baseline: InspectionCompletionPayload = cloneInspectionData({ scenes: latest.roomType.scenes,
-        roomScenes: latest.roomType.roomScenes, switches: latest.roomType.switches,
+        roomScenes: latest.roomType.roomScenes, switches: latest.storedRoomType.switches,
         inspectionMarks: latest.roomType.inspectionMarks ?? [] });
       inspectionRoomTypeIdRef.current = latest.roomType.id;
       inspectionDraftsTouchedRef.current = false;
@@ -4171,6 +4166,12 @@ export default function CfsView({
       resetInspectionSelection();
       setShowInspectionMarkHighlight(true);
       setInspectionSessionSavedRevision(choice === "newRevision");
+      // These are one-shot open events, not state to restore after the
+      // overlay hosts unmount for Inspection and remount on Revert/Finish.
+      setCfsSwitchSettingRequest(null);
+      setCfsCommandSettingRequest(null);
+      setCfsAreaSceneSettingRequest(null);
+      setCfsRoomSceneSettingRequest(null);
       setInspectionMode(true);
       latest.onInspectionModeStart?.(latest.roomType.id, baseline);
     } catch (error) {
@@ -4236,7 +4237,8 @@ export default function CfsView({
       if (baseline === undefined) return Boolean(inspectionDrafts[ref.key]);
       const draft = inspectionDrafts[ref.key];
       const current = draft?.value ?? sourceValueForInspectionDraft(ref.sourceType, ref.sourceId, ref.targetId);
-      return normalizeLevelForCompare(current) !== normalizeLevelForCompare(baseline);
+      const mode = draft?.valueMode ?? sourceModeForInspectionDraft(ref.sourceType, ref.sourceId, ref.targetId);
+      return !settingValuesEqual(current, mode, baseline, ref.previousValueMode ?? "standard");
     });
     if (drafts.length === 0 && changedRefs.length === 0) {
       return { hasDraft: false, hasChanged: false, scope: "" };
@@ -4250,7 +4252,9 @@ export default function CfsView({
   }
 
   function hasInspectionMarkForCell(row: CfsZoneRow, col: FunctionColumn): boolean {
-    return allInspectionDraftRefsForCell(row, col).some((ref) => inspectionMarksByKey.has(ref.key));
+    return allInspectionDraftRefsForCell(row, col).some((ref) => inspectionMode && inspectionBaselineMarkKeys
+      ? Boolean(inspectionDrafts[ref.key]) || inspectionBaselineMarkKeys.has(ref.key)
+      : inspectionMarksByKey.has(ref.key));
   }
 
   function inspectionPopoverPosition(trigger: HTMLElement, dimmingType: string): InspectionPopoverState {
@@ -4283,7 +4287,8 @@ export default function CfsView({
     setInspectionPopover({ ...position, rowId: row.id, colId: col.id });
   }
 
-  function formatInspectionValue(value: string, dimmingType: string): string {
+  function formatInspectionValue(value: string, dimmingType: string, mode: SceneValueMode = "standard"): string {
+    if (mode === "text") return normalizeSettingValue(value, mode);
     const trimmed = value.trim();
     if (!trimmed) return "";
     return isOnOffInspectionType(dimmingType) ? trimmed : formatLevel(trimmed, dimmingType);
@@ -4296,7 +4301,7 @@ export default function CfsView({
 
   function stepInspectionPercent(row: CfsZoneRow, col: FunctionColumn, delta: number): void {
     const model = inspectionCellModel(row, col);
-    if (!model.editable || !isPercentInspectionType(model.dimmingType)) return;
+    if (!model.editable || model.valueMode === "text" || !isPercentInspectionType(model.dimmingType)) return;
     const nextValue = Math.min(100, Math.max(0, Math.round(inspectionPercentNumber(model.value) + delta)));
     changeInspectionCell(row, col, String(nextValue));
   }
@@ -4372,6 +4377,11 @@ export default function CfsView({
           <div className="cfs-inspection-popover-title" title={title}>{title}</div>
           <div className="cfs-inspection-current-value" title="Original value">{originalValue}</div>
         </div>
+        <SceneTextValueControl value={model.value} mode={model.valueMode ?? "standard"} dimmingType={model.dimmingType}
+          label={`Inspection ${title}`} disabled={!canEdit || inspectionSavePending}
+          standardAllowed={model.standardAllowed}
+          onModeChange={(mode) => changeInspectionCell(row, col, model.value, mode, "mode")}
+          onChange={(value, mode) => changeInspectionCell(row, col, value, mode)}>
         {isPercentInspectionType(model.dimmingType) ? (
           <div className="cfs-inspection-popover-body">
             <input
@@ -4447,6 +4457,7 @@ export default function CfsView({
             ))}
           </div>
         )}
+        </SceneTextValueControl>
         <div className="cfs-inspection-popover-actions">
           <button type="button" className="btn btn-primary btn-sm" onClick={() => setInspectionPopover(null)}>
             OK
@@ -4904,16 +4915,17 @@ export default function CfsView({
     if (targets.length === 0) return null;
     const hasDraft = targets.some((target) => Boolean(draftForInspectionTarget(col, target)));
     if (!hasDraft) return null;
-    return uniqueValues(
+    return Array.from(new Set(
       targets.flatMap((target) => {
         const draft = draftForInspectionTarget(col, target);
         const rawValue = draft?.value ?? rawInspectionValueForTarget(col, target.targetId, target.areaId);
-        const formattedValue = formatInspectionValue(rawValue, target.dimmingType);
+        const formattedValue = formatInspectionValue(rawValue, target.dimmingType,
+          draft?.valueMode ?? rawInspectionModeForTarget(col, target.targetId, target.areaId));
         if (!formattedValue) return [];
         const sceneName = inspectionAreaSceneNameForTarget(col, target, draft);
         return sceneName ? [sceneName, formattedValue] : [formattedValue];
       }),
-    );
+    ));
   }
 
   // Cells a scene names but does not set stay "-": the dash means "nothing
@@ -5851,6 +5863,21 @@ export default function CfsView({
                   >
                     All Rooms
                   </button>
+                  {projectExcelSnapshot ? (
+                    <button type="button" role="menuitem" className="btn btn-secondary"
+                      style={{ justifyContent: "flex-start", border: "none", boxShadow: "none" }}
+                      disabled={isProjectExcelExporting}
+                      title="Export all room types and tabs from current project data. Unconfirmed Inspection and LowHigh drafts are excluded; confirm them before export. Display filters are ignored. No save or revision is created."
+                      onClick={() => {
+                        setShowExcelExportMenu(false);
+                        void exportAllProjectTabsToExcel().catch((error) => {
+                          console.error("Project Excel export failed", error);
+                          window.alert("Project Excel export failed. Please try again.");
+                        });
+                      }}>
+                      Project (All Tabs)
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -6284,7 +6311,7 @@ export default function CfsView({
                   }`}
                   colSpan={group.colSpan}
                 >
-                  <div>{group.switchNumber}</div>
+                  <div style={group.key === DOOR_MAGNET_SCENE_GROUP_KEY ? { wordBreak: "normal", overflowWrap: "normal" } : undefined}>{group.switchNumber}</div>
                   {group.switchName ? <strong>{group.switchName}</strong> : null}
                 </th>
               ))}
@@ -6471,8 +6498,6 @@ export default function CfsView({
                         );
                       }
                       if (row.isBacklight && BACKLIGHT_LOGIC_MERGE_KEYS.includes(col.key)) {
-                        const mergeInfo = backlightMergeInfo.get(row.id) ?? { isFirst: true, rowSpan: 1 };
-                        if (!mergeInfo.isFirst) return null;
                         const visibleBacklightKeys = BACKLIGHT_LOGIC_MERGE_KEYS.filter((key) =>
                           visibleBaseColumns.some((visibleCol) => visibleCol.key === key),
                         );
@@ -6483,14 +6508,13 @@ export default function CfsView({
                         return (
                           <td
                             key={col.key}
-                            className={`cfs-sticky-base cfs-merged-cell cfs-base-${col.key}${
+                            className={`cfs-sticky-base cfs-merged-cell cfs-backlight-heading cfs-base-${col.key}${
                               isChangedBaseCell ? " revision-changed-cell" : ""
                             }`}
-                            style={{ minWidth: width, width, left: stickyOffsets.get(col.key) ?? 0, ...mergedBottomStyle(mergeInfo.rowSpan) }}
+                            style={{ minWidth: width, width, left: stickyOffsets.get(col.key) ?? 0 }}
                             colSpan={visibleBacklightKeys.length}
-                            rowSpan={mergeInfo.rowSpan}
                           >
-                            Backlight Logic
+                            {cfsBacklightHeading(row)}
                           </td>
                         );
                       }
@@ -6595,6 +6619,15 @@ export default function CfsView({
                           </td>
                         );
                       }
+                      if (col.key === "area" && row.isHvac) {
+                        const info = thermostatAreaMergeInfo.get(row.id) ?? { isFirst: true, rowSpan: 1 };
+                        if (!info.isFirst) return null;
+                        return <td key={col.key}
+                          className={`cfs-sticky-base cfs-base-area cfs-location-cell${isChangedBaseCell ? " revision-changed-cell" : ""}`}
+                          style={{ left: stickyOffsets.get(col.key) ?? 0, ...mergedBottomStyle(info.rowSpan) }} rowSpan={info.rowSpan}>
+                          {renderStack(baseValues(row, col.key))}
+                        </td>;
+                      }
                       const lowHighEndField = lowHighEndFieldForBaseColumn(col.key);
                       const lowHighEndDraft = lowHighEndField
                         ? lowHighEndCellModel(row, col.key).draft
@@ -6611,7 +6644,8 @@ export default function CfsView({
                         >
                           {lowHighEndField
                             ? renderLowHighEndCellContent(row, col.key, baseValues(row, col.key))
-                            : renderStack(baseValues(row, col.key))}
+                            : col.key === "programmingName" ? renderProgrammingNameStack(baseValues(row, col.key))
+                              : renderStack(baseValues(row, col.key))}
                         </td>
                       );
                     })}

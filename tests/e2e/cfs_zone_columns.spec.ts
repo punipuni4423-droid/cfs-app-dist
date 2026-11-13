@@ -390,7 +390,7 @@ test.describe("T-33 CFS Base 3 列", () => {
     // --- (2) 新列あり: All Rooms (baseValuesForEntry 経路) ---
     const visibleAll = await exportXlsx("All Rooms", "all-visible.xlsx");
     const visibleAllSheet = visibleAll.worksheets[0];
-    expect(visibleAll.worksheets.map((sheet) => sheet.name)).toEqual(["RT-A"]);
+    expect(visibleAll.worksheets.map((sheet) => sheet.name)).toEqual(["RT-A R1.00"]);
     const visibleAllLabels = headerLabels(visibleAllSheet, FULL_LABELS.length);
     expect(visibleAllLabels).toEqual(FULL_LABELS);
     expect(bodyValueByLabel(visibleAllSheet, visibleAllLabels, "Total VA", 5)).toBe("30");

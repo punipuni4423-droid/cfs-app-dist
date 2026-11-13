@@ -87,7 +87,7 @@ test('Excel gray rows equal Reserved rows for the same generated model', async (
   const model: CfsExcelSheetModel = {
     visibleBaseColumns: [{ key: 'detail', label: 'Detail', minWidth: 170 }], visibleFunctionColumns: [], displayedRows: rows,
     headerGroups: { switchGroups: [], buttonGroups: [], functionNameGroups: [], conditionGroups: [] },
-    mergeInfo: { device: new Map(), dimming: new Map(), designer: new Map(), zone: new Map(), daliGroup: new Map(), backlight: new Map() },
+    mergeInfo: { device: new Map(), dimming: new Map(), designer: new Map(), zone: new Map(), daliGroup: new Map() },
     highlights: { ffe: false, energySaving: false, areaScene: false, individualOverride: false, inspectionMark: false }, expandedPirHeaderKeys: new Set(),
     resolvers: { baseValues: row => [row.id], functionValues: () => [], baseColumnLabel: col => col.label,
       hasChangedBaseCell: () => false, hasChangedFunctionCell: () => false, hasAreaSceneValueCell: () => false,

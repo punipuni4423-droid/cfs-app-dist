@@ -1,5 +1,6 @@
 "use client";
 
+import AddRowButton from "./AddRowButton";
 import { useRef } from "react";
 import type { FixtureMaster } from "../types";
 import { DEFAULT_FIXTURE_POWER_FACTOR, FIXTURE_TYPE_OPTIONS, createEmptyFixture } from "../lib/constants";
@@ -299,15 +300,7 @@ export default function FixturesView({ fixtures, onChange }: FixturesViewProps) 
               })
             )}
           </tbody>
-          <tfoot>
-            <tr className="add-row-tr">
-              <td colSpan={8}>
-                <button className="btn-add-row" onClick={add} title="Add Row">
-                  + Add Row
-                </button>
-              </td>
-            </tr>
-          </tfoot>
+          <AddRowButton colSpan={8} onClick={add} title="Add Row" />
         </table>
       </div>
     </section>

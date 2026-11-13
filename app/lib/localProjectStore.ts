@@ -55,9 +55,16 @@ export function createLocalProjectStore(directory: string, io: typeof fs = fs) {
     const started = Date.now();
     let acquired = false;
     async function removeEmptyLock(): Promise<void> {
-      try { await io.rmdir(lockDir); }
-      catch (error) {
-        if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      for (let attempt = 0; ; attempt++) {
+        try { await io.rmdir(lockDir); return; }
+        catch (error) {
+          const code = (error as NodeJS.ErrnoException).code ?? '';
+          if (['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(code)) return;
+          // Windows can briefly deny removal after the owner file is unlinked.
+          // Retry only this empty-directory removal; persistent errors still fail.
+          if (code !== 'EPERM' || attempt >= 2) throw error;
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
       }
     }
     try {

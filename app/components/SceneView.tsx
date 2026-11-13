@@ -15,6 +15,7 @@ import type {
   RevisionFieldChanges,
   RoomType,
   Scene,
+  SceneValueMode,
   SwitchEntry,
 } from "../types";
 import { createEmptyScene } from "../lib/constants";
@@ -44,14 +45,19 @@ import {
 } from "../lib/settingValues";
 import {
   normalizeSceneSettingsByCircuitGroup,
+  circuitGroupMembers,
   sameSceneSettings,
   sceneSettingValueForCircuitGroup,
+  sceneSettingModeForCircuitGroup,
   setSceneSettingValueForCircuitGroup,
 } from "../lib/circuitGroups";
 import ActionIconButton from "./ActionIconButton";
 import AreaSceneOverview from "./AreaSceneOverview";
+import ViewModeBar, { type ViewMode } from "./ViewModeBar";
 import CurtainActionButtons from "./CurtainActionButtons";
 import HvacSettingPanel from "./HvacSettingPanel";
+import SceneTextValueControl from "./SceneTextValueControl";
+import { canUseStandardValue, isPlainNumericSetting, setSceneSettingModes } from "../lib/sceneValueMode";
 import { createAppId } from '../lib/id';
 
 interface SceneViewProps {
@@ -63,7 +69,7 @@ interface SceneViewProps {
   hvacSeasons?: HvacSeason[];
   curtainAssignments?: CurtainAssignment[];
   switches?: SwitchEntry[];
-  onChange: (next: Scene[]) => void;
+  onChange: (next: Scene[] | ((current: Scene[]) => Scene[])) => void;
   revisionChanges?: RevisionFieldChanges;
   canEdit?: boolean;
   roomTypeName?: string;
@@ -84,7 +90,6 @@ export interface AreaSceneSettingOverlayRequest {
 }
 
 type CircuitMode = "designer" | "internal";
-type SceneViewMode = "edit" | "overview";
 type FixtureKind = "DL" | "Indirect" | "Mixed" | "Unknown";
 type BulkTarget = "all" | "checked" | "dl" | "indirect" | "onOff";
 type BulkMode = BulkSettingMode;
@@ -192,7 +197,7 @@ export default function SceneView({
   const [selectedAreaId, setSelectedAreaId] = useState(initialSelectedAreaId);
   const [selectedSceneId, setSelectedSceneId] = useState(initialSelectedSceneId);
   const [circuitMode, setCircuitMode] = useState<CircuitMode>("designer");
-  const [viewMode, setViewMode] = useState<SceneViewMode>("edit");
+  const [viewMode, setViewMode] = useState<ViewMode>("edit");
   const [draggingSceneId, setDraggingSceneId] = useState<string | null>(null);
   const [sceneDragOverInfo, setSceneDragOverInfo] = useState<{
     targetId: string;
@@ -347,14 +352,20 @@ export default function SceneView({
 
   useEffect(() => {
     if (!canEdit || overlayHostOnly || suppressSceneNormalization) return;
-    let changed = false;
-    const normalizedScenes = scenes.map((scene) => {
-      const settings = normalizeSceneSettingsByCircuitGroup(scene.settings, circuits);
-      if (sameSceneSettings(settings, scene.settings)) return scene;
-      changed = true;
-      return { ...scene, settings };
-    });
-    if (changed) onChange(normalizedScenes);
+    const normalizeSettings = (current: Scene[]): Scene[] => {
+      let changed = false;
+      const normalized = current.map((scene) => {
+        const settings = normalizeSceneSettingsByCircuitGroup(scene.settings, circuits);
+        if (sameSceneSettings(settings, scene.settings)) return scene;
+        changed = true;
+        return { ...scene, settings };
+      });
+      return changed ? normalized : current;
+    };
+    const normalized = normalizeSettings(scenes);
+    if (normalized !== scenes) {
+      onChange((current) => current === scenes ? normalized : normalizeSettings(current));
+    }
   }, [canEdit, circuits, onChange, scenes, overlayHostOnly, suppressSceneNormalization]);
 
   const selectedArea = availableAreas.find((l) => l.id === selectedAreaId);
@@ -496,9 +507,7 @@ export default function SceneView({
   }
 
   function handleRenameScene(name: string): void {
-    if (!canEdit) return;
-    if (!selectedScene) return;
-    onChange(scenes.map((s) => (s.id === selectedScene.id ? { ...s, name } : s)));
+    updateSelectedScene((scene) => ({ ...scene, name }));
   }
 
   function handleSceneDragStart(e: DragEvent<HTMLButtonElement>, sceneId: string): void {
@@ -562,24 +571,35 @@ export default function SceneView({
   }
 
   function updateSelectedScene(mutator: (scene: Scene) => Scene): void {
-    if (!canEdit) return;
-    if (!selectedScene) return;
-    onChange(scenes.map((s) => (s.id === selectedScene.id ? mutator(s) : s)));
+    if (!canEdit || !selectedScene) return;
+    const sceneId = selectedScene.id;
+    onChange((current) => current.map((scene) => scene.id === sceneId ? mutator(scene) : scene));
   }
 
   function handleSettingChange(circuitId: string, value: string): void {
     updateSelectedScene((scene) => setSetting(scene, circuitId, value));
   }
 
-  function handleCircuitSettingChange(circuit: CircuitEntry, value: string): void {
+  function handleCircuitSettingChange(circuit: CircuitEntry, value: string, mode?: SceneValueMode): void {
+    if (!selectedScene) return;
+    if ((mode ?? sceneSettingModeForCircuitGroup(selectedScene.settings, circuits, circuit)) === "standard"
+      && !canUseStandardValue(value, circuit.dimmingType)) return;
     updateSelectedScene((scene) => ({
       ...scene,
-      settings: setSceneSettingValueForCircuitGroup(scene.settings, circuits, circuit, value),
+      settings: setSceneSettingValueForCircuitGroup(scene.settings, circuits, circuit, value, mode),
     }));
+  }
+
+  function changeCircuitSettingMode(circuit: CircuitEntry, mode: SceneValueMode): void {
+    updateSelectedScene((scene) => {
+      const settings = setSceneSettingModes(scene.settings, circuitGroupMembers(circuits, circuit).map((member) => member.id), mode, circuit.dimmingType);
+      return settings ? { ...scene, settings } : scene;
+    });
   }
 
   function stepPercent(circuit: CircuitEntry, delta: number): void {
     if (!selectedScene) return;
+    if (sceneSettingModeForCircuitGroup(selectedScene.settings, circuits, circuit) === "text") return;
     handleCircuitSettingChange(
       circuit,
       stepPercentValue(sceneSettingValueForCircuitGroup(selectedScene.settings, circuits, circuit), delta),
@@ -623,6 +643,7 @@ export default function SceneView({
     if (mode === "percent" && !valueForMode) return null;
 
     const targets = targetCircuitsForBulk()
+      .filter((circuit) => mode === "clear" || sceneSettingModeForCircuitGroup(selectedScene.settings, circuits, circuit) !== "text")
       .map((circuit) => ({
         circuit,
         value: settingValueForBulkMode(mode, isOnOff(circuit), valueForMode),
@@ -667,7 +688,7 @@ export default function SceneView({
       targets.reduce(
         (next, item) => ({
           ...next,
-          settings: setSceneSettingValueForCircuitGroup(next.settings, circuits, item.circuit, item.nextValue),
+          settings: setSceneSettingValueForCircuitGroup(next.settings, circuits, item.circuit, item.nextValue, "standard"),
         }),
         scene,
       ),
@@ -914,28 +935,7 @@ export default function SceneView({
   return (
     <section className={`card card-padded fade-in scene-view${embeddedSettingOverlay ? " scene-view-setting-overlay-content" : ""}`}>
       {!embeddedSettingOverlay ? (
-      <div className="scene-view-mode-bar" role="tablist" aria-label="Area Scene view mode">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={viewMode === "edit"}
-          className={`scene-view-mode-chip${viewMode === "edit" ? " scene-view-mode-chip-active" : ""}`}
-          onClick={() => setViewMode("edit")}
-          data-testid="area-scene-mode-edit"
-        >
-          Edit
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={viewMode === "overview"}
-          className={`scene-view-mode-chip${viewMode === "overview" ? " scene-view-mode-chip-active" : ""}`}
-          onClick={() => setViewMode("overview")}
-          data-testid="area-scene-mode-overview"
-        >
-          Overview
-        </button>
-      </div>
+        <ViewModeBar ariaLabel="Area Scene view mode" mode={viewMode} onChange={setViewMode} testIdPrefix="area-scene-mode" />
       ) : null}
 
       {!embeddedSettingOverlay && viewMode === "overview" ? (
@@ -1061,6 +1061,9 @@ export default function SceneView({
             <input
               className={`cell-input scene-name-input ${revisionCellClass(selectedScene.id, ["name"])}`}
               value={selectedScene.name}
+              aria-label="Area Scene name"
+              aria-describedby={selectedScene.name.trim() ? undefined : "area-scene-empty-name"}
+              placeholder={sceneName(selectedScene, areaScenes.indexOf(selectedScene))}
               onChange={(e) => handleRenameScene(e.target.value)}
               disabled={!canEdit}
             />
@@ -1080,6 +1083,9 @@ export default function SceneView({
             />
             ) : null}
           </div>
+          {!selectedScene.name.trim() ? (
+            <small id="area-scene-empty-name" className="muted-text">Name is empty: CFS shows only the value</small>
+          ) : null}
 
           {!isHvacAreaScene ? (
           <>
@@ -1164,6 +1170,11 @@ export default function SceneView({
                         <span className="cell-readonly">{fixtureKindLabel(fixtureKind)}</span>
                       </td>
                       <td>
+                        <SceneTextValueControl value={value} mode={sceneSettingModeForCircuitGroup(selectedScene.settings, circuits, c)}
+                          dimmingType={c.dimmingType} label={getCircuitLabel(c)} disabled={!canEdit}
+                          standardAllowed={circuitGroupMembers(circuits, c).every((member) => canUseStandardValue(selectedScene.settings.find((setting) => setting.circuitId === member.id)?.percentage ?? "", c.dimmingType))}
+                          onModeChange={mode => changeCircuitSettingMode(c, mode)}
+                          onChange={(next, mode) => handleCircuitSettingChange(c, next, mode)}>
                         {isOnOff(c) ? (
                           <div className="switch-onoff-buttons scene-onoff-buttons" role="group" aria-label="On Off Uneffected 0.5 sec">
                             {ON_OFF_LEVEL_VALUES.map((option) => (
@@ -1185,7 +1196,7 @@ export default function SceneView({
                               type="text"
                               value={value}
                               onChange={(e) =>
-                                handleCircuitSettingChange(c, Number.isFinite(Number.parseFloat(e.target.value)) ? clampPercentValue(e.target.value) : e.target.value)
+                                handleCircuitSettingChange(c, isPlainNumericSetting(e.target.value) ? clampPercentValue(e.target.value) : e.target.value)
                               }
                               disabled={!canEdit}
                             />
@@ -1218,6 +1229,7 @@ export default function SceneView({
                             </div>
                           </div>
                         )}
+                        </SceneTextValueControl>
                       </td>
                     </tr>
                   );

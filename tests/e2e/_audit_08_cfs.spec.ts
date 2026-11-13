@@ -694,7 +694,10 @@ async function setupAndOpenCfs(
       const projects = JSON.parse(localStorage.getItem(storageKey) ?? '[]') as ProjectData[];
       const project = projects.find((item) => item.name === projectName)!;
       project.remarks = remarks;
-      if (collision) project.roomTypes[1].name = 'rEmArKs';
+      if (collision) {
+        project.roomTypes[1].name = 'rEmArKs';
+        project.roomTypes[2].name = 'Remarks';
+      }
       localStorage.setItem(storageKey, JSON.stringify(projects));
       await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projects }) });
     }, { storageKey: STORAGE_KEY, projectName: PROJECT_NAME, remarks: options.remarks, collision: options.remarkNameCollision });
@@ -1060,7 +1063,7 @@ test.describe('AUDIT-08 CFS 統合ビュー', () => {
     const download = await downloadPromise;
     const suggested = download.suggestedFilename();
     test.info().annotations.push({ type: 'download', description: `filename=${suggested}` });
-    expect(suggested).toMatch(/_CFS_ALL\.xlsx$/);
+    expect(suggested).toMatch(/_CFS_ALL_\d{8}\.xlsx$/);
 
     const savePath = path.join(SHOT_DIR, suggested);
     fs.mkdirSync(SHOT_DIR, { recursive: true });
@@ -1070,7 +1073,7 @@ test.describe('AUDIT-08 CFS 統合ビュー', () => {
     await workbook.xlsx.readFile(savePath);
     const sheetNames = workbook.worksheets.map((sheet) => sheet.name);
     test.info().annotations.push({ type: 'sheets', description: sheetNames.join(', ') });
-    expect(sheetNames).toEqual([ROOM_NAME, SECOND_ROOM_NAME, EMPTY_ROOM_NAME]);
+    expect(sheetNames).toEqual([ROOM_NAME, SECOND_ROOM_NAME, EMPTY_ROOM_NAME].map(name => name + " R1.00"));
     expect(workbook.worksheets[0].rowCount).toBeGreaterThan(5);
     expect(workbook.worksheets[1].rowCount).toBeGreaterThan(5);
     expect(String(workbook.worksheets[0].getCell('A5').value ?? '')).not.toContain('Enter Circuit');
@@ -1100,7 +1103,9 @@ test.describe('AUDIT-08 CFS 統合ビュー', () => {
     await setupAndOpenCfs(page, { includeSecondRoom: true, includeEmptyRoom: true, remarks: EXPORT_REMARKS });
     const before = await page.evaluate(async () => (await fetch('/api/projects')).json());
     const workbook = await downloadExcel(page, 'All Rooms', 'remarks');
-    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([ROOM_NAME, SECOND_ROOM_NAME, EMPTY_ROOM_NAME, 'Remarks']);
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+      ...[ROOM_NAME, SECOND_ROOM_NAME, EMPTY_ROOM_NAME].map(name => name + " R1.00"), "Remarks",
+    ]);
     expectRemarksSheet(workbook.getWorksheet('Remarks'));
     const single = await downloadExcel(page, 'This Room Type', 'with-remarks');
     expect(single.worksheets.map((sheet) => sheet.name)).toEqual(['CFS View']);
@@ -1125,19 +1130,21 @@ test.describe('AUDIT-08 CFS 統合ビュー', () => {
   test('G4. Remarks naming collision and sub-window export preserve project notes', async ({ page }) => {
     // The shared fixture now isolates popup requests and uses the same explicit
     // context mocks as the main page; a later blanket 403 would shadow those mocks.
-    await setupAndOpenCfs(page, { includeSecondRoom: true, remarks: EXPORT_REMARKS, remarkNameCollision: true });
+    // The two RT names collide after adding R1.00. The project notes use the unversioned Remarks sheet.
+    await setupAndOpenCfs(page, { includeSecondRoom: true, includeEmptyRoom: true, remarks: EXPORT_REMARKS, remarkNameCollision: true });
+    const expectedNames = [ROOM_NAME + " R1.00", "rEmArKs R1.00", "Remarks R1.00 (2)", "Remarks"];
     const main = await downloadExcel(page, 'All Rooms', 'collision');
-    expect(main.worksheets.map((sheet) => sheet.name)).toEqual([ROOM_NAME, 'rEmArKs', 'Remarks (2)']);
-    expectRemarksSheet(main.getWorksheet('Remarks (2)'));
+    expect(main.worksheets.map((sheet) => sheet.name)).toEqual(expectedNames);
+    expectRemarksSheet(main.getWorksheet('Remarks'));
     for (const label of ['Sub Window', 'Fixed Window']) {
       const pending = page.waitForEvent('popup');
       await page.getByRole('button', { name: label, exact: true }).click();
       const popup = await pending;
       await expect(popup.locator('table.cfs-matrix-table')).toBeVisible({ timeout: 60000 });
       const detached = await downloadExcel(popup, 'All Rooms', label.toLowerCase().replace(' ', '-'));
-      expect(detached.worksheets.map((sheet) => sheet.name)).toEqual([ROOM_NAME, 'rEmArKs', 'Remarks (2)']);
-      expectRemarksSheet(detached.getWorksheet('Remarks (2)'));
-      expect(detached.getWorksheet('Remarks (2)')!.model).toEqual(main.getWorksheet('Remarks (2)')!.model);
+      expect(detached.worksheets.map((sheet) => sheet.name)).toEqual(expectedNames);
+      expectRemarksSheet(detached.getWorksheet('Remarks'));
+      expect(detached.getWorksheet('Remarks')!.model).toEqual(main.getWorksheet('Remarks')!.model);
       await popup.close();
     }
   });

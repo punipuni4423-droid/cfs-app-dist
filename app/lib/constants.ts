@@ -546,7 +546,7 @@ function normalizeBacklightMode(value: unknown): BacklightLevelSetting['mode'] {
 
 export function normalizeBacklightLevels(
   value: unknown,
-  options: { useDefaultsWhenMissing?: boolean } = {},
+  options: { useDefaultsWhenMissing?: boolean; migrateLegacyMasterOn?: boolean } = {},
 ): BacklightLevelSetting[] {
   const defaults = createDefaultBacklightLevels();
   if (!Array.isArray(value)) return options.useDefaultsWhenMissing === false ? [] : defaults;
@@ -558,9 +558,9 @@ export function normalizeBacklightLevels(
       const key = typeof v.key === 'string' && v.key.trim() ? v.key.trim() : createAppId();
       if (key === 'light') return null;
       const defaultLevel = byKey.get(key);
-      const rawName = typeof v.name === 'string' ? v.name.trim() : '';
+      const rawName = typeof v.name === 'string' ? v.name.trimEnd() : '';
       const name =
-        key === 'masterOn' && (!rawName || /^master\s*on$/i.test(rawName))
+        options.migrateLegacyMasterOn !== false && key === 'masterOn' && /^master\s*on$/i.test(rawName.trim())
           ? 'Bright'
           : rawName || defaultLevel?.name || 'Backlight Scene';
       return {

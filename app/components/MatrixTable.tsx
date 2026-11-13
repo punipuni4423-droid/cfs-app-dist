@@ -1,5 +1,6 @@
 "use client";
 
+import AddRowButton from "./AddRowButton";
 import { useState } from "react";
 import type { DragEvent } from "react";
 import type {
@@ -183,15 +184,7 @@ export default function MatrixTable({
             );
           })}
         </tbody>
-        <tfoot>
-          <tr className="add-row-tr">
-            <td colSpan={totalCols}>
-              <button className="btn-add-row" onClick={onAddRow} title="Add Row">
-                + Add Row
-              </button>
-            </td>
-          </tr>
-        </tfoot>
+        <AddRowButton colSpan={totalCols} onClick={onAddRow} title="Add Row" />
       </table>
     </div>
   );

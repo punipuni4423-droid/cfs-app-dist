@@ -1,14 +1,18 @@
 import type * as ExcelJSTypes from "exceljs";
 import {
   BACKLIGHT_LOGIC_MERGE_KEYS,
+  cfsBacklightHeading,
   CFS_FUNCTION_COLUMN_WIDTH,
+  buildThermostatAreaMergeInfo,
   type BaseColumn,
   type BaseColumnKey,
   type CfsZoneRow,
   type FunctionColumn,
 } from "./cfsTableModel";
-import { stripSceneNameLinePrefix } from "./cfsValueResolver";
+import { isSceneNameLine, stripSceneNameLinePrefix } from "./cfsValueResolver";
+import { CFS_OFF_VALUE_COLOR, isOffLikeDisplayValue, sceneNameColor } from "./cfsDisplayTextStyle";
 import { isReservedCfsRow } from "./useCfsZoneRows";
+import { PROGRAMMING_NAME_WARNING_COLOR, programmingNameWarning } from "./programmingNameWarning";
 
 // Excel generation for the CFS matrix, extracted from CfsView so a workbook
 // can be built outside the component (single sheet today, per-project
@@ -26,6 +30,7 @@ type ExcelCellModel = {
   fill?: ExcelFill;
   bold?: boolean;
   fontColor?: string;
+  richText?: ExcelJSTypes.RichText[];
   horizontal?: "left" | "center";
 };
 
@@ -53,6 +58,7 @@ export interface CfsExcelHeaderGroups {
 }
 
 export interface CfsExcelSheetModel {
+  sceneNameColors?: ReadonlyMap<string, string>;
   visibleBaseColumns: ReadonlyArray<BaseColumn>;
   visibleFunctionColumns: ReadonlyArray<FunctionColumn>;
   displayedRows: ReadonlyArray<CfsZoneRow>;
@@ -63,7 +69,6 @@ export interface CfsExcelSheetModel {
     designer: ReadonlyMap<string, MergeSpanInfo>;
     zone: ReadonlyMap<string, MergeSpanInfo>;
     daliGroup: ReadonlyMap<string, MergeSpanInfo>;
-    backlight: ReadonlyMap<string, MergeSpanInfo>;
   };
   highlights: {
     ffe: boolean;
@@ -107,6 +112,8 @@ export function appendCfsSheet(
     expandedPirHeaderKeys,
     resolvers,
   } = model;
+  const thermostatAreaMergeInfo = buildThermostatAreaMergeInfo(displayedRows);
+  const backlightHeadings = new Map<number, ExcelCellModel>();
 
   const headerFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFEEF3F5" } };
   // Border edges: thin matches the faint on-screen cell border; heavy matches
@@ -196,22 +203,25 @@ export function appendCfsSheet(
     }
 
     if (row.isBacklight && BACKLIGHT_LOGIC_MERGE_KEYS.includes(col.key)) {
-      const mergeSpan = mergeInfo.backlight.get(row.id) ?? { isFirst: true, rowSpan: 1 };
-      if (!mergeSpan.isFirst) return null;
       const visibleBacklightKeys = BACKLIGHT_LOGIC_MERGE_KEYS.filter((key) =>
         visibleBaseColumns.some((visibleCol) => visibleCol.key === key),
       );
       if (col.key !== visibleBacklightKeys[0]) return null;
-      return {
+      const heading: ExcelCellModel = {
         row: excelRow,
         col: excelCol,
-        value: "Backlight Logic",
+        value: cfsBacklightHeading(row),
         colSpan: visibleBacklightKeys.length,
-        rowSpan: mergeSpan.rowSpan,
         fill: changedFill ?? rowFill(row, col.key),
         bold: true,
         horizontal: "center",
       };
+      backlightHeadings.set(excelRow, heading);
+      return heading;
+    }
+
+    if (row.isBacklight && col.key === "detail") {
+      return { row: excelRow, col: excelCol, value: "-", fill: changedFill ?? rowFill(row, col.key) };
     }
 
     if (col.key === "device" || col.key === "deviceNum") {
@@ -297,10 +307,22 @@ export function appendCfsSheet(
         horizontal: "center",
       };
     }
+    if (col.key === "area" && row.isHvac) {
+      const info = thermostatAreaMergeInfo.get(row.id) ?? { isFirst: true, rowSpan: 1 };
+      if (!info.isFirst) return null;
+      return { row: excelRow, col: excelCol, value: stackedText(resolvers.baseValues(row, col.key)),
+        rowSpan: info.rowSpan, fill: changedFill ?? rowFill(row, col.key), horizontal: "center" };
+    }
+    const values = resolvers.baseValues(row, col.key);
+    const overlongName = col.key === "programmingName" && values.some((value) => programmingNameWarning(value));
     return {
       row: excelRow,
       col: excelCol,
-      value: stackedText(resolvers.baseValues(row, col.key)),
+      value: stackedText(values),
+      ...(overlongName ? { richText: values.flatMap((value, index) => [
+        ...(index ? [{ text: "\n" }] : []),
+        { text: value, ...(programmingNameWarning(value) ? { font: { bold: true, color: { argb: `FF${PROGRAMMING_NAME_WARNING_COLOR.slice(1)}` } } } : {}) },
+      ]) } : {}),
       fill: changedFill ?? rowFill(row, col.key),
       horizontal: "center",
     };
@@ -309,6 +331,19 @@ export function appendCfsSheet(
   function bodyFunctionCell(row: CfsZoneRow, rowIndex: number, col: FunctionColumn, colIndex: number): ExcelCellModel {
     const values = resolvers.functionValues(row, col);
     const isAreaSceneValue = highlights.areaScene && resolvers.hasAreaSceneValueCell(row, col);
+    const emphasizeSceneNames = isAreaSceneValue && values.length > 1;
+    const placeholder = row.isBacklight ? "" : "-";
+    const lines = (values.length > 0 ? values : [placeholder]).map((value) => {
+      const text = stripSceneNameLinePrefix(value);
+      const isSceneName = emphasizeSceneNames && isSceneNameLine(value);
+      const color = isOffLikeDisplayValue(text)
+        ? CFS_OFF_VALUE_COLOR
+        : isSceneName && text.trim()
+          ? model.sceneNameColors?.get(text.trim().toLowerCase()) ?? sceneNameColor(text)
+          : undefined;
+      return { text: text || placeholder, bold: isSceneName, color: color ? `FF${color.slice(1).toUpperCase()}` : undefined };
+    });
+    const styled = lines.some((line) => line.bold || line.color);
     const isChanged = resolvers.hasChangedFunctionCell(row, col);
     const isIndividualOverride = highlights.individualOverride && resolvers.hasSceneDifferentOverride(row, col);
     const isInspectionMarked = highlights.inspectionMark && resolvers.hasInspectionMarkForCell(row, col);
@@ -325,7 +360,15 @@ export function appendCfsSheet(
     return {
       row: 5 + rowIndex,
       col: visibleBaseColumns.length + colIndex + 1,
-      value: stackedText(values, row.isBacklight ? "" : "-"),
+      value: stackedText(values, placeholder),
+      // A scene label and its setting share one cell, but keep independent
+      // font runs just like the lines in the on-screen CFS stack.
+      richText: styled && lines.length > 1 ? lines.map((line, index) => ({
+        text: `${index > 0 ? "\n" : ""}${line.text}`,
+        font: { bold: line.bold, color: { argb: line.color ?? "FF334155" } },
+      })) : undefined,
+      bold: lines.length === 1 && lines[0].bold,
+      fontColor: lines.length === 1 ? lines[0].color : undefined,
       fill,
       horizontal: "center",
     };
@@ -446,7 +489,7 @@ export function appendCfsSheet(
 
   for (const cell of cells) {
     const excelCell = worksheet.getCell(cell.row, cell.col);
-    excelCell.value = cell.value;
+    excelCell.value = cell.richText ? { richText: cell.richText } : cell.value;
     const regionEndRow = cell.row + (cell.rowSpan ?? 1) - 1;
     const regionEndCol = cell.col + (cell.colSpan ?? 1) - 1;
     excelCell.border = {
@@ -478,7 +521,9 @@ export function appendCfsSheet(
     if (rowSpan > 1 || colSpan > 1) {
       worksheet.mergeCells(cell.row, cell.col, cell.row + rowSpan - 1, cell.col + colSpan - 1);
     }
-    const text = String(cell.value ?? "");
+    // The heading's number list wraps within the existing band width.
+    const value = String(cell.value ?? "");
+    const text = backlightHeadings.get(cell.row) === cell ? value.split("\n")[0] : value;
     const textWidth = Math.min(36, Math.max(6, Math.max(...text.split("\n").map((line) => line.length)) * 0.85 + 2));
     for (let col = cell.col; col < cell.col + colSpan; col += 1) {
       maxColWidths.set(col, Math.max(maxColWidths.get(col) ?? 0, textWidth));
@@ -498,6 +543,30 @@ export function appendCfsSheet(
   maxColWidths.forEach((width, index) => {
     worksheet.getColumn(index).width = Math.min(34, Math.max(7, width));
   });
+
+  for (const heading of backlightHeadings.values()) {
+    let width = 0;
+    for (let col = heading.col; col < heading.col + (heading.colSpan ?? 1); col += 1) {
+      width += worksheet.getColumn(col).width ?? 7;
+    }
+    // Column widths use digit units. Allow space for bold letters and cell
+    // padding, and budget by word so Excel wrapping at commas fits the row.
+    const capacity = Math.max(1, Math.floor((width - 2) * 0.75));
+    let lines = 0;
+    for (const line of String(heading.value).split("\n")) {
+      lines += 1;
+      let used = 0;
+      for (const word of line.split(/\s+/)) {
+        if (used && used + 1 + word.length > capacity) {
+          lines += 1;
+          used = 0;
+        }
+        lines += Math.floor(Math.max(0, word.length - 1) / capacity);
+        used = used ? used + 1 + word.length : ((Math.max(1, word.length) - 1) % capacity) + 1;
+      }
+    }
+    worksheet.getRow(heading.row).height = Math.min(409, Math.max(31, lines * 16 + 6));
+  }
 
   worksheet.views = [{ state: "frozen", xSplit: visibleBaseColumns.length, ySplit: 4 }];
 }

@@ -5,6 +5,26 @@ import { spawn } from "node:child_process";
 
 export type BootstrapStartResult = { state: "started" | "busy" | "failed" | "unknown"; message: string };
 
+/**
+ * The launcher (-RunStartup) and the frozen bootstrap both hold
+ * .cfs-updater/maintenance.lock with FileShare.None. A non-blocking open that
+ * fails with a sharing violation (EBUSY/EPERM) means a holder is alive, so the
+ * API can answer with a stable code before spawning the bootstrap. The result
+ * is only a hint: the bootstrap's own lock stays the authoritative gate.
+ */
+export async function probeMaintenanceLock(appRoot: string): Promise<"free" | "held"> {
+  const lockPath = path.join(path.resolve(appRoot), ".cfs-updater", "maintenance.lock");
+  try {
+    if (!(await fs.lstat(lockPath)).isFile()) return "free";
+    // The probe needs no write access; a stale read-only lock is not a holder.
+    // Keep sharing/permission failures conservative: the bootstrap owns the lock.
+    await (await fs.open(lockPath, "r")).close();
+    return "free";
+  } catch (error) {
+    return ["EBUSY", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "") ? "held" : "free";
+  }
+}
+
 async function assertPlainDirectory(directory: string): Promise<void> {
   let cursor = path.resolve(directory);
   while (true) {

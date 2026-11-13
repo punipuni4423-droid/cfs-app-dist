@@ -1,3 +1,4 @@
+import { tstatAssignmentLabel } from "./tstatMasterReference";
 import type {
   BacklightLevelSetting,
   CfsCircuit,
@@ -15,9 +16,11 @@ import type {
   RoomScene,
   RoomsSubTab,
   Scene,
+  SceneValueMode,
   SwitchEntry,
 } from "../types";
 import { valuesDiffer } from "./canonicalJson";
+import { normalizeSettingValue, settingComparisonKey } from "./sceneValueMode";
 
 /**
  * Snapshot stored on every RoomTypeRevision. Revisions keep the full room-type
@@ -25,6 +28,7 @@ import { valuesDiffer } from "./canonicalJson";
  * instead of being frozen into the revision memo.
  */
 export interface RevisionSnapshot {
+  nextThermostatNumber?: number;
   circuits?: CircuitEntry[];
   dryContacts?: DryContactEntry[];
   rows?: CfsCircuit[];
@@ -108,6 +112,7 @@ const FIELD_LABELS: Record<string, string> = {
   zoneAddress: "Zone",
   protocol: "Protocol",
   thermostatRole: "Master / Slave",
+  masterAssignmentId: "Reference Master",
   lowEnd: "Low end",
   highEnd: "High end",
   summerWinterChange: "Summer/Winter",
@@ -291,6 +296,11 @@ export function buildRevisionChangeEntries(
     if (value === null || value === undefined || value === "") return NOT_SET;
     if (field === "area" || field === "areaId") return areaNameById.get(String(value)) || "Unassigned area";
     if (field === "cciAssignment") return assignmentLabelById.get(String(value)) || "Not assigned";
+    if (field === "masterAssignmentId") {
+      const assignments = (after.hvacAssignments ?? []).some((row) => row.id === value) ? after.hvacAssignments ?? [] : before.hvacAssignments ?? [];
+      const assignment = assignments.find((row) => row.id === value);
+      return assignment ? tstatAssignmentLabel(assignment, assignments, context.locations) : "Unavailable Master";
+    }
     if (field === "backlightTarget") return readableBacklightTarget(String(value));
     if (STRUCTURED_FIELDS.has(field) || typeof value === "object") return "Updated";
     if (typeof value === "boolean") return value ? "On" : "Off";
@@ -298,18 +308,22 @@ export function buildRevisionChangeEntries(
     return hasInternalId(text) ? "Configured" : text;
   };
 
-  const settingsMap = (settings: unknown): Map<string, string> => {
-    const map = new Map<string, string>();
+  const settingsMap = (settings: unknown): Map<string, { percentage: string; valueMode: SceneValueMode }> => {
+    const map = new Map<string, { percentage: string; valueMode: SceneValueMode }>();
     if (!Array.isArray(settings)) return map;
     for (const setting of settings) {
       if (!setting || typeof setting !== "object") continue;
-      const row = setting as { circuitId?: unknown; percentage?: unknown };
+      const row = setting as { circuitId?: unknown; percentage?: unknown; valueMode?: unknown };
       const targetId = typeof row.circuitId === "string" ? row.circuitId.trim() : "";
       if (!targetId) continue;
-      map.set(targetId, typeof row.percentage === "string" ? row.percentage.trim() : String(row.percentage ?? "").trim());
+      const valueMode = row.valueMode === "text" ? "text" : "standard";
+      map.set(targetId, { percentage: normalizeSettingValue(String(row.percentage ?? ""), valueMode), valueMode });
     }
     return map;
   };
+
+  const settingLabel = (setting: { percentage: string; valueMode: SceneValueMode } | undefined): string =>
+    setting?.valueMode === "text" ? `Text: ${setting.percentage || NOT_SET}` : setting?.percentage || NOT_SET;
 
   const targetLabel = (targetId: string): string =>
     targetLabelById.get(targetId) || targetId.replace(/^[a-f0-9-]{18,}$/i, "Configured target");
@@ -357,7 +371,11 @@ export function buildRevisionChangeEntries(
     const beforeByTarget = settingsMap(beforeSettings);
     const afterByTarget = settingsMap(afterSettings);
     const targetIds = Array.from(new Set([...beforeByTarget.keys(), ...afterByTarget.keys()])).filter(
-      (targetId) => beforeByTarget.get(targetId) !== afterByTarget.get(targetId),
+      (targetId) => {
+        const beforeSetting = beforeByTarget.get(targetId);
+        const afterSetting = afterByTarget.get(targetId);
+        return !beforeSetting || !afterSetting || settingComparisonKey(beforeSetting) !== settingComparisonKey(afterSetting);
+      },
     );
     if (targetIds.length === 0) {
       push({
@@ -383,8 +401,8 @@ export function buildRevisionChangeEntries(
         rowLabel,
         field,
         fieldLabel: `${fieldLabel} / ${targetLabel(targetId)}`,
-        before: beforeByTarget.get(targetId) || NOT_SET,
-        after: afterByTarget.get(targetId) || NOT_SET,
+        before: settingLabel(beforeByTarget.get(targetId)),
+        after: settingLabel(afterByTarget.get(targetId)),
         kind: "changed",
       });
     });

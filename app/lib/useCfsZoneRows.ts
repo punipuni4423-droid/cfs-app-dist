@@ -8,6 +8,7 @@ import { DEFAULT_CFS_ROW_ORDER } from "./cfsRowDisplay";
 import {
   BY_SCENE_VALUE,
   OTHER_AREA_ID,
+  cfsDeviceFilterKey,
   type CfsDisplayAssignment,
   type CfsSortMode,
   type CfsZoneRow,
@@ -16,6 +17,9 @@ import {
 import { hasMeaningfulBacklightSource, hasSwitchOperationalIdentity } from "./switchSync";
 import { PICO_CORRIDOR_ALLOCATION, corridorPicoLedTargets } from "./picoSpecials";
 import { ccoLightingCircuit, isCcoLighting } from "./ccoLighting";
+import { tstatMasterReference } from "./tstatMasterReference";
+import { isCfsSwitchControlActive, thermostatDisplayNumber } from "./tstatOccupancy";
+import { hasTstatBindingQuarantine } from "./tstatBindingQuarantine";
 
 export interface BuildCfsZoneRowsOptions {
   roomType: RoomType;
@@ -359,7 +363,7 @@ export function isBacklightTargetCondition(value: string): boolean {
 // "" assignment = By Scene (documented default). Shared by the Switch and
 // Command tabs so their Backlight Target lists are always the same set.
 export function isByScenePalladiomBacklightTarget(sw: SwitchEntry): boolean {
-  return sw.kind === "lutronPd" && sw.backlightAssignment.trim() === "";
+  return !hasTstatBindingQuarantine(sw) && sw.kind === "lutronPd" && sw.backlightAssignment.trim() === "";
 }
 
 // One representative row per Palladiom switch group, By Scene only — the
@@ -375,12 +379,14 @@ export function byScenePalladiomBacklightTargets(switches: SwitchEntry[]): Switc
 }
 
 export function isPalladiomBacklightTarget(sw: SwitchEntry): boolean {
+  if (hasTstatBindingQuarantine(sw)) return false;
   if (sw.kind !== "lutronPd" || !hasSwitchOperationalIdentity(sw)) return false;
   // Group assignment decides target eligibility ("" = By Scene, or a
   // target-eligible fixed level such as Base). Row-action conditions no
   // longer affect membership.
   const assignment = sw.backlightAssignment.trim();
-  return !assignment || isBacklightTargetCondition(assignment);
+  return !assignment || isBacklightTargetCondition(assignment)
+    || sw.backlightLevels?.some((level) => level.key === "base" && level.name.trim() === assignment) === true;
 }
 
 function isDaliControlDevice(device: string): boolean {
@@ -874,11 +880,12 @@ export function buildCfsZoneRows({
       return ["On/Off", "Setpoint", "Fan Mode", "Drift"].map((metric) => ({
         id: `${assignment.id}:${metric}`,
         orderIndex: displayAssignments.length + cfsOnlyRows.length + corridorPicoLedRows.length + assignmentIndex,
-        device: "HVAC",
-        deviceNum: String(assignmentIndex + 1),
+        device: "Thermostat",
+        deviceNum: String(thermostatDisplayNumber(assignmentIndex)),
         zone: assignment.thermostatRole,
         group: "",
-        address: assignment.thermostatRole,
+        address: assignment.thermostatRole === "Slave" || assignment.masterAssignmentId
+          ? `${assignment.thermostatRole}\nMaster: ${tstatMasterReference(assignment, roomType.hvacAssignments, locations).label}` : assignment.thermostatRole,
         daliLine: "",
         isDali: false,
         location,
@@ -927,7 +934,7 @@ export function buildCfsZoneRows({
 
     const backlightTargetRows = new Map<string, { target: SwitchEntry; sources: SwitchEntry[]; orderIndex: number }>();
     roomType.switches.forEach((sw, switchIndex) => {
-      if (!hasMeaningfulBacklightSource(sw)) return;
+      if (!isCfsSwitchControlActive(sw, roomType.hvacAssignments, roomType.switches) || !hasMeaningfulBacklightSource(sw)) return;
       const targetIds = sw.backlightTarget.split(",").map((value) => value.trim()).filter(Boolean);
       if (targetIds.length === 0 || !normalizeBacklightCondition(sw.backlightCondition, sw)) return;
       const targets = targetIds
@@ -1004,7 +1011,7 @@ export function buildCfsZoneRows({
     const filtered = selectedAreaIds.size > 0
       ? allRows.filter((row) => selectedAreaIds.has(row.locationId))
       : allRows;
-    const deviceFiltered = filtered.filter((row) => !hiddenDeviceKeys.has(`${row.device}\u0000${row.deviceNum}`));
+    const deviceFiltered = filtered.filter((row) => !hiddenDeviceKeys.has(cfsDeviceFilterKey(row)));
     const sortedByDevice = sortRowsByDeviceSequence(deviceFiltered);
 
     if (sortMode === "device" || sortMode === "programmingName") {

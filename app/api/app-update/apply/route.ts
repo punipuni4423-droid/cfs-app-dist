@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { appDir, getAppUpdateStatus, selfUpdateStatusFile } from "../../../lib/appUpdateServer";
 import { isAllowedWriteRequest } from "../../../lib/requestGuard";
-import { buildBootstrapInvocation, startBootstrap } from "../../../lib/appUpdateLaunch";
+import { buildBootstrapInvocation, probeMaintenanceLock, startBootstrap } from "../../../lib/appUpdateLaunch";
+import { STARTUP_MAINTENANCE_RUNNING_CODE, STARTUP_MAINTENANCE_RUNNING_MESSAGE } from "../../../lib/appUpdateProgress";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +19,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   // No queued write or stale-running veto here. The OS lock in the common
   // bootstrap owns dispatch and status publication for both the API and CMD.
+  // Right after launch the startup maintenance lock is still held for a short
+  // while; answer with a stable code instead of the bootstrap's generic busy ACK.
+  if ((await probeMaintenanceLock(appDir)) === "held") {
+    return NextResponse.json({ error: STARTUP_MAINTENANCE_RUNNING_MESSAGE, code: STARTUP_MAINTENANCE_RUNNING_CODE, retryAfterSeconds: 60, status }, { status: 409, headers: { "Retry-After": "60" } });
+  }
   const requestUrl = new URL(request.url);
   const attemptId = randomUUID();
   const result = await startBootstrap(buildBootstrapInvocation({

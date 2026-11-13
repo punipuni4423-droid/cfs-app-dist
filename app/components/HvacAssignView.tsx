@@ -1,5 +1,6 @@
 "use client";
 
+import AddRowButton from "./AddRowButton";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { HvacAssignment, HvacSeason, LocationMaster } from "../types";
@@ -12,8 +13,16 @@ import {
   createEmptyHvacSeason,
 } from "../lib/constants";
 import ActionIconButton from "./ActionIconButton";
+import SectionHeading from "./SectionHeading";
+import { appendHvacSheets } from "../lib/hvacExcelExport";
+import { roomTypeExcelFilename } from "../lib/excelExportNames";
+import { thermostatNumberForAssignment } from "../lib/tstatOccupancy";
+import { canSelectTstatMaster, tstatAssignmentLabel, tstatMasterCandidates, tstatMasterReference } from "../lib/tstatMasterReference";
 
 interface HvacAssignViewProps {
+  projectName: string;
+  roomTypeName: string;
+  roomTypeRevision: string;
   assignments: HvacAssignment[];
   seasons: HvacSeason[];
   locations: LocationMaster[];
@@ -126,7 +135,7 @@ function MonthDayPicker({ month, day, onChange, disabled = false }: MonthDayPick
       if (!trigger) return;
       const rect = trigger.getBoundingClientRect();
       const margin = 8;
-      const desiredWidth = Math.max(240, rect.width);
+      const desiredWidth = Math.min(window.innerWidth - margin * 2, Math.max(260, rect.width));
       const measuredHeight = pickerRef.current?.offsetHeight || 126;
       const spaceBelow = window.innerHeight - rect.bottom - margin;
       const spaceAbove = rect.top - margin;
@@ -247,6 +256,9 @@ function MonthDayPicker({ month, day, onChange, disabled = false }: MonthDayPick
 }
 
 export default function HvacAssignView({
+  projectName,
+  roomTypeName,
+  roomTypeRevision,
   assignments,
   seasons,
   locations,
@@ -256,9 +268,50 @@ export default function HvacAssignView({
 }: HvacAssignViewProps) {
   const visibleSeasons = seasons.length > 0 ? seasons : createDefaultHvacSeasons();
   const [linkAllHvac, setLinkAllHvac] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const exportingRef = useRef(false);
+
+  async function exportTstat(): Promise<void> {
+    if (exportingRef.current) return;
+    exportingRef.current = true;
+    setExporting(true);
+    setExportError("");
+    const snapshot = {
+      assignments: assignments.map((row) => ({ ...row })),
+      seasons: visibleSeasons.map((row) => ({ ...row })),
+      locations: locations.map((row) => ({ ...row })),
+    };
+    try {
+      const ExcelJSModule = await import("exceljs");
+      const ExcelJS = ExcelJSModule.default ?? ExcelJSModule;
+      const workbook = new ExcelJS.Workbook();
+      appendHvacSheets(workbook, snapshot);
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer as ArrayBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = roomTypeExcelFilename(projectName, { name: roomTypeName, revision: roomTypeRevision }, "TSTAT");
+      try {
+        document.body.appendChild(link);
+        link.click();
+      } finally {
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+    } catch {
+      setExportError("Excel export failed. Please try again.");
+    } finally {
+      exportingRef.current = false;
+      setExporting(false);
+    }
+  }
 
   function updateAssignment(id: string, patch: Partial<HvacAssignment>): void {
     if (!canEdit) return;
+    const current = assignments.find((row) => row.id === id);
+    if (patch.masterAssignmentId !== undefined && (!current || !canSelectTstatMaster(current, patch.masterAssignmentId, assignments))) return;
     const linkedPatch: Partial<HvacAssignment> = {};
     if (linkAllHvac) {
       if (patch.protocol !== undefined) linkedPatch.protocol = patch.protocol;
@@ -360,36 +413,54 @@ export default function HvacAssignView({
             onChange={(event) => setLinkAllHvac(event.target.checked)}
             disabled={!canEdit}
           />
-          Link all HVAC
+          Link all Thermostats
         </label>
+        <span className="toolbar-spacer" />
+        <button type="button" className="btn btn-secondary btn-sm" onClick={() => { void exportTstat(); }} disabled={exporting}>
+          {exporting ? "Exporting..." : "Excel Export"}
+        </button>
       </div>
+      {exportError ? <p role="alert">{exportError}</p> : null}
 
       <div className="matrix-scroll">
-        <table className="matrix-table master-table">
+        <table className="matrix-table master-table thermostat-fixed-table" style={{ width: 1454 }}>
+          <colgroup>
+            <col style={{ width: 64 }} />
+            <col style={{ width: 150 }} />
+            <col style={{ width: 120 }} />
+            <col style={{ width: 180 }} />
+            <col style={{ width: 120 }} />
+            <col style={{ width: 120 }} />
+            <col style={{ width: 170 }} />
+            <col style={{ width: 220 }} />
+            <col style={{ width: 220 }} />
+            <col style={{ width: 90 }} />
+          </colgroup>
           <thead>
             <tr>
-              <th style={{ minWidth: 64 }}>No</th>
-              <th style={{ minWidth: 150 }}>Control Type</th>
-              <th style={{ minWidth: 120 }}>Master / Slave</th>
-              <th style={{ minWidth: 180 }}>Area</th>
-              <th style={{ minWidth: 120 }}>Low End</th>
-              <th style={{ minWidth: 120 }}>High End</th>
-              <th style={{ minWidth: 170 }}>Summer / Winter</th>
-              <th style={{ minWidth: 220 }}>Note</th>
-              <th className="col-center" style={{ minWidth: 90 }}>Operation</th>
+              <th>No</th>
+              <th>Control Type</th>
+              <th>Master / Slave</th>
+              <th>Area</th>
+              <th>Low End</th>
+              <th>High End</th>
+              <th>Summer / Winter</th>
+              <th>Note</th>
+              <th>Reference Master</th>
+              <th className="col-center">Operation</th>
             </tr>
           </thead>
           <tbody>
             {assignments.length === 0 ? (
               <tr>
-                <td colSpan={9} className="screen-empty">
-                  No HVAC assignments are registered. Add one below.
+                <td colSpan={10} className="screen-empty">
+                  No Thermostats are registered. Add one below.
                 </td>
               </tr>
             ) : (
-              assignments.map((row, index) => (
+              assignments.map((row) => (
                 <tr key={row.id}>
-                  <td className="col-center">{index + 1}</td>
+                  <td className="col-center">{thermostatNumberForAssignment(assignments, row.id)}</td>
                   <td>
                     <select
                       className="cell-input"
@@ -482,10 +553,26 @@ export default function HvacAssignView({
                       onChange={(e) => updateAssignment(row.id, { note: e.target.value })}
                     />
                   </td>
+                  <td>
+                    {row.thermostatRole === "Slave" ? (
+                      <select className="cell-input" aria-label={`Reference Master ${thermostatNumberForAssignment(assignments, row.id)}`}
+                        value={row.masterAssignmentId ?? ""} disabled={!canEdit}
+                        onChange={(event) => updateAssignment(row.id, { masterAssignmentId: event.target.value })}>
+                        <option value="">-</option>
+                        {row.masterAssignmentId && !tstatMasterCandidates(row, assignments).some((candidate) => candidate.id === row.masterAssignmentId)
+                          ? <option value={row.masterAssignmentId} disabled>{tstatMasterReference(row, assignments, locations).label}</option> : null}
+                        {tstatMasterCandidates(row, assignments).map((candidate) => (
+                          <option key={candidate.id} value={candidate.id}>{tstatAssignmentLabel(candidate, assignments, locations)}</option>
+                        ))}
+                      </select>
+                    ) : <span>{tstatMasterReference(row, assignments, locations).label}</span>}
+                    {tstatMasterReference(row, assignments, locations).warning
+                      ? <small className="muted-text thermostat-reference-warning" role="status">{tstatMasterReference(row, assignments, locations).warning}</small> : null}
+                  </td>
                   <td className="col-center">
                     <ActionIconButton
                       icon="trash"
-                      label="Delete HVAC"
+                      label="Delete Thermostat"
                       className="btn-danger-ghost"
                       onClick={() => deleteAssignment(row.id)}
                       disabled={!canEdit}
@@ -495,34 +582,28 @@ export default function HvacAssignView({
               ))
             )}
           </tbody>
-          <tfoot>
-            <tr className="add-row-tr">
-              <td colSpan={9}>
-                <button type="button" className="btn-add-row" onClick={addAssignment} disabled={!canEdit}>
-                  + HVAC Add
-                </button>
-              </td>
-            </tr>
-          </tfoot>
+          <AddRowButton colSpan={10} onClick={addAssignment} disabled={!canEdit} scopeLabel="Thermostat" />
         </table>
       </div>
 
       <div className="screen-section" style={{ marginTop: "1rem" }}>
         <div className="toolbar">
-          <strong>Season Schedule</strong>
-          <span className="toolbar-spacer" />
-          <button type="button" className="btn btn-secondary btn-sm" onClick={addSeason} disabled={!canEdit}>
-            + Season
-          </button>
+          <SectionHeading>Season Schedule</SectionHeading>
         </div>
         <div className="matrix-scroll">
-          <table className="matrix-table master-table">
+          <table className="matrix-table master-table thermostat-fixed-table" style={{ width: 590 }}>
+            <colgroup>
+              <col style={{ width: 160 }} />
+              <col style={{ width: 170 }} />
+              <col style={{ width: 170 }} />
+              <col style={{ width: 90 }} />
+            </colgroup>
             <thead>
               <tr>
-                <th style={{ minWidth: 160 }}>Season</th>
-                <th style={{ minWidth: 170 }}>Start Date</th>
-                <th style={{ minWidth: 170 }}>End Date</th>
-                <th className="col-center" style={{ minWidth: 90 }}>Operation</th>
+                <th>Season</th>
+                <th>Start Date</th>
+                <th>End Date</th>
+                <th className="col-center">Operation</th>
               </tr>
             </thead>
             <tbody>
@@ -564,6 +645,7 @@ export default function HvacAssignView({
                 </tr>
               ))}
             </tbody>
+            <AddRowButton colSpan={4} onClick={addSeason} disabled={!canEdit} scopeLabel="Season" />
           </table>
         </div>
       </div>

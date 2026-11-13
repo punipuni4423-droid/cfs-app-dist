@@ -4,6 +4,7 @@ import type { ButtonHTMLAttributes } from "react";
 
 type ActionIconName =
   | "copy"
+  | "paste"
   | "trash"
   | "minus"
   | "edit"
@@ -28,6 +29,9 @@ interface ActionIconProps {
 }
 
 export function ActionIcon({ name }: ActionIconProps): React.JSX.Element {
+  if (name === "paste") {
+    return <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 5H5v16h14V5h-4" /><rect x="9" y="3" width="6" height="4" rx="1" /><path d="M8 11h8M8 15h8" /></svg>;
+  }
   if (name === "user") {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -208,6 +212,7 @@ export function ActionIcon({ name }: ActionIconProps): React.JSX.Element {
 interface ActionIconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
   icon: ActionIconName;
   label: string;
+  nativeTooltipOnly?: boolean;
 }
 
 export default function ActionIconButton({
@@ -216,6 +221,7 @@ export default function ActionIconButton({
   className = "",
   type = "button",
   title,
+  nativeTooltipOnly = false,
   ...props
 }: ActionIconButtonProps): React.JSX.Element {
   return (
@@ -227,7 +233,7 @@ export default function ActionIconButton({
       aria-label={label}
     >
       <ActionIcon name={icon} />
-      <span className="action-icon-label">{label}</span>
+      {!nativeTooltipOnly ? <span className="action-icon-label">{label}</span> : null}
     </button>
   );
 }

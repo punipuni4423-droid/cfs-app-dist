@@ -1,5 +1,7 @@
-import type { CircuitEntry, RoomScene, Scene, SceneCircuitSetting, SwitchEntry } from "../types";
+import type { CircuitEntry, RoomScene, Scene, SceneCircuitSetting, SceneValueMode, SwitchEntry } from "../types";
 import { OTHER_AREA_ID } from "./cfsTableModel";
+import { isPlainNumericSetting, normalizeSettingValue, settingValueMode } from "./sceneValueMode";
+import { setSceneSettingValue } from "./settingValues";
 
 export function uniqueNonEmptyValues(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
@@ -10,23 +12,19 @@ export function areaSceneDisplayName(scene: Scene): string {
 }
 
 export function sceneValueForCircuit(scene: Scene, circuitId: string): string {
-  return scene.settings.find((setting) => setting.circuitId === circuitId)?.percentage.trim() ?? "";
+  const setting = scene.settings.find((entry) => entry.circuitId === circuitId);
+  return setting?.percentage.trim() ? normalizeSettingValue(setting.percentage, settingValueMode(setting)) : "";
 }
 
 export function hasSetting(settings: SceneCircuitSetting[], targetId: string): boolean {
-  return settings.some((setting) => setting.circuitId === targetId);
+  // Selecting Text on an empty override must not steal the inherited Area
+  // Scene as the Inspection source. A blank value still means unset/inherit.
+  return settings.some((setting) => setting.circuitId === targetId &&
+    (setting.valueMode !== "text" || setting.percentage.trim() !== ""));
 }
 
-export function setSettingsValue(settings: SceneCircuitSetting[], targetId: string, value: string): SceneCircuitSetting[] {
-  const trimmed = value.trim();
-  const existing = settings.find((setting) => setting.circuitId === targetId);
-  if (!trimmed) return settings.filter((setting) => setting.circuitId !== targetId);
-  if (existing) {
-    return settings.map((setting) =>
-      setting.circuitId === targetId ? { ...setting, percentage: trimmed } : setting,
-    );
-  }
-  return [...settings, { circuitId: targetId, percentage: trimmed }];
+export function setSettingsValue(settings: SceneCircuitSetting[], targetId: string, value: string, mode?: SceneValueMode): SceneCircuitSetting[] {
+  return setSceneSettingValue(settings, targetId, value, mode);
 }
 
 function appendTemperatureUnit(value: string): string {
@@ -35,14 +33,20 @@ function appendTemperatureUnit(value: string): string {
   });
 }
 
-export function formatLevel(value: string, dimmingType: string): string {
+export function formatLevel(value: string, dimmingType: string, mode: SceneValueMode = "standard"): string {
+  if (mode === "text") return normalizeSettingValue(value, mode);
   const trimmed = value.trim();
   if (!trimmed) return "";
   if (dimmingType === "Curtain") return trimmed;
   if (dimmingType === "On/Off") return trimmed;
   if (dimmingType === "Setpoint" || dimmingType === "Drift") return appendTemperatureUnit(trimmed);
-  if (!Number.isFinite(Number.parseFloat(trimmed))) return trimmed;
+  if (!isPlainNumericSetting(trimmed)) return trimmed;
+  if (trimmed.endsWith("%")) return trimmed;
   return `${trimmed}%`;
+}
+
+export function formatSettingLevel(setting: SceneCircuitSetting | undefined, dimmingType: string): string {
+  return setting ? formatLevel(setting.percentage, dimmingType, settingValueMode(setting)) : "";
 }
 
 export function selectedSceneIdsForSwitch(sw: SwitchEntry): string[] {
@@ -85,8 +89,8 @@ export function cellValues(
   scenesById: Map<string, Scene>,
   showAreaSceneNames = true,
 ): string[] {
-  const direct = sw.buttonSetting.circuitSettings.find((setting) => setting.circuitId === circuit.id)?.percentage ?? "";
-  if (direct.trim()) return [formatLevel(direct, circuit.dimmingType)];
+  const direct = sw.buttonSetting.circuitSettings.find((setting) => setting.circuitId === circuit.id);
+  if (direct?.percentage.trim()) return [formatSettingLevel(direct, circuit.dimmingType)];
 
   const selectedSceneIds = selectedSceneIdsForSwitch(sw);
   const seenSceneValues = new Set<string>();
@@ -102,7 +106,7 @@ export function cellValues(
       if (!sceneMatchesArea(scene, circuit.area)) return [];
       const value = sceneValueForCircuit(scene, circuit.id);
       if (!value) return [];
-      const formattedValue = formatLevel(value, circuit.dimmingType);
+      const formattedValue = formatSettingLevel(scene.settings.find((setting) => setting.circuitId === circuit.id), circuit.dimmingType);
       const label = areaSceneDisplayName(scene);
       const key = `${showAreaSceneNames ? label : ""}\u0000${formattedValue}`;
       if (seenSceneValues.has(key)) return [];
@@ -123,22 +127,21 @@ export function roomSceneCellValue(
   scenesById: Map<string, Scene>,
   showAreaSceneNames: boolean,
 ): string[] {
-  const value = scene.settings.find((setting) => setting.circuitId === circuit.id)?.percentage ?? "";
-  if (value.trim()) return [formatLevel(value, circuit.dimmingType)];
+  const value = scene.settings.find((setting) => setting.circuitId === circuit.id);
+  if (value?.percentage.trim()) return [formatSettingLevel(value, circuit.dimmingType)];
   const areaSceneId = roomSceneSelectedAreaSceneId(scene, circuit.area);
   if (!areaSceneId) return [];
   const areaScene = scenesById.get(areaSceneId);
   if (!areaScene) return [];
   const areaSceneValue = sceneValueForCircuit(areaScene, circuit.id);
   if (!areaSceneValue) return [];
-  const formattedValue = formatLevel(areaSceneValue, circuit.dimmingType);
+  const formattedValue = formatSettingLevel(areaScene.settings.find((setting) => setting.circuitId === circuit.id), circuit.dimmingType);
   const label = areaSceneDisplayName(areaScene);
   return showAreaSceneNames && label ? [SCENE_NAME_LINE_PREFIX + label, formattedValue] : [formattedValue];
 }
 
 export function roomSceneSettingValue(scene: RoomScene, targetId: string, dimmingType: string): string {
-  const value = scene.settings.find((setting) => setting.circuitId === targetId)?.percentage ?? "";
-  return formatLevel(value, dimmingType);
+  return formatSettingLevel(scene.settings.find((setting) => setting.circuitId === targetId), dimmingType);
 }
 
 export function roomSceneHasAreaSceneValue(scene: RoomScene, circuit: CircuitEntry, scenesById: Map<string, Scene>): boolean {
@@ -164,7 +167,7 @@ export function sceneRawValuesForTarget(
     .map((sceneId) => scenesById.get(sceneId))
     .filter((scene): scene is Scene => Boolean(scene))
     .filter((scene) => sceneMatchesArea(scene, areaId))
-    .map((scene) => sceneValueForCircuit(scene, targetId).trim())
+    .map((scene) => sceneValueForCircuit(scene, targetId))
     .filter(Boolean);
 }
 
@@ -187,7 +190,8 @@ export function normalizeLevelForCompare(value: string): string {
   return value.trim().replace(/%$/, "").trim();
 }
 
-export function normalizeInspectionInput(value: string, dimmingType: string): string {
+export function normalizeInspectionInput(value: string, dimmingType: string, mode: SceneValueMode = "standard"): string {
+  if (mode === "text") return normalizeSettingValue(value, mode);
   const trimmed = value.trim().replace(/°C$/i, "").replace(/%$/, "").trim();
   if (!trimmed) return "";
   if (
@@ -202,6 +206,7 @@ export function normalizeInspectionInput(value: string, dimmingType: string): st
   ) {
     return trimmed;
   }
+  if (!isPlainNumericSetting(trimmed)) return trimmed;
   const numeric = Number.parseFloat(trimmed);
   if (!Number.isFinite(numeric)) return trimmed;
   return String(Math.min(100, Math.max(0, Math.round(numeric))));

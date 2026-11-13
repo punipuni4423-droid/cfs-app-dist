@@ -78,8 +78,9 @@ Device Assignの追加回路は機器に適合する候補から選びます。�
 - Link Mapで警告やエラーが出た場合、WarningsでIssue内容とRepair hintを確認します。通常のCFSタブやサブタブにはリンク未接続の赤い警告表示を出さず、必要時だけLink Mapで診断します。意図したアップデートによる差分でない場合は、Scene / Switch / Device Assign / HVACの参照元を確認してから修正します。
 - Backlight Logicの対象側はBy SceneまたはBaseを有効な対象として扱います。Palladiom Backlight Assignmentは未設定時にBy Sceneを既定として扱い、Uneffectedは選択肢に出しません。By Sceneは対象指定用の状態であり、CFSには表示値として出さず、BaseやMaster Onなど実際のBacklight Scene名だけを表示します。Switch番号、名称、CCI割当、Functionなどが空の未入力行はBacklight警告対象にしません。
 - SceneのBacklight Targetは、通常設定・一括適用ともSwitch/Commandと同じBy SceneのPalladiomだけを表示する確認用一覧です。Sceneから割当は変更せず、By Sceneへの切替はBacklightタブで行います。SceneではシーンごとのBacklight Conditionを設定します。CFSのBacklight Logic行でBaseも対象にする既存基準は変えません。
+- CFSとExcelのCFSシートでは、非表示列を含むすべての操作列でBacklightの値が同じ対象を1行にまとめます。各行の左の「Backlight Logic」セル内で改行し、SW#だけを番号順に並べます。値が異なる対象、設定が不明な対象、同名で判別できない対象は別行で保持します。対象ごとの元の記録は残し、表示だけをまとめます。Backlight SettingのSwitch/CommandではBy Sceneの全選択とClear Targetを使います。Backlightタブの登録・割り当ては保持します。（2026-11-13、62号）
 - 各タブのCopy/Deleteは、文字ボタンではなくアイコンボタンを基本とします。誤操作を避けるため、ホバー説明とアクセシビリティラベルは残します。
-- Switch / CCI / Palladiom / Pico / PIRでは、Function行だけを消す操作とスイッチ全体を消す操作を列で分けます。Row列のマイナスは該当Function行の削除、Switch列のゴミ箱はスイッチ/CCI/Palladiom/Pico/PIR全体の削除、コピーはCopy Switchです。Switch列はスイッチ単位で行結合して中央配置します。最後の1行は行削除ではなく全体削除で扱います。
+- SwitchはFunction OperationとSwitch Operationの2列で、行Functionと機器全体のCopy/Paste/Deleteを分けます。Pasteは毎回貼付先を未選択から明示指定し、同種のみ・source自身除外・Palladiom/Picoのボタン構成一致を必須とします。機器PasteはFunction内容だけを置換し、登録・配線・Area・PIR/QSM所属・TH bindingは貼付先のままです。既Copy Buttonはボタン先頭に残し、新しい機器の複製はDuplicateです。識別列の行結合と最後のFunction行削除の保護を維持します。Thermostat共有Area controlの機器削除は登録表で扱います。QSMは登録専用5列でFunction/Paste非適用、Commandは1行単位のCommand Operationです。
 - Switchで同一ボタンに複数Functionを持たせる場合、Priorityは任意選択です。同一ボタン内で複数選択できますが、少なくとも1つのFunctionは未チェックのままにします。選択したFunctionはCFSのTrigger Conditionセルが自動でハイライトされます。このハイライトはCFSのHighlightsメニュー項目ではありません。
 - UI更新のPlan時は、変更対象ごとに検査項目を先に列挙します。最低限、表示、操作意味、既存データ保護、CFS/Link Map/Export影響、アクセシビリティラベル、ブラウザコンソール、該当タブのスクロール/固定見出しを評価対象に含めます。
 - Circuit / Device Assign / Switchのような行数が増える表は、大きめのリサイズ可能な作業領域を使い、表内スクロール時も見出し行を固定して確認できる状態を維持します。CFSのように横方向の固定Base列が必要な巨大表は、個別の固定列設計を優先します。
@@ -107,10 +108,38 @@ Device Assignの追加回路は機器に適合する候補から選びます。�
 ## 2026-09-09 CFS・Remarks の Excel 出力
 
 - CFS の画面・This Room Type・All Rooms は同じセル値計算を使用します。All Rooms は各部屋の確定値を使い、画面限定の Inspection／Low End・High End の未確定値やリビジョン差分表示を持ち込みません。
+- CFS の画面と Excel の CFS シートは、同じ TSTAT 登録を操作先として一意に参照する既存の TH 列がある場合、その登録だけの空の追加列を表示しません。既存の操作列と Switch、Thermostat、Command の登録や値は保持します。
 - Individual Override の黄色、FFE／Energy Saving／Reserved の除外列、重複したハイライトの塗り優先順位は画面に合わせます。Inspection の青枠・青丸は画面用の装飾で、Excel の既存境界罫線は維持します。
+- 2026-10-27の未配布追補では、CFS のシーン名の文字色・太字と、Off／0%／0 の青文字は This Room Type・All Rooms の Excel にも反映します。同じセルのシーン名と設定値は行ごとに書式を分け、各 Room Type のシーン登録順の配色と表示設定を使います。
 - Remarks の列幅は表ごとに内容から計算します。長い表と短い表が混在しても隣の表に幅が引っ張られません。Excel では横方向の結合セルで各表の幅を表現し、長文の折返し・縦結合・罫線を保ちます。
 
 ## データ保護ルール
+
+### 2026-10-27 Scene/TextとプロジェクトExcel
+
+以下は開発環境で確認した未配布の追補です。通常利用環境への反映は別途行います。既存の画面例はこの追加機能の配置・保存結果を示すものではありません。
+
+- CFS上段のPMSシーンは `Scene`、ドアマグネットシーンは `Door Magnet Scene` と区別します。既存Sceneグループの表示順・非表示設定は初回に両グループへ継承し、その後は個別に設定できます。シーンIDや登録値は変わりません。
+- Scene／Area Scene／Switch／Commandの設定セルでは、入力欄左の `123（Standard）/ Ab（Text）` ボタンで直接切り替えます。切替だけで行/設定paneの高さやscroll/focusを変えず、明示resizeと複数行本文を保持します。Standardで新しい自由文を確定せず、Textは複数行の自由記述として扱います。条件を自動判定する機能ではありません。数値だけのTextもそのままの文字として保持し、旧データの本文は読込時に削除しません。
+- Textの本文・改行・入力モードは保存、コピー、設定リンク、InspectionのUndo／Redo／Reset／Revertに一体で反映します。Textを％操作で上書きせず、標準入力へ変換できない本文を黙って削除しません。HVACや機器の範囲制約値は従来の型を維持します。
+- Inspectionで値が混在する範囲は、Inputのモードだけを切り替えても各セルの本文を保持します。モード切替と本文を空にする操作は別です。TextからStandardへ戻す場合は対象ごとに変換可能か確認し、対応できない本文があれば切替を行いません。Editの設定確定・取消とInspectionの検査ドラフト確定・Revertを区別し、本文とモードを一緒に扱います。
+- Switch > Thermostatの `Excel Export` から割当表 `TSTAT` と季節表 `TSTAT Seasons` を出力できます。
+- Thermostatの機器登録、Master / Slave、Area、動作設定はSwitch > Thermostatにまとめます。登録機器はTH1、TH2…として区別します。同じAreaは動作設定の1組を共有し、Function / Trigger Condition / Function Setting / Backlight Settingを編集します。Area未設定は機器別の未適用状態で、勝手にOther全体へ連動しません。
+- 登録順にTH1、TH2…と表示します。CFS表の機器番号とExcelも同じ順で数えます。旧データを表示するだけでは空の動作設定や番号を保存しません。保存済みの機器IDと番号の記録は保持し、機器への参照には機器IDを使います。
+- CFS表とそのExcelでは、現在の機器登録に結び付いていて、部屋を割り当てた機器の操作欄を表示します。登録先を失った旧設定は保存データに残ります。
+- Area移動時に既設定があれば共有先を確認し、移動前・削除された機器の設定は消去せず、未適用の保存設定として保持します。複数の保存グループが同じAreaに競合する場合は警告し、勝手に一つを選んで上書きしません。
+- TSTATの初期枠はPIRと同じ空の設定を基準にします。画像や仕様書で未確認のFunction / Trigger / 時間・値を推測して埋めません。CFS表の登録内容と、実機の人感イベント・制御動作を確認したことは区別します。
+- CFSの `Excel Export > Project (All Tabs)` は現在のプロジェクトを開始時に1回固定し、全RoomType・各タブを1つのxlsxへ出力します。現在の編集内容を含み、表示フィルターは無視します。出力操作だけでは保存やRevision作成を行いません。
+- 未確定のInspection／Low End・High EndドラフトはProject出力に含みません。必要なInspection変更は終了時の確認で、Low End・High Endは専用バーのConfirmで確定してから出力します。Project内のCFSシートでもシーン名の文字色・太字とOff／0%／0の青文字を保持します。
+- 一括Excelの `Project Index` で、RoomTypeと正式シート名・適用外の理由を確認できます。既存のThis Room Type／All Roomsと、復元用のDownload Backup（JSON）は別の用途として維持します。
+
+### 2026-10-28 Door表示・SlaveのMaster参照・名前長の警告（開発候補・未配布）
+
+- 表示名は本人訂正後の `Door Magnet Scene` で統一します。CFS見出しは単語途中を分断せず、Scene画面とExcelにも同じ表示名を使います。保存kind・ID・既表示順/非表示のグループkeyは変えません。
+- Switch > ThermostatのSlave行では `Reference Master` を選択します。同じRoomTypeのMasterを一意なTH番号で選び、異なるArea/Control TypeのMasterも候補です。未選択の旧データを先頭Masterへ自動連結しません。物理Master参照と、同Areaで共有する人感設定は別です。
+- 自己参照・Slave宛・不明参照は新しく選べません。参照先の削除/役割変更で使えなくなった場合は元参照を残して警告し、他Masterへ替えません。Slave自身をMasterへ変更した場合の旧参照も未適用として保持します。Area移動後も機器IDによる参照を維持し、保存/再読込・RoomTypeコピー・Revision復元へ引き継ぎます。TSTAT/Project ExcelのReference Master列とCFSのHVAC表示でも人可読名を使います。
+- CFSのProgramming Nameが50文字を超えると赤太字だけを表示し、専用の短縮コメントやtooltipは表示しません。50文字以下は通常表示です。解決済みの本文をUnicode code point数で数え、空白は含め、見た目だけの折返しは数えません。保存・操作・コピー・Excel出力は止めず、名前の自動切捨ても行いません。Excelには名前と赤太字だけを反映します。LD実機側での入力を検証したという意味ではありません。
+- CFSのDevice表示はThermostatです。Slaveの紐付きは `Master: TH1` のように簡潔に表示します。Areaセルは同じ物理Thermostatの行だけを結合し、同Areaの別機器や照明行とは結合しません。保存機器IDやHVAC target IDは変更しません。
 
 - 初回共有はフルZIPを使用します。
 - 既存環境の更新は、必ずデータを含まないアップデートパッチZIPを使用します。

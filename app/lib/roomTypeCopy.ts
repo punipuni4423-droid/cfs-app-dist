@@ -240,6 +240,7 @@ export function duplicateRoomType(
     hvacAssignments: sourceHvacAssignments.map((assignment) => ({
       ...cloneProjectData(assignment),
       id: mapKnownId(hvacAssignmentIdMap, assignment.id),
+      ...(assignment.masterAssignmentId ? { masterAssignmentId: mapKnownId(hvacAssignmentIdMap, assignment.masterAssignmentId) } : {}),
     })),
     hvacSeasons: sourceHvacSeasons.map((season) => ({
       ...cloneProjectData(season),
@@ -255,6 +256,9 @@ export function duplicateRoomType(
       ...cloneProjectData(sw),
       id: mapKnownId(switchIdMap, sw.id),
       switchGroupId: sw.switchGroupId ? mapKnownId(switchGroupIdMap, sw.switchGroupId) : sw.switchGroupId,
+      ...(sw.kind === "command" && sourceSwitches.some((candidate) => candidate.tstatBinding && sourceSwitchGroupId(candidate) === sw.switchNumber)
+        ? { switchNumber: mapKnownId(switchGroupIdMap, sw.switchNumber) } : {}),
+      ...(sw.tstatBinding ? { tstatBinding: { ...sw.tstatBinding, assignmentIds: sw.tstatBinding.assignmentIds.map((id) => mapKnownId(hvacAssignmentIdMap, id)) } } : {}),
       buttonSetting: remapButtonSetting(sw.buttonSetting),
       backlightTarget: remapSeparatedIds(sw.backlightTarget, switchGroupIdMap),
     })),

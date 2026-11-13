@@ -1,5 +1,6 @@
 "use client";
 
+import AddRowButton from "./AddRowButton";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import SettingOverlayFrame from "./setting-overlay/SettingOverlayFrame";
@@ -16,6 +17,7 @@ import type {
   LocationMaster,
   Scene,
   SceneCircuitSetting,
+  SceneValueMode,
   SwitchEntry,
   TriggerMaster,
   RevisionFieldChanges,
@@ -31,15 +33,21 @@ import { buildSettingTargetGroups, hvacSettingTargets as buildHvacSettingTargets
 import {
   bulkModeAppliesToTarget,
   clampPercentValue,
+  setSceneSettingValue,
   settingValueForBulkMode,
   stepPercentValue,
   type BulkSettingMode,
 } from "../lib/settingValues";
 import HvacSettingPanel from "./HvacSettingPanel";
-import ActionIconButton from "./ActionIconButton";
+import { isCfsSwitchControlActive, thermostatControlDisplayNumber } from "../lib/tstatOccupancy";
+import { hasTstatBindingQuarantine } from "../lib/tstatBindingQuarantine";
+import OperationActions from "./OperationActions";
+import OperationPasteDialog from "./OperationPasteDialog";
+import { copyOperation, operationPasteTargets, pasteOperation, type OperationClipboard } from "../lib/switchOperationClipboard";
 import DragHandle from "./DragHandle";
 import { createAppId } from '../lib/id';
 import { normalizeSwitchSettingLinksAfterCommit } from "../lib/switchSettingLinks";
+import { canUseStandardValue, setSceneSettingModes } from "../lib/sceneValueMode";
 
 interface CommandViewProps {
   switches: SwitchEntry[];
@@ -56,6 +64,7 @@ interface CommandViewProps {
   onChange: (next: SwitchEntry[]) => void;
   revisionChanges?: RevisionFieldChanges;
   canEdit?: boolean;
+  operationBlocked?: boolean;
   externalSettingRequest?: CommandSettingOverlayRequest | null;
   overlayHostOnly?: boolean;
 }
@@ -95,24 +104,10 @@ function clampPercent(raw: string): string {
   return String(Math.min(100, Math.max(0, Math.round(n))));
 }
 
-function setCircuitSetting(sw: SwitchEntry, circuitId: string, percentage: string): SwitchEntry {
-  const trimmed = percentage.trim();
-  const existing = sw.buttonSetting.circuitSettings.find((s) => s.circuitId === circuitId);
-  let nextSettings: SceneCircuitSetting[];
-
-  if (trimmed === "") {
-    nextSettings = sw.buttonSetting.circuitSettings.filter((s) => s.circuitId !== circuitId);
-  } else if (existing) {
-    nextSettings = sw.buttonSetting.circuitSettings.map((s) =>
-      s.circuitId === circuitId ? { ...s, percentage: trimmed } : s,
-    );
-  } else {
-    nextSettings = [...sw.buttonSetting.circuitSettings, { circuitId, percentage: trimmed }];
-  }
-
+function setCircuitSetting(sw: SwitchEntry, circuitId: string, percentage: string, mode?: SceneValueMode): SwitchEntry {
   return {
     ...sw,
-    buttonSetting: { ...sw.buttonSetting, circuitSettings: nextSettings },
+    buttonSetting: { ...sw.buttonSetting, circuitSettings: setSceneSettingValue(sw.buttonSetting.circuitSettings, circuitId, percentage, mode) },
   };
 }
 
@@ -135,6 +130,7 @@ export default function CommandView({
   onChange,
   revisionChanges = {},
   canEdit = true,
+  operationBlocked = false,
   externalSettingRequest = null,
   overlayHostOnly = false,
 }: CommandViewProps) {
@@ -143,6 +139,8 @@ export default function CommandView({
   const [expandedAreaKeys, setExpandedAreaKeys] = useState<Set<string>>(new Set());
   const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set());
   const [bulkApplyMode, setBulkApplyMode] = useState<"scene" | "backlight" | null>(null);
+  const [operationClipboard, setOperationClipboard] = useState<OperationClipboard | null>(null);
+  const [pasteOpen, setPasteOpen] = useState(false);
   const consumedExternalRequestIdRef = useRef<number | null>(null);
   const drag = useDragReorder(switches, commitCommands, (sw) => sw.id);
 
@@ -174,7 +172,7 @@ export default function CommandView({
   const switchOptions = useMemo((): SwitchOption[] => {
     const groups = new Map<string, SwitchEntry[]>();
     for (const sw of switches) {
-      if (sw.kind === "command" || sw.kind === "qsm") continue;
+      if (sw.kind === "command" || sw.kind === "qsm" || hasTstatBindingQuarantine(sw)) continue;
       const id = switchGroupId(sw);
       groups.set(id, [...(groups.get(id) ?? []), sw]);
     }
@@ -182,12 +180,13 @@ export default function CommandView({
     const optionsByValue = new Map<string, SwitchOption>();
     for (const rows of groups.values()) {
       const head = rows[0];
+      if (!isCfsSwitchControlActive(head, hvacAssignments, switches)) continue;
       const name = head.switchName.trim();
       const groupId = switchGroupId(head);
       if (head.kind === "pir") continue;
-      const number = head.switchNumber.trim();
+      const number = head.kind === "tstat" ? thermostatControlDisplayNumber(head, hvacAssignments) : head.switchNumber.trim();
       if (!number) continue;
-      const value = number;
+      const value = head.tstatBinding ? groupId : number;
       const existing = optionsByValue.get(value);
       const buttonMap = new Map<string, string>();
       if (existing) {
@@ -211,7 +210,7 @@ export default function CommandView({
     return Array.from(optionsByValue.values()).sort((a, b) =>
       a.label.localeCompare(b.label, "en", { numeric: true }),
     );
-  }, [switches]);
+  }, [switches, hvacAssignments]);
 
   const areasWithScenes = useMemo(() => {
     const areaIds = new Set(scenes.map((s) => s.areaId));
@@ -300,7 +299,7 @@ export default function CommandView({
     if (!value) return;
     const updated = areaTargets.reduce(
       (next, target) =>
-        !target.isOnOff && !isCurtainTarget(target)
+        !target.isOnOff && !isCurtainTarget(target) && targetValueMode(next, target) !== "text"
           ? settingTargetIds(target).reduce((acc, id) => setCircuitSetting(acc, id, value), next)
           : next,
       sw,
@@ -319,11 +318,12 @@ export default function CommandView({
     key: string,
   ): void {
     const updated = areaTargets.reduce((next, target) => {
+      if (mode !== "clear" && targetValueMode(next, target) === "text") return next;
       if (isCurtainTarget(target) && mode !== "clear") return next;
       const value = settingValueForBulkMode(mode, target.isOnOff, areaBulkValues[key] || "");
       return value === null
         ? next
-        : settingTargetIds(target).reduce((acc, id) => setCircuitSetting(acc, id, value), next);
+        : settingTargetIds(target).reduce((acc, id) => setCircuitSetting(acc, id, value, "standard"), next);
     }, sw);
     updateButtonSetting(sw.id, updated.buttonSetting);
   }
@@ -356,13 +356,31 @@ export default function CommandView({
     return "";
   }
 
-  function handleTargetValueChange(sw: SwitchEntry, target: SettingTarget, raw: string): void {
-    const value = target.isOnOff || ["Raise", "Lower", "0.5 sec", "Blinking (Short)", "Blinking (Long)"].includes(raw) ? raw : clampPercent(raw);
-    const updated = settingTargetIds(target).reduce((next, id) => setCircuitSetting(next, id, value), sw);
+  function targetValueMode(sw: SwitchEntry, target: SettingTarget): SceneValueMode {
+    return settingTargetIds(target).some((id) => sw.buttonSetting.circuitSettings.find((setting) => setting.circuitId === id)?.valueMode === "text") ? "text" : "standard";
+  }
+
+  function targetAllowsStandard(sw: SwitchEntry, target: SettingTarget): boolean {
+    return settingTargetIds(target).every(id => canUseStandardValue(getPercent(sw, id), target.dimmingType));
+  }
+
+  function handleTargetModeOnlyChange(sw: SwitchEntry, target: SettingTarget, mode: SceneValueMode): void {
+    if (!canEdit) return;
+    const circuitSettings = setSceneSettingModes(sw.buttonSetting.circuitSettings, settingTargetIds(target), mode, target.dimmingType);
+    if (!circuitSettings) return;
+    updateButtonSetting(sw.id, { ...sw.buttonSetting, circuitSettings });
+  }
+
+  function handleTargetValueChange(sw: SwitchEntry, target: SettingTarget, raw: string, mode: SceneValueMode = "standard"): void {
+    if (!canEdit) return;
+    if (mode === "standard" && !canUseStandardValue(raw, target.dimmingType)) return;
+    const value = mode === "text" || target.isOnOff || ["Raise", "Lower", "0.5 sec", "Blinking (Short)", "Blinking (Long)"].includes(raw) ? raw : clampPercent(raw);
+    const updated = settingTargetIds(target).reduce((next, id) => setCircuitSetting(next, id, value, mode), sw);
     updateButtonSetting(sw.id, updated.buttonSetting);
   }
 
   function stepTargetPercent(sw: SwitchEntry, target: SettingTarget, delta: number): void {
+    if (targetValueMode(sw, target) === "text") return;
     const current = Number.parseFloat(getTargetValue(sw, target) || "0");
     handleTargetValueChange(sw, target, String(current + delta));
   }
@@ -481,16 +499,11 @@ export default function CommandView({
     const selectedTargets = new Set(
       sw.backlightTarget.split(",").map((value) => value.trim()).filter(Boolean),
     );
-    const updateTargets = (targetId: string, checked: boolean): void => {
-      const next = new Set(selectedTargets);
-      if (checked) next.add(targetId);
-      else next.delete(targetId);
-      update(sw.id, { backlightTarget: Array.from(next).join(",") });
-    };
     return (
       <BacklightSettingPanel
         targets={byScenePalladiomSwitches.map(target => ({ id: switchGroupId(target), label: [target.switchNumber, target.switchName].filter(Boolean).join(" - ") || "(No switch #)" }))}
-        selection={{ mode: "editable", selectedIds: selectedTargets, onToggle: updateTargets, onClear: () => update(sw.id, { backlightTarget: "" }) }}
+        selection={{ mode: "editable", selectedIds: selectedTargets,
+          onChange: next => update(sw.id, { backlightTarget: Array.from(next).join(",") }) }}
         condition={backlightConditionValue(sw.backlightCondition)}
         conditions={backlightConditions}
         onConditionChange={value => update(sw.id, { backlightCondition: value })}
@@ -531,6 +544,10 @@ export default function CommandView({
         }}
         valueForTarget={target => getTargetValue(sw, target)}
         onTargetValueChange={(target, value) => handleTargetValueChange(sw, target, value)}
+        modeForTarget={target => targetValueMode(sw, target)}
+        onTargetModeChange={(target, value, mode) => handleTargetValueChange(sw, target, value, mode)}
+        onTargetModeOnlyChange={(target, mode) => handleTargetModeOnlyChange(sw, target, mode)}
+        standardAllowedForTarget={target => targetAllowsStandard(sw, target)}
         onTargetStep={(target, delta) => stepTargetPercent(sw, target, delta)}
       >
             <HvacSettingPanel
@@ -591,11 +608,15 @@ export default function CommandView({
 
   return (
     <section className="card card-padded fade-in">
+      {operationClipboard ? <p className="muted-text" role="status">Copied Command: {operationClipboard.label}. Select Paste to choose destinations.</p> : null}
+      {pasteOpen && operationClipboard ? <OperationPasteDialog clipboard={operationClipboard} targets={operationPasteTargets(switches, operationClipboard)} canEdit={canEdit && !operationBlocked} onClose={() => setPasteOpen(false)} onPaste={ids => {
+        if (!canEdit || operationBlocked) return false;
+        const next = pasteOperation(switches, operationClipboard, ids, createAppId);
+        if (next === switches) return false;
+        commitCommands(next); setPasteOpen(false); return true;
+      }} /> : null}
       <div className="toolbar">
         <span className="toolbar-spacer" />
-        <span className="muted-pill" aria-live="polite">
-          {bulkSelectedIds.size} checked
-        </span>
         <button
           type="button"
           className="btn btn-secondary btn-sm"
@@ -654,7 +675,7 @@ export default function CommandView({
               </th>
               <th className="col-center">Setting</th>
               <th className="col-center">Backlight Setting</th>
-              <th className="col-center">Operation</th>
+              <th className="col-center">Command Operation</th>
             </tr>
           </thead>
           <tbody>
@@ -801,20 +822,22 @@ export default function CommandView({
                         })()}
                       </td>
                       <td className="col-center">
-                        <ActionIconButton
-                          icon="copy"
-                          label="Copy Command"
-                          className="btn-secondary btn-sm"
-                          onClick={() => copyCommand(command.id)}
-                          disabled={!canEdit}
-                        />
-                        <ActionIconButton
-                          icon="trash"
-                          label="Delete Command"
-                          className="btn-danger-ghost"
-                          onClick={() => remove(command.id)}
-                          disabled={!canEdit}
-                        />
+                        <OperationActions groups={[{
+                          id: "command",
+                          actions: [{
+                            id: "copy-content", icon: "copy", label: "Copy Command Settings", className: "btn-secondary btn-sm",
+                            onClick: () => { if (canEdit && !operationBlocked) setOperationClipboard(copyOperation(switches, command.id, "function")); }, disabled: !canEdit || operationBlocked,
+                          }, {
+                            id: "paste-content", icon: "paste", label: "Paste Command Settings", className: "btn-secondary btn-sm",
+                            onClick: () => setPasteOpen(true), disabled: !canEdit || operationBlocked || !operationClipboard,
+                          }, {
+                            id: "copy-command", icon: "copy", label: "Duplicate Command", className: "btn-secondary btn-sm",
+                            onClick: () => { if (canEdit && !operationBlocked) copyCommand(command.id); }, disabled: !canEdit || operationBlocked,
+                          }, {
+                            id: "remove-command", icon: "trash", label: "Delete Command", className: "btn-danger-ghost",
+                            onClick: () => { if (canEdit && !operationBlocked) remove(command.id); }, disabled: !canEdit || operationBlocked,
+                          }],
+                        }]} />
                       </td>
                     </tr>
                   </Fragment>
@@ -822,15 +845,7 @@ export default function CommandView({
               })
             )}
           </tbody>
-          <tfoot>
-            <tr className="add-row-tr">
-              <td colSpan={11}>
-                <button className="btn-add-row" onClick={addCommand} disabled={!canEdit}>
-                  + Add Row
-                </button>
-              </td>
-            </tr>
-          </tfoot>
+          <AddRowButton colSpan={11} onClick={addCommand} disabled={!canEdit} />
         </table>
       </div>
       {renderSettingOverlay()}

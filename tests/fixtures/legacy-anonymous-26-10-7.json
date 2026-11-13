@@ -1,0 +1,2110 @@
+{
+  "schema": 1,
+  "description": "Pinned anonymous legacy input and 26.10.7 oracle; authoring only, not test PASS.",
+  "sourceSpecSha256": "3f1bfc34abf722f72f380c3d2a5bc868de159061272fda08047f296a96f8edd9",
+  "oracleSources": [
+    {
+      "file": "candidate-authoring/tests/e2e/support/scene-backlight-test-project.ts",
+      "sha256": "fb4b3c4fb0aa249095c777bda341c5586f4d32601b8c893357d6ce23fabd16ab"
+    },
+    {
+      "file": "candidate-authoring/tests/e2e/support/safe-test.ts",
+      "sha256": "fb1d1a246937caa4f2688b28b3987a67cd82275f32b125fe14534ee095471f12"
+    },
+    {
+      "file": "candidate-authoring/tests/e2e/support/secure-sharing-mock.ts",
+      "sha256": "98c7325995bf20ee375c28a0557fe770e7bf66bf885e0e2708cb51ae6e0323eb"
+    },
+    {
+      "file": "candidate-authoring/app/lib/constants.ts",
+      "sha256": "5065f9d6bcb4784758e145ef1a020a6130ed6f11eb1630ad26b04274c82c9cac"
+    },
+    {
+      "file": "candidate-authoring/app/lib/programming.ts",
+      "sha256": "b9ae6d826705f73de4f1df374929e9ee779f823c2cffc4059af661673e994eda"
+    },
+    {
+      "file": "candidate-authoring/app/lib/id.ts",
+      "sha256": "53b2c9d84418e2f0bb7696045d805c5155f687605f3d525e439165a729872823"
+    },
+    {
+      "file": "candidate-authoring/app/lib/cfsRowDisplay.ts",
+      "sha256": "5bd4d8c709b5041ce6fa6971ab274bb8829cfb82b1baf03b329d1f6c78536bfd"
+    },
+    {
+      "file": "old-26.10.7/app/lib/storage.ts",
+      "sha256": "a1cfc71f618b26e1002c0007d2f4ae38e90da6013c298df0e8e0d94937c8f898"
+    },
+    {
+      "file": "old-26.10.7/app/lib/projectBase.ts",
+      "sha256": "bcb2dce2106df565b665599afc244b10a2f6c159d655ef9cca0398f011bcce31"
+    },
+    {
+      "file": "old-26.10.7/app/lib/constants.ts",
+      "sha256": "5065f9d6bcb4784758e145ef1a020a6130ed6f11eb1630ad26b04274c82c9cac"
+    },
+    {
+      "file": "old-26.10.7/app/lib/programming.ts",
+      "sha256": "b9ae6d826705f73de4f1df374929e9ee779f823c2cffc4059af661673e994eda"
+    },
+    {
+      "file": "old-26.10.7/app/lib/id.ts",
+      "sha256": "53b2c9d84418e2f0bb7696045d805c5155f687605f3d525e439165a729872823"
+    },
+    {
+      "file": "old-26.10.7/app/lib/cfsRowDisplay.ts",
+      "sha256": "5bd4d8c709b5041ce6fa6971ab274bb8829cfb82b1baf03b329d1f6c78536bfd"
+    },
+    {
+      "file": "old-26.10.7/app/lib/programmingNameSettings.ts",
+      "sha256": "990de8953f6c52d3663654a6cdd3499e5ecd47d71522f2ba9755b00c345a5fdf"
+    },
+    {
+      "file": "old-26.10.7/app/lib/switchSync.ts",
+      "sha256": "aa4c0699381ed09b28f9073e8d22b2d43760f5f7f6c430f0af8bbc41e66909d6"
+    },
+    {
+      "file": "old-26.10.7/app/lib/roomTypeSync.ts",
+      "sha256": "25b91658a8760c08b473c2b0fd50a50315ebe3774b1ca468e7faf08a7bf49c26"
+    },
+    {
+      "file": "old-26.10.7/app/lib/cciAssignments.ts",
+      "sha256": "95400f212b62152c106d25492352d6fe59e0680e1c4a47444f9abdefd04f507c"
+    },
+    {
+      "file": "old-26.10.7/app/lib/circuitGroups.ts",
+      "sha256": "68d3a78434959150bca10a465f8c3da2f96f5635d072a4899ff7941d98bbdb4e"
+    },
+    {
+      "file": "old-26.10.7/app/lib/deviceAssignmentSync.ts",
+      "sha256": "aedc98a437818bdf865ee5e8b4b64831e7b4a10355157e1c50613efaa21b19ce"
+    },
+    {
+      "file": "old-26.10.7/app/lib/zoneCircuitMerges.ts",
+      "sha256": "a453edfb3c2e0c273f53fc34af234061cb9e8ae75cf4193e66da45341f47fb63"
+    },
+    {
+      "file": "old-26.10.7/app/lib/ccoLighting.ts",
+      "sha256": "06344884fd69f38eb52d190791861715f6372f20b335314ce9f26edbef72f1be"
+    },
+    {
+      "file": "old-26.10.7/app/lib/roomScenes.ts",
+      "sha256": "1c891a4b77552682ef042e628d4186f4468a9ebdebea3981f4d580b850b81c36"
+    },
+    {
+      "file": "old-26.10.7/app/lib/migrationSafety.ts",
+      "sha256": "fd5c41701417a0bee0c835652102337d22643861f9cc6425342d0ffa53d69070"
+    },
+    {
+      "file": "old-26.10.7/app/lib/projectDraftStore.ts",
+      "sha256": "e4951be4d37bc88eccefa83aa057eebb3b6f3d1b09ab783c653e314c2caa2abc"
+    },
+    {
+      "file": "old-26.10.7/app/lib/canonicalJson.ts",
+      "sha256": "a88c657cde2f91c3f0803a1a953a72ddba6112c4b66ef618061bc476962ab78c"
+    },
+    {
+      "file": "old-26.10.7/app/lib/projectSaveProtocol.ts",
+      "sha256": "841c62c07c6541de62d4e4b3143b0078c2dcd5d7ac13bf224b985366074c47e9"
+    },
+    {
+      "file": "old-26.10.7/app/lib/projectImportRecovery.ts",
+      "sha256": "bee2a0967a54f87ec61374a4bec7c4597af8f73d839acf65b2769ba42640eb8c"
+    },
+    {
+      "file": "old-26.10.7/app/lib/projectCommonHistory.ts",
+      "sha256": "ec95d34914e4444273d9f9c1ff37cfb15ee35e579b337616789e64613c3750c4"
+    }
+  ],
+  "raw": {
+    "id": "req36-anonymous-compat",
+    "name": "REQ36 Anonymous Compatibility",
+    "updatedAt": "2026-10-13T00:00:00.000Z",
+    "locations": [
+      {
+        "id": "t140-area",
+        "code": "",
+        "name": "T140 Area",
+        "number": "1",
+        "color": "#eeeeee"
+      }
+    ],
+    "fixtures": [],
+    "circuits": [
+      {
+        "id": "t140-light",
+        "circuitGroupId": "t140-light-group",
+        "daliFixtureGroupId": "",
+        "designerNumber": "T140-L1",
+        "internalNumber": "",
+        "dimmingType": "0-10V",
+        "fixture": "",
+        "pcs": "1",
+        "detail": "T140 Light",
+        "area": "t140-area",
+        "ffe": false,
+        "energySaving": false
+      }
+    ],
+    "roomTypes": [
+      {
+        "id": "112ebd28-9d00-464e-941d-bc29659854a8",
+        "name": "T140 Room",
+        "updatedAt": "2026-11-02T16:47:32.246Z",
+        "circuitIds": [
+          "t140-light"
+        ],
+        "revision": "1.00",
+        "revisions": [],
+        "rows": [
+          {
+            "id": "b772c3a3-c198-457f-9ede-ca8421b73794",
+            "deviceGroupId": "",
+            "device": "",
+            "deviceNum": "",
+            "deviceAuto": "",
+            "control": "",
+            "fixture": "",
+            "pcs": "",
+            "watt": "",
+            "lowEnd": "",
+            "highEnd": "",
+            "area": "",
+            "note": "",
+            "designerNumber": "",
+            "group": "",
+            "sequenceNo": "",
+            "addressZone": ""
+          }
+        ],
+        "dryContacts": [],
+        "deviceAssignments": [
+          {
+            "id": "t140-assignment",
+            "deviceGroupId": "",
+            "device": "MQSE-4A1-D",
+            "deviceNum": "1",
+            "zoneAddress": "Z1",
+            "circuitNumber": "T140-L1",
+            "area": "",
+            "detail": "",
+            "group": ""
+          }
+        ],
+        "hvacAssignments": [],
+        "hvacSeasons": [
+          {
+            "id": "dd3cb983-610c-4fd9-8b06-784f6d788612",
+            "name": "Summer",
+            "startMonth": "6",
+            "startDay": "1",
+            "endMonth": "9",
+            "endDay": "30"
+          },
+          {
+            "id": "6b27306e-f99a-41d2-a45d-40efaaf2382e",
+            "name": "Winter",
+            "startMonth": "12",
+            "startDay": "1",
+            "endMonth": "3",
+            "endDay": "31"
+          }
+        ],
+        "curtainAssignments": [],
+        "cfsRowDisplay": {
+          "order": [
+            "lighting",
+            "cco",
+            "curtain",
+            "hvac",
+            "backlight"
+          ],
+          "hidden": []
+        },
+        "backlightLevels": [
+          {
+            "key": "base",
+            "name": "Base",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "masterOn",
+            "name": "Bright",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "relax",
+            "name": "Relax",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "mood",
+            "name": "Mood",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "sleep",
+            "name": "Sleep",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          }
+        ],
+        "scenes": [
+          {
+            "id": "legacy-scene",
+            "areaId": "t140-area",
+            "name": "Legacy Scene",
+            "settings": [
+              {
+                "circuitId": "t140-light",
+                "percentage": "45",
+                "req36UnknownSetting": "setting-sentinel"
+              }
+            ]
+          }
+        ],
+        "roomScenes": [
+          {
+            "id": "t140-arrival",
+            "kind": "pms",
+            "phase": "Check In",
+            "sceneType": "T140 Arrival",
+            "detail": "",
+            "triggerCondition": "Day",
+            "backlightCondition": "",
+            "areaSceneSelections": [
+              {
+                "areaId": "t140-area",
+                "sceneId": "legacy-scene"
+              }
+            ],
+            "settings": []
+          },
+          {
+            "id": "t140-departure",
+            "kind": "pms",
+            "phase": "Check Out",
+            "sceneType": "T140 Departure",
+            "detail": "",
+            "triggerCondition": "Night",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": [
+              {
+                "circuitId": "t140-light",
+                "percentage": "62"
+              }
+            ]
+          }
+        ],
+        "switches": [
+          {
+            "id": "t140-by-1",
+            "switchGroupId": "t140-by",
+            "kind": "lutronPd",
+            "switchNumber": "PD-BY",
+            "switchName": "By Scene",
+            "cciAssignment": "",
+            "buttonCount": "2",
+            "buttonLabel": "1",
+            "allocation": "",
+            "buttonFunction": "",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ],
+            "req36UnknownSwitch": "switch-sentinel"
+          },
+          {
+            "id": "t140-by-2",
+            "switchGroupId": "t140-by",
+            "kind": "lutronPd",
+            "switchNumber": "PD-BY",
+            "switchName": "By Scene",
+            "cciAssignment": "",
+            "buttonCount": "2",
+            "buttonLabel": "2",
+            "allocation": "",
+            "buttonFunction": "",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          },
+          {
+            "id": "t140-legacy",
+            "switchGroupId": "t140-legacy",
+            "kind": "lutronPd",
+            "switchNumber": "PD-LEGACY",
+            "switchName": "Legacy By Scene",
+            "cciAssignment": "",
+            "buttonCount": "1",
+            "buttonLabel": "",
+            "allocation": "",
+            "buttonFunction": "",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "__byScene",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          },
+          {
+            "id": "t140-fixed",
+            "switchGroupId": "t140-fixed",
+            "kind": "lutronPd",
+            "switchNumber": "PD-FIXED",
+            "switchName": "Fixed Sleep",
+            "cciAssignment": "",
+            "buttonCount": "1",
+            "buttonLabel": "",
+            "allocation": "",
+            "buttonFunction": "",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "sleep",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          },
+          {
+            "id": "t140-base",
+            "switchGroupId": "t140-base",
+            "kind": "lutronPd",
+            "switchNumber": "PD-BASE",
+            "switchName": "Fixed Base",
+            "cciAssignment": "",
+            "buttonCount": "1",
+            "buttonLabel": "",
+            "allocation": "",
+            "buttonFunction": "",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "base",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          },
+          {
+            "id": "t140-pico",
+            "switchGroupId": "89c756c6-481f-409b-8e50-ff83561dd4ca",
+            "kind": "lutronPico",
+            "switchNumber": "PICO",
+            "switchName": "Not Palladiom",
+            "cciAssignment": "",
+            "buttonCount": "1",
+            "buttonLabel": "",
+            "allocation": "",
+            "buttonFunction": "",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          },
+          {
+            "id": "t140-command",
+            "switchGroupId": "da17ee34-ce80-4b03-980f-267cc4efe664",
+            "kind": "command",
+            "switchNumber": "CMD",
+            "switchName": "T140 Command",
+            "cciAssignment": "",
+            "buttonCount": "",
+            "buttonLabel": "",
+            "allocation": "",
+            "buttonFunction": "",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "t140-by,t140-legacy,t140-base,t140-fixed",
+            "backlightCondition": "masterOn",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          },
+          {
+            "id": "delete-first",
+            "switchGroupId": "delete-panel",
+            "kind": "lutronPd",
+            "switchNumber": "DELETE",
+            "switchName": "",
+            "cciAssignment": "",
+            "buttonCount": "1",
+            "buttonLabel": "M1",
+            "allocation": "",
+            "buttonFunction": "Delete first",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          },
+          {
+            "id": "keep-second",
+            "switchGroupId": "delete-panel",
+            "kind": "lutronPd",
+            "switchNumber": "DELETE",
+            "switchName": "",
+            "cciAssignment": "",
+            "buttonCount": "1",
+            "buttonLabel": "M1",
+            "allocation": "",
+            "buttonFunction": "Keep second",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          }
+        ],
+        "pduDeviceCounts": [],
+        "inspectionMarks": [],
+        "req36UnknownRoom": "room-sentinel"
+      },
+      {
+        "id": "54a0e65f-aade-4e19-b1e8-c42f2a6b11be",
+        "name": "Other Anonymous Room",
+        "updatedAt": "2026-11-02T16:47:32.249Z",
+        "circuitIds": [],
+        "revision": "2.00",
+        "revisions": [],
+        "rows": [
+          {
+            "id": "916c0845-649e-401a-98c7-d246cc0eea29",
+            "deviceGroupId": "",
+            "device": "",
+            "deviceNum": "",
+            "deviceAuto": "",
+            "control": "",
+            "fixture": "",
+            "pcs": "",
+            "watt": "",
+            "lowEnd": "",
+            "highEnd": "",
+            "area": "",
+            "note": "",
+            "designerNumber": "",
+            "group": "",
+            "sequenceNo": "",
+            "addressZone": ""
+          }
+        ],
+        "dryContacts": [],
+        "deviceAssignments": [],
+        "hvacAssignments": [],
+        "hvacSeasons": [
+          {
+            "id": "e551222a-8b47-4ed3-82c7-e234997453f9",
+            "name": "Summer",
+            "startMonth": "6",
+            "startDay": "1",
+            "endMonth": "9",
+            "endDay": "30"
+          },
+          {
+            "id": "507a7c77-d1d1-4439-8ae5-f2ea49b32b7b",
+            "name": "Winter",
+            "startMonth": "12",
+            "startDay": "1",
+            "endMonth": "3",
+            "endDay": "31"
+          }
+        ],
+        "curtainAssignments": [],
+        "cfsRowDisplay": {
+          "order": [
+            "lighting",
+            "cco",
+            "curtain",
+            "hvac",
+            "backlight"
+          ],
+          "hidden": []
+        },
+        "backlightLevels": [
+          {
+            "key": "base",
+            "name": "Base",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "masterOn",
+            "name": "Bright",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "relax",
+            "name": "Relax",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "mood",
+            "name": "Mood",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "sleep",
+            "name": "Sleep",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          }
+        ],
+        "scenes": [],
+        "roomScenes": [
+          {
+            "id": "1b94f30c-c2d8-4495-b1d6-28d1e40e596b",
+            "kind": "standard",
+            "phase": "Check In",
+            "sceneType": "Welcome Scene",
+            "detail": "",
+            "triggerCondition": "Day",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": []
+          },
+          {
+            "id": "761a1cf5-75d0-4245-b7c0-ac9794ca2f7d",
+            "kind": "standard",
+            "phase": "Check In",
+            "sceneType": "Welcome Scene",
+            "detail": "",
+            "triggerCondition": "Night",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": []
+          },
+          {
+            "id": "287436b2-8cf9-4f03-a656-052fbdfafbfe",
+            "kind": "standard",
+            "phase": "Check In",
+            "sceneType": "Re-entry Scene",
+            "detail": "",
+            "triggerCondition": "Day",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": []
+          },
+          {
+            "id": "16ef3b43-1b3a-4cb0-83d4-15c10072a577",
+            "kind": "standard",
+            "phase": "Check In",
+            "sceneType": "Re-entry Scene",
+            "detail": "",
+            "triggerCondition": "Night",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": []
+          },
+          {
+            "id": "92472961-4bdd-44fb-bba6-9ab971c33d4c",
+            "kind": "standard",
+            "phase": "Check In",
+            "sceneType": "Unoccupied Scene",
+            "detail": "",
+            "triggerCondition": "",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": []
+          },
+          {
+            "id": "ed9aa3b6-3bcb-4176-ad91-08795d960eec",
+            "kind": "standard",
+            "phase": "Check Out",
+            "sceneType": "Occupied Scene",
+            "detail": "",
+            "triggerCondition": "",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": []
+          },
+          {
+            "id": "47b4e7b6-7921-4f34-a9bf-af0acae430cb",
+            "kind": "standard",
+            "phase": "Check Out",
+            "sceneType": "Unoccupied Scene",
+            "detail": "",
+            "triggerCondition": "",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": []
+          }
+        ],
+        "switches": [
+          {
+            "id": "other-inactive",
+            "switchGroupId": "other-managed",
+            "kind": "tstat",
+            "switchNumber": "",
+            "switchName": "",
+            "cciAssignment": "",
+            "buttonCount": "",
+            "buttonLabel": "",
+            "allocation": "",
+            "buttonFunction": "Keep inactive",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ],
+            "tstatBinding": {
+              "areaId": "ghost",
+              "assignmentIds": [
+                "ghost-id"
+              ]
+            }
+          }
+        ],
+        "pduDeviceCounts": [],
+        "inspectionMarks": []
+      }
+    ],
+    "remarks": [
+      {
+        "id": "remark",
+        "title": "Anonymous Remark",
+        "body": "Keep literal\nremark body",
+        "hasTable": true,
+        "columns": [
+          "Item",
+          "Value"
+        ],
+        "rows": [
+          [
+            "Anonymous",
+            "50%"
+          ]
+        ]
+      }
+    ],
+    "req36UnknownProject": "project-sentinel"
+  },
+  "oldNormalized": {
+    "id": "req36-anonymous-compat",
+    "name": "REQ36 Anonymous Compatibility",
+    "updatedAt": "2026-10-13T00:00:00.000Z",
+    "lastUpdatedBy": null,
+    "remarks": [
+      {
+        "id": "remark",
+        "title": "Anonymous Remark",
+        "body": "Keep literal\nremark body",
+        "hasTable": true,
+        "columns": [
+          "Item",
+          "Value"
+        ],
+        "rows": [
+          [
+            "Anonymous",
+            "50%"
+          ]
+        ]
+      }
+    ],
+    "locations": [
+      {
+        "id": "t140-area",
+        "name": "T140 Area",
+        "number": "1",
+        "code": "T1",
+        "color": "#eeeeee"
+      }
+    ],
+    "fixtures": [],
+    "circuits": [
+      {
+        "id": "t140-light",
+        "circuitGroupId": "t140-light-group",
+        "daliFixtureGroupId": "",
+        "designerNumber": "T140-L1",
+        "internalNumber": "",
+        "dimmingType": "0-10V",
+        "fixture": "",
+        "pcs": "1",
+        "detail": "T140 Light",
+        "area": "t140-area",
+        "ffe": false,
+        "energySaving": false
+      }
+    ],
+    "roomTypes": [
+      {
+        "id": "112ebd28-9d00-464e-941d-bc29659854a8",
+        "name": "T140 Room",
+        "updatedAt": "2026-11-02T16:47:32.246Z",
+        "circuitIds": [
+          "t140-light"
+        ],
+        "revision": "1.00",
+        "revisions": [],
+        "rows": [
+          {
+            "id": "b772c3a3-c198-457f-9ede-ca8421b73794",
+            "deviceGroupId": "b772c3a3-c198-457f-9ede-ca8421b73794",
+            "device": "",
+            "deviceNum": "",
+            "deviceAuto": "",
+            "control": "",
+            "fixture": "",
+            "pcs": "",
+            "watt": "",
+            "lowEnd": "",
+            "highEnd": "",
+            "area": "",
+            "note": "",
+            "designerNumber": "",
+            "group": "",
+            "sequenceNo": "",
+            "addressZone": ""
+          }
+        ],
+        "dryContacts": [],
+        "deviceAssignments": [
+          {
+            "id": "t140-assignment",
+            "deviceGroupId": "",
+            "device": "MQSE-4A1-D",
+            "deviceNum": "1",
+            "zoneAddress": "Z1",
+            "circuitNumber": "T140-L1",
+            "area": "",
+            "detail": "",
+            "group": ""
+          }
+        ],
+        "hvacAssignments": [],
+        "hvacSeasons": [
+          {
+            "id": "dd3cb983-610c-4fd9-8b06-784f6d788612",
+            "name": "Summer",
+            "startMonth": "6",
+            "startDay": "1",
+            "endMonth": "9",
+            "endDay": "30"
+          },
+          {
+            "id": "6b27306e-f99a-41d2-a45d-40efaaf2382e",
+            "name": "Winter",
+            "startMonth": "12",
+            "startDay": "1",
+            "endMonth": "3",
+            "endDay": "31"
+          }
+        ],
+        "curtainAssignments": [],
+        "cfsRowDisplay": {
+          "order": [
+            "lighting",
+            "cco",
+            "curtain",
+            "hvac",
+            "backlight"
+          ],
+          "hidden": []
+        },
+        "backlightLevels": [
+          {
+            "key": "base",
+            "name": "Base",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "masterOn",
+            "name": "Bright",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "relax",
+            "name": "Relax",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "mood",
+            "name": "Mood",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "sleep",
+            "name": "Sleep",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          }
+        ],
+        "scenes": [
+          {
+            "id": "legacy-scene",
+            "areaId": "t140-area",
+            "name": "Legacy Scene",
+            "settings": [
+              {
+                "circuitId": "t140-light",
+                "percentage": "45",
+                "req36UnknownSetting": "setting-sentinel"
+              }
+            ]
+          }
+        ],
+        "roomScenes": [
+          {
+            "id": "t140-arrival",
+            "kind": "pms",
+            "phase": "Check In",
+            "sceneType": "T140 Arrival",
+            "detail": "",
+            "triggerCondition": "Day",
+            "backlightCondition": "",
+            "areaSceneSelections": [
+              {
+                "areaId": "t140-area",
+                "sceneId": "legacy-scene"
+              }
+            ],
+            "settings": []
+          },
+          {
+            "id": "t140-departure",
+            "kind": "pms",
+            "phase": "Check Out",
+            "sceneType": "T140 Departure",
+            "detail": "",
+            "triggerCondition": "Night",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": [
+              {
+                "circuitId": "t140-light",
+                "percentage": "62"
+              }
+            ]
+          }
+        ],
+        "switches": [
+          {
+            "id": "t140-by-1",
+            "switchGroupId": "t140-by",
+            "kind": "lutronPd",
+            "switchNumber": "PD-BY",
+            "switchName": "By Scene",
+            "cciAssignment": "",
+            "buttonCount": "2",
+            "buttonLabel": "1",
+            "allocation": "",
+            "buttonFunction": "",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ],
+            "req36UnknownSwitch": "switch-sentinel"
+          },
+          {
+            "id": "t140-by-2",
+            "switchGroupId": "t140-by",
+            "kind": "lutronPd",
+            "switchNumber": "PD-BY",
+            "switchName": "By Scene",
+            "cciAssignment": "",
+            "buttonCount": "2",
+            "buttonLabel": "2",
+            "allocation": "",
+            "buttonFunction": "",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          },
+          {
+            "id": "t140-legacy",
+            "switchGroupId": "t140-legacy",
+            "kind": "lutronPd",
+            "switchNumber": "PD-LEGACY",
+            "switchName": "Legacy By Scene",
+            "cciAssignment": "",
+            "buttonCount": "1",
+            "buttonLabel": "",
+            "allocation": "",
+            "buttonFunction": "",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          },
+          {
+            "id": "t140-fixed",
+            "switchGroupId": "t140-fixed",
+            "kind": "lutronPd",
+            "switchNumber": "PD-FIXED",
+            "switchName": "Fixed Sleep",
+            "cciAssignment": "",
+            "buttonCount": "1",
+            "buttonLabel": "",
+            "allocation": "",
+            "buttonFunction": "",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "sleep",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          },
+          {
+            "id": "t140-base",
+            "switchGroupId": "t140-base",
+            "kind": "lutronPd",
+            "switchNumber": "PD-BASE",
+            "switchName": "Fixed Base",
+            "cciAssignment": "",
+            "buttonCount": "1",
+            "buttonLabel": "",
+            "allocation": "",
+            "buttonFunction": "",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "base",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          },
+          {
+            "id": "t140-pico",
+            "switchGroupId": "89c756c6-481f-409b-8e50-ff83561dd4ca",
+            "kind": "lutronPico",
+            "switchNumber": "PICO",
+            "switchName": "Not Palladiom",
+            "cciAssignment": "",
+            "buttonCount": "1",
+            "buttonLabel": "",
+            "allocation": "",
+            "buttonFunction": "",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          },
+          {
+            "id": "t140-command",
+            "switchGroupId": "da17ee34-ce80-4b03-980f-267cc4efe664",
+            "kind": "command",
+            "switchNumber": "CMD",
+            "switchName": "T140 Command",
+            "cciAssignment": "",
+            "buttonCount": "",
+            "buttonLabel": "",
+            "allocation": "",
+            "buttonFunction": "",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "t140-by,t140-legacy,t140-base,t140-fixed",
+            "backlightCondition": "masterOn",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          },
+          {
+            "id": "delete-first",
+            "switchGroupId": "delete-panel",
+            "kind": "lutronPd",
+            "switchNumber": "DELETE",
+            "switchName": "",
+            "cciAssignment": "",
+            "buttonCount": "1",
+            "buttonLabel": "M1",
+            "allocation": "",
+            "buttonFunction": "Delete first",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          },
+          {
+            "id": "keep-second",
+            "switchGroupId": "delete-panel",
+            "kind": "lutronPd",
+            "switchNumber": "DELETE",
+            "switchName": "",
+            "cciAssignment": "",
+            "buttonCount": "1",
+            "buttonLabel": "M1",
+            "allocation": "",
+            "buttonFunction": "Keep second",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ]
+          }
+        ],
+        "pduDeviceCounts": [],
+        "inspectionMarks": []
+      },
+      {
+        "id": "54a0e65f-aade-4e19-b1e8-c42f2a6b11be",
+        "name": "Other Anonymous Room",
+        "updatedAt": "2026-11-02T16:47:32.249Z",
+        "circuitIds": [],
+        "revision": "2.00",
+        "revisions": [],
+        "rows": [
+          {
+            "id": "916c0845-649e-401a-98c7-d246cc0eea29",
+            "deviceGroupId": "916c0845-649e-401a-98c7-d246cc0eea29",
+            "device": "",
+            "deviceNum": "",
+            "deviceAuto": "",
+            "control": "",
+            "fixture": "",
+            "pcs": "",
+            "watt": "",
+            "lowEnd": "",
+            "highEnd": "",
+            "area": "",
+            "note": "",
+            "designerNumber": "",
+            "group": "",
+            "sequenceNo": "",
+            "addressZone": ""
+          }
+        ],
+        "dryContacts": [],
+        "deviceAssignments": [],
+        "hvacAssignments": [],
+        "hvacSeasons": [
+          {
+            "id": "e551222a-8b47-4ed3-82c7-e234997453f9",
+            "name": "Summer",
+            "startMonth": "6",
+            "startDay": "1",
+            "endMonth": "9",
+            "endDay": "30"
+          },
+          {
+            "id": "507a7c77-d1d1-4439-8ae5-f2ea49b32b7b",
+            "name": "Winter",
+            "startMonth": "12",
+            "startDay": "1",
+            "endMonth": "3",
+            "endDay": "31"
+          }
+        ],
+        "curtainAssignments": [],
+        "cfsRowDisplay": {
+          "order": [
+            "lighting",
+            "cco",
+            "curtain",
+            "hvac",
+            "backlight"
+          ],
+          "hidden": []
+        },
+        "backlightLevels": [
+          {
+            "key": "base",
+            "name": "Base",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "masterOn",
+            "name": "Bright",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "relax",
+            "name": "Relax",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "mood",
+            "name": "Mood",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          },
+          {
+            "key": "sleep",
+            "name": "Sleep",
+            "mode": "Manual",
+            "active": "100",
+            "inactive": "20"
+          }
+        ],
+        "scenes": [],
+        "roomScenes": [
+          {
+            "id": "1b94f30c-c2d8-4495-b1d6-28d1e40e596b",
+            "kind": "standard",
+            "phase": "Check In",
+            "sceneType": "Welcome Scene",
+            "detail": "",
+            "triggerCondition": "Day",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": []
+          },
+          {
+            "id": "761a1cf5-75d0-4245-b7c0-ac9794ca2f7d",
+            "kind": "standard",
+            "phase": "Check In",
+            "sceneType": "Welcome Scene",
+            "detail": "",
+            "triggerCondition": "Night",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": []
+          },
+          {
+            "id": "287436b2-8cf9-4f03-a656-052fbdfafbfe",
+            "kind": "standard",
+            "phase": "Check In",
+            "sceneType": "Re-entry Scene",
+            "detail": "",
+            "triggerCondition": "Day",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": []
+          },
+          {
+            "id": "16ef3b43-1b3a-4cb0-83d4-15c10072a577",
+            "kind": "standard",
+            "phase": "Check In",
+            "sceneType": "Re-entry Scene",
+            "detail": "",
+            "triggerCondition": "Night",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": []
+          },
+          {
+            "id": "92472961-4bdd-44fb-bba6-9ab971c33d4c",
+            "kind": "standard",
+            "phase": "Check In",
+            "sceneType": "Unoccupied Scene",
+            "detail": "",
+            "triggerCondition": "",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": []
+          },
+          {
+            "id": "ed9aa3b6-3bcb-4176-ad91-08795d960eec",
+            "kind": "standard",
+            "phase": "Check Out",
+            "sceneType": "Occupied Scene",
+            "detail": "",
+            "triggerCondition": "",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": []
+          },
+          {
+            "id": "47b4e7b6-7921-4f34-a9bf-af0acae430cb",
+            "kind": "standard",
+            "phase": "Check Out",
+            "sceneType": "Unoccupied Scene",
+            "detail": "",
+            "triggerCondition": "",
+            "backlightCondition": "",
+            "areaSceneSelections": [],
+            "settings": []
+          }
+        ],
+        "switches": [
+          {
+            "id": "other-inactive",
+            "switchGroupId": "other-managed",
+            "kind": "tstat",
+            "switchNumber": "",
+            "switchName": "",
+            "cciAssignment": "",
+            "buttonCount": "",
+            "buttonLabel": "",
+            "allocation": "",
+            "buttonFunction": "Keep inactive",
+            "buttonType": "single",
+            "condition": "",
+            "buttonSetting": {
+              "sceneId": "",
+              "sceneIds": [],
+              "circuitSettings": []
+            },
+            "backlightTarget": "",
+            "backlightCondition": "",
+            "backlightAssignment": "",
+            "backlightLevels": [
+              {
+                "key": "base",
+                "name": "Base",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "masterOn",
+                "name": "Bright",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "relax",
+                "name": "Relax",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "mood",
+                "name": "Mood",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              },
+              {
+                "key": "sleep",
+                "name": "Sleep",
+                "mode": "Manual",
+                "active": "100",
+                "inactive": "20"
+              }
+            ],
+            "tstatBinding": {
+              "areaId": "ghost",
+              "assignmentIds": [
+                "ghost-id"
+              ]
+            }
+          }
+        ],
+        "pduDeviceCounts": [],
+        "inspectionMarks": []
+      }
+    ]
+  }
+}

@@ -40,6 +40,7 @@ import { isProjectSettings, migrateProjectSettings } from './programmingNameSett
 import { createAppId } from './id';
 import { normalizeSwitchPriorityFunctions } from './switchSync';
 import { normalizeProjectRoomTypeCircuitIds } from './roomTypeSync';
+import { hasTstatBindingQuarantine, isValidTstatBinding } from './tstatBindingQuarantine';
 import { collectionLosses, migrationMessage, migrationReport, setMigrationReviewPending, type MigrationReport } from './migrationSafety';
 import { cachedProjectDrafts, checkpointProject } from './projectDraftStore';
 import { finiteFetch, matchesSaveIntent, prepareSaveProject, projectFingerprint, saveContent, SAVE_PROTOCOL_VERSION, SaveProtocolError, saveError } from './projectSaveProtocol';
@@ -136,7 +137,8 @@ function migrateCfsCircuit(value: unknown): CfsCircuit | null {
 function isSceneCircuitSetting(value: unknown): value is SceneCircuitSetting {
   if (value === null || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
-  return typeof v.circuitId === 'string' && typeof v.percentage === 'string';
+  return typeof v.circuitId === 'string' && typeof v.percentage === 'string' &&
+    (v.valueMode === undefined || v.valueMode === 'standard' || v.valueMode === 'text');
 }
 
 function isScene(value: unknown): value is Scene {
@@ -184,6 +186,8 @@ function isHvacAssignment(value: unknown): value is HvacAssignment {
   const v = value as Record<string, unknown>;
   return (
     typeof v.id === 'string' &&
+    (v.thermostatNumber === undefined || (Number.isSafeInteger(v.thermostatNumber) && Number(v.thermostatNumber) > 0)) &&
+    (v.masterAssignmentId === undefined || typeof v.masterAssignmentId === 'string') &&
     VALID_HVAC_PROTOCOLS.has(v.protocol as string) &&
     VALID_HVAC_THERMOSTAT_ROLES.has(v.thermostatRole as string) &&
     typeof v.area === 'string' &&
@@ -202,6 +206,8 @@ function migrateHvacAssignment(value: unknown): HvacAssignment | null {
   return {
     id: v.id,
     protocol: v.protocol as HvacAssignment['protocol'],
+    ...(Number.isSafeInteger(v.thermostatNumber) && Number(v.thermostatNumber) > 0 ? { thermostatNumber: Number(v.thermostatNumber) } : {}),
+    ...(typeof v.masterAssignmentId === 'string' ? { masterAssignmentId: v.masterAssignmentId } : {}),
     thermostatRole: VALID_HVAC_THERMOSTAT_ROLES.has(v.thermostatRole as string)
       ? (v.thermostatRole as HvacAssignment['thermostatRole'])
       : 'Master',
@@ -341,6 +347,7 @@ function isRoomType(value: unknown): value is RoomType {
     typeof v.name === 'string' &&
     typeof v.updatedAt === 'string' &&
     circuitIdsOk &&
+    (v.nextThermostatNumber === undefined || (Number.isSafeInteger(v.nextThermostatNumber) && Number(v.nextThermostatNumber) > 0)) &&
     Array.isArray(v.rows) &&
     v.rows.every(isCfsCircuit) &&
     (!('dryContacts' in v) ||
@@ -385,6 +392,8 @@ function isInspectionMark(value: unknown): value is InspectionMark {
     typeof v.label === 'string' &&
     typeof v.previousValue === 'string' &&
     typeof v.value === 'string' &&
+    (v.valueMode === undefined || v.valueMode === 'standard' || v.valueMode === 'text') &&
+    (v.previousValueMode === undefined || v.previousValueMode === 'standard' || v.previousValueMode === 'text') &&
     typeof v.markedAt === 'string'
   );
 }
@@ -470,6 +479,8 @@ function migrateInspectionMark(value: unknown): InspectionMark | null {
     label: stringField(v.label),
     previousValue: stringField(v.previousValue),
     value: stringField(v.value),
+    ...(v.valueMode === 'text' ? { valueMode: 'text' as const } : {}),
+    ...(v.previousValueMode === 'text' ? { previousValueMode: 'text' as const } : {}),
     markedAt: typeof v.markedAt === 'string' && v.markedAt !== '' ? v.markedAt : new Date().toISOString(),
   };
 }
@@ -514,9 +525,55 @@ function migrateCommandPirReferences(switches: SwitchEntry[]): SwitchEntry[] {
   return changed ? migrated : switches;
 }
 
+/** Repair optional extensions before strict record validation. Invalid binding
+ * is retained forensically with a valid inactive sentinel, never made legacy.
+ * Mandatory fields and collection-loss detection stay strict. */
+function normalizeOptionalRoomMetadata(value: unknown, repaired?: (path: string) => void): unknown {
+  const record = (input: unknown): input is Record<string, unknown> => input !== null && typeof input === 'object' && !Array.isArray(input);
+  if (!record(value)) return value;
+  const optional = (input: unknown, fields: Record<string, (v: unknown) => boolean>, path: string, notify = repaired): unknown => {
+    if (!record(input)) return input;
+    const next = { ...input };
+    for (const [key, valid] of Object.entries(fields)) if (next[key] !== undefined && !valid(next[key])) {
+      delete next[key]; notify?.(`${path}.${key}`);
+    }
+    return next;
+  };
+  const mode = { valueMode: (v: unknown) => v === 'standard' || v === 'text' };
+  const settings = (input: unknown, path: string, notify = repaired): unknown => Array.isArray(input)
+    ? input.map((entry, index) => optional(entry, mode, `${path}[${index}]`, notify)) : input;
+  const positiveInteger = (v: unknown) => Number.isSafeInteger(v) && Number(v) > 0;
+  const next = optional(value, { nextThermostatNumber: positiveInteger }, '') as Record<string, unknown>;
+  for (const key of ['scenes', 'roomScenes']) if (Array.isArray(next[key])) {
+    next[key] = next[key].map((entry, index) => record(entry) ? { ...entry, settings: settings(entry.settings, `${key}[${index}].settings`) } : entry);
+  }
+  if (Array.isArray(next.switches)) next.switches = next.switches.map((entry, index) => {
+    if (!record(entry)) return entry;
+    const invalidBinding = entry.tstatBinding !== undefined && !isValidTstatBinding(entry.tstatBinding);
+    const normalized: Record<string, unknown> = invalidBinding ? { ...entry,
+      tstatBinding: { areaId: '', assignmentIds: [] },
+      tstatBindingQuarantine: {
+        version: 1, reason: 'invalid-binding', raw: structuredClone(entry.tstatBinding),
+        ...(hasTstatBindingQuarantine(entry) ? { previousQuarantine: structuredClone(entry.tstatBindingQuarantine) } : {}),
+      },
+    } : entry;
+    if (invalidBinding) repaired?.(`switches[${index}].tstatBinding`);
+    return record(normalized.buttonSetting) ? { ...normalized, buttonSetting: { ...normalized.buttonSetting,
+      // One row-level repair explains this quarantine even when optional modes
+      // also need normalization. Required-field exclusions remain independent.
+      circuitSettings: settings(normalized.buttonSetting.circuitSettings, `switches[${index}].buttonSetting.circuitSettings`, invalidBinding ? () => {} : repaired),
+    } } : normalized;
+  });
+  if (Array.isArray(next.hvacAssignments)) next.hvacAssignments = next.hvacAssignments.map((entry, index) => optional(entry,
+    { thermostatNumber: positiveInteger, masterAssignmentId: (v: unknown) => typeof v === 'string' }, `hvacAssignments[${index}]`));
+  if (Array.isArray(next.inspectionMarks)) next.inspectionMarks = next.inspectionMarks.map((entry, index) => optional(entry,
+    { ...mode, previousValueMode: mode.valueMode }, `inspectionMarks[${index}]`));
+  return next;
+}
+
 function migrateRoomType(value: unknown): RoomType | null {
   if (value === null || typeof value !== 'object') return null;
-  const v = value as Record<string, unknown>;
+  const v = normalizeOptionalRoomMetadata(value) as Record<string, unknown>;
   if (typeof v.id !== 'string') return null;
   if (typeof v.name !== 'string') return null;
   if (typeof v.updatedAt !== 'string') return null;
@@ -671,6 +728,7 @@ function migrateRoomType(value: unknown): RoomType | null {
     dryContacts,
     deviceAssignments,
     hvacAssignments,
+    ...(Number.isSafeInteger(v.nextThermostatNumber) && Number(v.nextThermostatNumber) > 0 ? { nextThermostatNumber: Number(v.nextThermostatNumber) } : {}),
     hvacSeasons,
     curtainAssignments,
     cfsRowDisplay,
@@ -872,12 +930,14 @@ function isSwitchEntry(value: unknown): value is SwitchEntry {
   if (!VALID_BUTTON_TYPES.has(v.buttonType as string)) return false;
   if (v.buttonSetting === null || typeof v.buttonSetting !== 'object') return false;
   const buttonSetting = v.buttonSetting as Record<string, unknown>;
+  const tstatBindingOk = v.tstatBinding === undefined || isValidTstatBinding(v.tstatBinding);
   const sceneIdsOk =
     !('sceneIds' in buttonSetting) ||
     (Array.isArray(buttonSetting.sceneIds) &&
       buttonSetting.sceneIds.every((id) => typeof id === 'string'));
   return (
     typeof v.id === 'string' &&
+    tstatBindingOk &&
     (!('switchGroupId' in v) || typeof v.switchGroupId === 'string') &&
     typeof v.switchNumber === 'string' &&
     typeof v.switchName === 'string' &&
@@ -973,6 +1033,9 @@ export function migrateProjectsWithReport(payload: unknown): { projects: Project
     const rooms = (project as { roomTypes?: unknown }).roomTypes;
     if (!Array.isArray(rooms)) return;
     rooms.forEach((room, roomIndex) => {
+      normalizeOptionalRoomMetadata(room, (path) => issues.push({
+        path: `projects[${projectIndex}].roomTypes[${roomIndex}]${path.startsWith('.') ? path : `.${path}`}`, action: 'repaired', count: 1,
+      }));
       const assignments = room && typeof room === 'object' ? room.deviceAssignments : undefined;
       if (!Array.isArray(assignments)) return;
       assignments.forEach((assignment, index) => {

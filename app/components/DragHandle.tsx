@@ -28,6 +28,8 @@ export interface DragHandleProps {
    * base CSS renders the disabled look (opacity 0.45, default cursor).
    */
   draggable?: boolean;
+  tabIndex?: number;
+  glyph?: string;
   title?: string;
   "aria-label"?: string;
   "aria-hidden"?: boolean;
@@ -37,6 +39,7 @@ export interface DragHandleProps {
   onDragOver?: React.DragEventHandler<HTMLSpanElement>;
   onDrop?: React.DragEventHandler<HTMLSpanElement>;
   onDragEnd?: React.DragEventHandler<HTMLSpanElement>;
+  onKeyDown?: React.KeyboardEventHandler<HTMLSpanElement>;
   onPointerDown?: React.PointerEventHandler<HTMLSpanElement>;
   onMouseDown?: React.MouseEventHandler<HTMLSpanElement>;
   onMouseMove?: React.MouseEventHandler<HTMLSpanElement>;
@@ -47,6 +50,8 @@ const DRAG_HANDLE_GLYPH = "::";
 export default function DragHandle({
   variant = "table",
   draggable,
+  tabIndex,
+  glyph = DRAG_HANDLE_GLYPH,
   title,
   "aria-label": ariaLabel,
   "aria-hidden": ariaHidden,
@@ -55,6 +60,7 @@ export default function DragHandle({
   onDragOver,
   onDrop,
   onDragEnd,
+  onKeyDown,
   onPointerDown,
   onMouseDown,
   onMouseMove,
@@ -66,6 +72,7 @@ export default function DragHandle({
     <span
       className={classes}
       draggable={draggable}
+      tabIndex={tabIndex}
       title={title}
       aria-label={ariaLabel}
       aria-hidden={ariaHidden}
@@ -73,11 +80,12 @@ export default function DragHandle({
       onDragOver={onDragOver}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
+      onKeyDown={onKeyDown}
       onPointerDown={onPointerDown}
       onMouseDown={onMouseDown}
       onMouseMove={onMouseMove}
     >
-      {DRAG_HANDLE_GLYPH}
+      {glyph}
     </span>
   );
 }

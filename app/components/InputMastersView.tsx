@@ -1,5 +1,6 @@
 "use client";
 
+import AddRowButton from "./AddRowButton";
 import type { InputMaster } from "../types";
 import { createEmptyInputMaster } from "../lib/constants";
 import { useDragReorder } from "../lib/useDragReorder";
@@ -102,15 +103,7 @@ export default function InputMastersView({
               })
             )}
           </tbody>
-          <tfoot>
-            <tr className="add-row-tr">
-              <td colSpan={4}>
-                <button className="btn-add-row" onClick={add} title="Add Row">
-                  + Add Row
-                </button>
-              </td>
-            </tr>
-          </tfoot>
+          <AddRowButton colSpan={4} onClick={add} title="Add Row" />
         </table>
       </div>
     </section>

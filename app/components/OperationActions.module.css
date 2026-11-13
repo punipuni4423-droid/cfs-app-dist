@@ -1,0 +1,26 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.label {
+  min-width: 2.6rem;
+  color: var(--color-text-secondary);
+  font-size: 0.65rem;
+  line-height: 1.2;
+}
+
+.column {
+  width: 146px;
+}

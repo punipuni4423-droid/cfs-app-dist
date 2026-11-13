@@ -1,4 +1,5 @@
-import type { SceneCircuitSetting } from "../types";
+import type { SceneCircuitSetting, SceneValueMode } from "../types";
+import { normalizeSettingValue, settingValueMode } from "./sceneValueMode";
 
 export type BulkSettingMode =
   | "percent"
@@ -41,16 +42,19 @@ export function setSceneSettingValue(
   settings: SceneCircuitSetting[],
   targetId: string,
   value: string,
+  mode?: SceneValueMode,
 ): SceneCircuitSetting[] {
-  const trimmed = value.trim();
   const existing = settings.find((setting) => setting.circuitId === targetId);
-  if (!trimmed) return settings.filter((setting) => setting.circuitId !== targetId);
+  const nextMode = mode ?? settingValueMode(existing);
+  const trimmed = normalizeSettingValue(value, nextMode);
+  if (!trimmed && nextMode !== "text") return settings.filter((setting) => setting.circuitId !== targetId);
+  const next = { ...existing, circuitId: targetId, percentage: trimmed, valueMode: nextMode === "text" ? "text" as const : undefined };
   if (existing) {
     return settings.map((setting) =>
-      setting.circuitId === targetId ? { ...setting, percentage: trimmed } : setting,
+      setting.circuitId === targetId ? next : setting,
     );
   }
-  return [...settings, { circuitId: targetId, percentage: trimmed }];
+  return [...settings, next];
 }
 
 export function bulkModeAppliesToTarget(mode: BulkSettingMode, isOnOff: boolean): boolean {

@@ -1,4 +1,6 @@
 /** Data-loss diagnostics shared by the browser and the projects API. No raw values in logs. */
+import { isLosslessTstatQuarantineTransition } from './tstatBindingQuarantine';
+
 export interface MigrationIssue {
   path: string;
   action: 'excluded' | 'repaired';
@@ -63,7 +65,10 @@ export function collectionLosses(before: unknown, after: unknown, path = 'projec
   const previous = record(before);
   const next = record(after);
   if (!previous || !next) return [];
+  const retainedBinding = /^projects\[\d+\]\.roomTypes\[\d+\]\.switches\[\d+\]$/.test(path)
+    && isLosslessTstatQuarantineTransition(previous, next);
   return Object.keys(previous).flatMap((key): MigrationIssue[] => {
+    if (retainedBinding && (key === 'tstatBinding' || key === 'tstatBindingQuarantine')) return [];
     if (!Array.isArray(previous[key]) && Array.isArray(next[key]) && previous[key] !== undefined) {
       return [{ path: `${path}.${key}`, action: 'repaired', count: 1 }];
     }

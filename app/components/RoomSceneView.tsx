@@ -1,5 +1,6 @@
 "use client";
 
+import AddRowButton from "./AddRowButton";
 import { Fragment } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactNode } from "react";
@@ -17,6 +18,7 @@ import type {
   LocationMaster,
   RevisionFieldChanges,
   RoomScene,
+  SceneValueMode,
   RoomScenePhase,
   Scene,
   SwitchEntry,
@@ -24,6 +26,8 @@ import type {
 } from "../types";
 import { createEmptyRoomScene, normalizeBacklightLevels } from "../lib/constants";
 import { ensureRoomScenes, isPmsScene, sortRoomScenesByGroup } from "../lib/roomScenes";
+import { DOOR_MAGNET_SCENE_LABEL } from "../lib/cfsSceneColumnGroups";
+import { canUseStandardValue, setSceneSettingModes } from "../lib/sceneValueMode";
 import { normalizeRoomSceneSettingLinksAfterCommit } from "../lib/roomSceneSettingLinks";
 import { byScenePalladiomBacklightTargets, switchGroupId } from "../lib/useCfsZoneRows";
 import { useDragReorder } from "../lib/useDragReorder";
@@ -88,8 +92,8 @@ function setAreaSceneSelection(scene: RoomScene, areaId: string, sceneId: string
   return { ...scene, areaSceneSelections: nextSelections };
 }
 
-function setSetting(scene: RoomScene, circuitId: string, value: string): RoomScene {
-  return { ...scene, settings: setSceneSettingValue(scene.settings, circuitId, value) };
+function setSetting(scene: RoomScene, circuitId: string, value: string, mode?: SceneValueMode): RoomScene {
+  return { ...scene, settings: setSceneSettingValue(scene.settings, circuitId, value, mode) };
 }
 
 function isCurtainTarget(target: SettingTarget): boolean {
@@ -246,14 +250,25 @@ export default function RoomSceneView({
 
   // One setting row represents a whole circuit group: write to every member
   // row, read the first non-empty member value.
-  function updateTargetSetting(id: string, target: SettingTarget, value: string): void {
+  function updateTargetSetting(id: string, target: SettingTarget, value: string, mode?: SceneValueMode): void {
+    if (!canEdit) return;
+    const scene = effectiveRoomScenes.find((entry) => entry.id === id);
+    if (!scene || ((mode ?? settingTargetMode(scene, target)) === "standard" && !canUseStandardValue(value, target.dimmingType))) return;
     commitRoomScenes(
       effectiveRoomScenes.map((scene) =>
         scene.id === id
-          ? settingTargetIds(target).reduce((next, circuitId) => setSetting(next, circuitId, value), scene)
+          ? settingTargetIds(target).reduce((next, circuitId) => setSetting(next, circuitId, value, mode), scene)
           : scene,
       ),
     );
+  }
+
+  function updateTargetMode(id: string, target: SettingTarget, mode: SceneValueMode): void {
+    if (!canEdit) return;
+    const scene = effectiveRoomScenes.find((entry) => entry.id === id);
+    if (!scene) return;
+    const settings = setSceneSettingModes(scene.settings, settingTargetIds(target), mode, target.dimmingType);
+    if (settings) commitRoomScenes(effectiveRoomScenes.map((entry) => entry.id === id ? { ...entry, settings } : entry));
   }
 
   function settingTargetValue(scene: RoomScene, target: SettingTarget): string {
@@ -262,6 +277,10 @@ export default function RoomSceneView({
       if (value.trim() !== "") return value;
     }
     return "";
+  }
+
+  function settingTargetMode(scene: RoomScene, target: SettingTarget): SceneValueMode {
+    return settingTargetIds(target).some((id) => scene.settings.find((setting) => setting.circuitId === id)?.valueMode === "text") ? "text" : "standard";
   }
 
   function applyAreaScene(roomScene: RoomScene, areaId: string, areaSceneId: string): void {
@@ -495,7 +514,7 @@ export default function RoomSceneView({
     if (!value) return;
     let nextScene = scene;
     for (const target of areaTargets) {
-      if (!target.isOnOff && !isCurtainTarget(target)) {
+      if (!target.isOnOff && !isCurtainTarget(target) && settingTargetMode(scene, target) !== "text") {
         nextScene = settingTargetIds(target).reduce((next, circuitId) => setSetting(next, circuitId, value), nextScene);
       }
     }
@@ -505,10 +524,11 @@ export default function RoomSceneView({
   function applyAreaBulk(scene: RoomScene, areaTargets: SettingTarget[], mode: BulkSettingMode, key: string): void {
     let nextScene = scene;
     for (const target of areaTargets) {
+      if (mode !== "clear" && settingTargetMode(scene, target) === "text") continue;
       if (isCurtainTarget(target) && mode !== "clear") continue;
       const value = settingValueForBulkMode(mode, target.isOnOff, areaBulkValues[key] || "");
       if (value !== null) {
-        nextScene = settingTargetIds(target).reduce((next, circuitId) => setSetting(next, circuitId, value), nextScene);
+        nextScene = settingTargetIds(target).reduce((next, circuitId) => setSetting(next, circuitId, value, "standard"), nextScene);
       }
     }
     commitRoomScenes(effectiveRoomScenes.map((item) => (item.id === scene.id ? nextScene : item)));
@@ -536,7 +556,11 @@ export default function RoomSceneView({
           onApply: (area, mode) => applyAreaBulk(scene, area.targets, mode, areaKey(scene.id, area.id)),
         }}
         valueForTarget={target => settingTargetValue(scene, target)}
-        onTargetValueChange={(target, value) => updateTargetSetting(scene.id, target, value)}
+        onTargetValueChange={(target, value) => updateTargetSetting(scene.id, target, value, "standard")}
+        modeForTarget={target => settingTargetMode(scene, target)}
+        onTargetModeChange={(target, value, mode) => updateTargetSetting(scene.id, target, value, mode)}
+        onTargetModeOnlyChange={(target, mode) => updateTargetMode(scene.id, target, mode)}
+        standardAllowedForTarget={target => settingTargetIds(target).every(id => canUseStandardValue(scene.settings.find(setting => setting.circuitId === id)?.percentage ?? "", target.dimmingType))}
         onTargetStep={(target, delta) => updateTargetSetting(scene.id, target, stepPercentValue(settingTargetValue(scene, target), delta))}
         cardClassName="room-scene-setting-card"
         renderValueInput={(target, value) => <AutoGrowTextarea className="scene-level-input" value={value} onChange={next => updateTargetSetting(scene.id, target, next)} disabled={!canEdit} />}
@@ -622,9 +646,6 @@ export default function RoomSceneView({
     <section className="card card-padded fade-in">
       <div className="toolbar room-scene-bulk-toolbar">
         <span className="toolbar-spacer" />
-        <span className="muted-pill" aria-live="polite">
-          {bulkSelectedIds.size} checked
-        </span>
         <button
           type="button"
           className="btn btn-secondary btn-sm"
@@ -745,18 +766,10 @@ export default function RoomSceneView({
               })
             )}
           </tbody>
-          <tfoot>
-            <tr className="add-row-tr">
-              <td colSpan={8}>
-                <button className="btn-add-row" onClick={addPmsScene} title="Add PMS row" disabled={!canEdit}>
-                  + Add PMS Row
-                </button>
-              </td>
-            </tr>
-          </tfoot>
+          <AddRowButton colSpan={8} onClick={addPmsScene} disabled={!canEdit} title="Add PMS row" label="+ Add PMS Row" />
         </table>
       </div>
-      <div className="scene-section-title">Door Magnet Scene</div>
+      <div className="scene-section-title">{DOOR_MAGNET_SCENE_LABEL}</div>
       <div className="table-shell">
         <table className="matrix-table switch-table room-scene-table">
           <colgroup>
@@ -865,15 +878,7 @@ export default function RoomSceneView({
               );
             })}
           </tbody>
-          <tfoot>
-            <tr className="add-row-tr">
-              <td colSpan={9}>
-                <button className="btn-add-row" onClick={addScene} title="Add row" disabled={!canEdit}>
-                  + Add Row
-                </button>
-              </td>
-            </tr>
-          </tfoot>
+          <AddRowButton colSpan={9} onClick={addScene} disabled={!canEdit} title="Add row" />
         </table>
       </div>
       {renderSettingOverlay()}

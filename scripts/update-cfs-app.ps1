@@ -403,6 +403,128 @@ function Assert-CfsNoLegacyData {
   }
 }
 
+function Sync-StandaloneTabIcon {
+  param([string]$RootPath)
+
+  if (-not ('CfsTabIconFiles' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+public static class CfsTabIconFiles {
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  private static extern SafeFileHandle CreateFileW(
+      string path, uint access, uint share, IntPtr security, uint creation,
+      uint flags, IntPtr template);
+
+  [StructLayout(LayoutKind.Sequential)]
+  private struct FileInfo {
+    public uint Attributes, CreationLow, CreationHigh, AccessLow, AccessHigh;
+    public uint WriteLow, WriteHigh, Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+  }
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out FileInfo info);
+
+  private static void Check(SafeFileHandle handle, bool directory) {
+    FileInfo info;
+    if (!GetFileInformationByHandle(handle, out info))
+      throw new Win32Exception(Marshal.GetLastWin32Error());
+    if ((info.Attributes & 0x400) != 0 || ((info.Attributes & 0x10) != 0) != directory)
+      throw new IOException("Tab icon paths must not contain reparse points or unexpected file types.");
+  }
+
+  private static SafeFileHandle Open(string path, uint access, uint share, uint creation, bool directory) {
+    const uint backupSemantics = 0x02000000;
+    const uint openReparsePoint = 0x00200000;
+    SafeFileHandle handle = CreateFileW(path, access, share, IntPtr.Zero, creation,
+        backupSemantics | openReparsePoint, IntPtr.Zero);
+    if (handle.IsInvalid) {
+      int error = Marshal.GetLastWin32Error();
+      handle.Dispose();
+      throw new Win32Exception(error);
+    }
+    try { Check(handle, directory); return handle; }
+    catch { handle.Dispose(); throw; }
+  }
+
+  public static SafeFileHandle HoldDirectory(string path) {
+    const uint listDirectory = 1;
+    const uint shareRead = 1;
+    const uint openExisting = 3;
+    return Open(path, listDirectory, shareRead, openExisting, true);
+  }
+
+  public static FileStream ReadFile(string path) {
+    return new FileStream(Open(path, 0x80000000, 1, 3, false), FileAccess.Read);
+  }
+
+  public static FileStream CreateFile(string path) {
+    return new FileStream(Open(path, 0xC0000000, 0, 1, false), FileAccess.ReadWrite);
+  }
+}
+'@ | Out-Null
+  }
+
+  $sourceDirectory = [IO.Path]::GetFullPath((Join-Path $RootPath 'public'))
+  $targetDirectory = [IO.Path]::GetFullPath((Join-Path (Get-NextDistPath -RootPath $RootPath) 'standalone/public'))
+  $boundary = [IO.Path]::GetFullPath($RootPath).TrimEnd('\') + '\'
+  foreach ($directory in @($sourceDirectory, $targetDirectory)) {
+    if (-not $directory.StartsWith($boundary, [StringComparison]::OrdinalIgnoreCase)) {
+      throw 'Tab icon path is outside the app root.'
+    }
+  }
+
+  $held = New-Object 'Collections.Generic.Dictionary[string,Microsoft.Win32.SafeHandles.SafeFileHandle]' ([StringComparer]::OrdinalIgnoreCase)
+  function Hold-IconDirectory([string]$Directory, [bool]$Create) {
+    if ($held.ContainsKey($Directory)) { return }
+    $parent = [IO.Path]::GetDirectoryName($Directory)
+    if ($parent) { Hold-IconDirectory $parent $false }
+    if ($Create) { [void][IO.Directory]::CreateDirectory($Directory) }
+    $held.Add($Directory, [CfsTabIconFiles]::HoldDirectory($Directory))
+  }
+
+  try {
+    $source = Join-Path $sourceDirectory 'cfs-app-icon.ico'
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+      throw 'The updated app is missing its browser tab icon.'
+    }
+    Hold-IconDirectory $sourceDirectory $false
+    Hold-IconDirectory $targetDirectory $true
+    $inputStream = [CfsTabIconFiles]::ReadFile($source)
+    try {
+      $target = Join-Path $targetDirectory 'cfs-app-icon.ico'
+      if (Test-Path -LiteralPath $target) {
+        $outputStream = [CfsTabIconFiles]::ReadFile($target)
+        $created = $false
+      } else {
+        $outputStream = [CfsTabIconFiles]::CreateFile($target)
+        $created = $true
+      }
+      try {
+        if ($created) {
+          $inputStream.CopyTo($outputStream)
+          $outputStream.Flush()
+        }
+        $inputStream.Position = 0
+        $outputStream.Position = 0
+        $algorithm = [Security.Cryptography.SHA256]::Create()
+        try {
+          $originalHash = [Convert]::ToBase64String($algorithm.ComputeHash($inputStream))
+          $targetHash = [Convert]::ToBase64String($algorithm.ComputeHash($outputStream))
+          if ($originalHash -cne $targetHash) { throw 'The browser tab icon does not match the updated app.' }
+        } finally { $algorithm.Dispose() }
+      } finally { $outputStream.Dispose() }
+    } finally { $inputStream.Dispose() }
+  } finally {
+    foreach ($handle in $held.Values) { $handle.Dispose() }
+  }
+}
+
 function Sync-StandaloneStaticAssets {
   param(
     [string]$RootPath
@@ -432,6 +554,7 @@ Assert-CfsUpdateMaintenanceHandle $appPath $MaintenanceLock
 $script:BuildStartedAt = $null
 $script:RestartedProcess = $null
 $script:StoppedAppWriters = $false
+$script:TabIconSyncFailed = $false
 try {
 try {
 if (-not $StartedAt) { $StartedAt = (Get-Date).ToUniversalTime().ToString("o") }
@@ -604,6 +727,12 @@ Clear-NextRuntimeEnvironmentForBuild
   }
   Set-CfsObservationOperation 'sync-static-assets'
   Sync-StandaloneStaticAssets -RootPath $appPath
+  try {
+    Sync-StandaloneTabIcon -RootPath $appPath
+  } catch {
+    $script:TabIconSyncFailed = $true
+    throw
+  }
   Set-CfsObservationOperation '' -End
   if (-not (Test-CfsVerifiedBuild $TargetCommit)) { throw 'The build command did not produce a complete build for the selected commit.' }
 
@@ -634,7 +763,7 @@ Clear-NextRuntimeEnvironmentForBuild
   # this failure instead of sitting on "reconnecting" forever.
   try {
     $cleanupUnknown = Get-Variable -Name CfsCleanupUncertain -Scope Script -ErrorAction SilentlyContinue
-    if ($script:StoppedAppWriters -and -not ($cleanupUnknown -and $cleanupUnknown.Value)) {
+    if ($script:StoppedAppWriters -and -not $script:TabIconSyncFailed -and -not ($cleanupUnknown -and $cleanupUnknown.Value)) {
       $stillListening = @(Get-CfsPortListeners -Port $Port)
       if (-not $stillListening) {
         Write-Log "Restarting app after failed update so the UI can reconnect."

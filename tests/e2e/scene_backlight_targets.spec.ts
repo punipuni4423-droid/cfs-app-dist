@@ -1,4 +1,5 @@
 import { test, expect } from './support/safe-test';
+import ExcelJS from 'exceljs';
 import type { ProjectData } from '../../app/types';
 import { open, save, assignments, scenePanel, targets, readOnlyTargets, panel, close, tab, expectedTargets } from './support/scene-backlight-test-project';
 
@@ -72,4 +73,47 @@ test('Backlight tab still changes whole groups and Scene explains the zero-targe
   await scenePanel(page, false);
   expect.soft(await targets(page)).toEqual([expectedTargets[0]]);
   await info.attach('backlight-tab-assignments', { body: JSON.stringify({ afterFixed, afterByScene }, null, 2), contentType: 'application/json' });
+});
+
+test('Backlight Setting lists switches without individual controls and keeps group operations', async ({ page }, info) => {
+  await open(page);
+  for (const bulk of [false, true]) {
+    await scenePanel(page, bulk);
+    await expect(panel(page).getByRole('checkbox')).toHaveCount(0);
+    await close(page);
+  }
+  await tab(page, 'Switch');
+  await page.locator('.scene-area-chip').filter({ hasText: /^Palladiom$/ }).click();
+  await page.locator('tbody tr').filter({ has: page.locator('.setting-status-button') }).first().locator('.setting-status-button').nth(1).click();
+  await expect(panel(page).locator('.switch-target-list').getByRole('listitem')).toHaveCount(2);
+  await expect(panel(page).getByRole('checkbox')).toHaveCount(1);
+  await expect(panel(page).getByRole('checkbox', { name: 'Select all targets', exact: true })).toBeVisible();
+  await close(page);
+  await tab(page, 'Command');
+  await page.locator('tbody tr').filter({ has: page.locator('.setting-status-button') }).first().locator('.setting-status-button').first().click();
+  const dialog = panel(page);
+  const selectAll = dialog.getByRole('checkbox', { name: 'Select all targets', exact: true });
+  await expect(dialog.locator('.switch-target-list').getByRole('listitem')).toHaveText(expectedTargets);
+  await expect(dialog.getByRole('checkbox')).toHaveCount(1);
+  await expect(selectAll).toBeChecked();
+  await dialog.getByText('Target', { exact: true }).locator('..').screenshot({ path: info.outputPath('setting-targets.png') });
+  await dialog.getByRole('button', { name: 'Clear Target', exact: true }).click();
+  await expect(selectAll).not.toBeChecked();
+  await selectAll.check();
+  await expect(selectAll).toBeChecked();
+  await expect(selectAll).toHaveJSProperty('indeterminate', false);
+});
+
+test('Backlight toolbar downloads the displayed room settings as a workbook', async ({ page }) => {
+  await open(page);
+  await tab(page, 'Backlight');
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Excel Export', exact: true }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('T140_Synthetic_Project_T140_Room_Rev1.00_Backlight.xlsx');
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile((await download.path())!);
+  const sheet = workbook.getWorksheet('Backlight')!;
+  expect(sheet.getColumn(1).values).toContain('Backlight Scenes');
+  expect(sheet.getColumn(2).values).toEqual(expect.arrayContaining(['PD-BY', 'PD-LEGACY', 'PD-FIXED', 'PD-BASE']));
 });

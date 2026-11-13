@@ -6,11 +6,13 @@ import type {
   RoomScene,
   RoomType,
   Scene,
+  SceneValueMode,
   SwitchEntry,
 } from "../types";
 import { createDefaultDevices } from "./constants";
 import { BY_SCENE_VALUE, OTHER_AREA_ID, type CfsZoneRow } from "./cfsTableModel";
 import { selectedSceneIdsForSwitch } from "./cfsValueResolver";
+import { hasTstatBindingQuarantine, TSTAT_QUARANTINE_WARNING } from "./tstatBindingQuarantine";
 import { buildAreaAddressAssignmentMap, normalizeProgrammingToken } from "./programming";
 import { formatProgrammingName, normalizeProgrammingNameSettings } from "./programmingNameSettings";
 import { circuitsForRoomType } from "./roomTypeSync";
@@ -119,6 +121,8 @@ export interface LutronSceneLevelSpec {
   detail: string;
   areaId: string;
   value: string;
+  /** Omitted means Standard for compatibility with schemaVersion 1. */
+  valueMode?: SceneValueMode;
 }
 
 export interface LutronSceneSpec {
@@ -345,7 +349,7 @@ function buildRows(
 }
 
 function toSceneLevels(
-  settings: readonly { circuitId: string; percentage: string }[],
+  settings: readonly { circuitId: string; percentage: string; valueMode?: SceneValueMode }[],
   circuitsById: ReadonlyMap<string, CircuitEntry>,
   locationById: ReadonlyMap<string, ProjectData["locations"][number]>,
 ): LutronSceneLevelSpec[] {
@@ -357,6 +361,7 @@ function toSceneLevels(
       detail: circuit?.detail ?? "",
       areaId: circuit?.area ?? "",
       value: setting.percentage,
+      ...(setting.valueMode === "text" ? { valueMode: "text" as const } : {}),
     };
   }).filter((level) => {
     if (level.circuitId.startsWith("cco:")) return true;
@@ -600,6 +605,10 @@ function buildWarnings(
     }
   }
   for (const sw of roomType.switches) {
+    if (hasTstatBindingQuarantine(sw)) {
+      warnings.push({ severity: "warning", code: "tstat_binding_quarantined", message: TSTAT_QUARANTINE_WARNING, sourceId: sw.id });
+      continue;
+    }
     for (const sceneId of selectedSceneIdsForSwitch(sw)) {
       if (!sceneIds.has(sceneId)) {
         warnings.push({
@@ -704,7 +713,7 @@ export function buildLutronAutomationSpec({
     zones,
     areaScenes: roomType.scenes.map((scene) => toAreaSceneSpec(scene, circuitsById, locationById)),
     roomScenes: roomType.roomScenes.map((scene) => toRoomSceneSpec(scene, scenesById, circuitsById, locationById)),
-    switches: roomType.switches.map((sw) => toSwitchSpec(sw, scenesById, circuitsById, locationById)),
+    switches: roomType.switches.filter(sw => !hasTstatBindingQuarantine(sw)).map((sw) => toSwitchSpec(sw, scenesById, circuitsById, locationById)),
     pdu,
     warnings,
   };

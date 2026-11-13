@@ -2528,11 +2528,14 @@ test.describe("Protected CFS behaviors", () => {
     await expect(deviceTable.getByRole("button", { name: /Delete Device|Delete Assignment/ }).first()).toBeDisabled();
     await expect(deviceTable.getByRole("button", { name: /Add Device/ }).first()).toBeDisabled();
 
-    await page.getByRole("tab", { name: "HVAC", exact: true }).click();
-    await expect(page.locator('label.checkbox-label input[type="checkbox"]').first()).toBeDisabled();
-    await expect(page.locator("table.master-table").first().locator("select.cell-input").first()).toBeDisabled();
-    await expect(page.getByRole("button", { name: "+ HVAC Add", exact: true })).toBeDisabled();
+    await page.getByRole("tab", { name: "Switch", exact: true }).click();
+    await page.getByRole("tablist", { name: "Switch type", exact: true }).getByRole("tab", { name: "Thermostat", exact: true }).click();
+    const thermostat = page.getByRole("region", { name: "Thermostat registration", exact: true });
+    await expect(thermostat.getByRole("checkbox", { name: "Link all Thermostats", exact: true })).toBeDisabled();
+    await expect(thermostat.locator("table.master-table").first().locator("select.cell-input").first()).toBeDisabled();
+    await expect(thermostat.getByRole("button", { name: "Add Row (Thermostat)", exact: true })).toBeDisabled();
 
+    await page.getByRole("tab", { name: "Device Assign", exact: true }).click();
     await page.getByRole("tab", { name: "Lutron Curtain", exact: true }).click();
     const curtainTable = page.locator("table.curtain-assign-table").first();
     await expect(curtainTable.locator("select.cell-input").first()).toBeDisabled();

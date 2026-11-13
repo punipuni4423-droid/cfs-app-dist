@@ -63,6 +63,7 @@ export interface CfsZoneRow {
   isBacklight?: boolean;
   backlightSourceId?: string;
   backlightTargetGroupId?: string;
+  backlightMemberRowIds?: string[];
   backlightValue?: string;
   backlightTargetLabel?: string;
   hvacSettingId?: string;
@@ -94,6 +95,32 @@ export interface FunctionColumn {
 }
 
 export type MergeInfo = { isFirst: boolean; rowSpan: number };
+
+/** Keep existing device-filter preferences while changing the visible HVAC label. */
+export function cfsDeviceFilterKey(row: CfsZoneRow): string {
+  return `${row.isHvac ? "HVAC" : row.device}\u0000${row.deviceNum}`;
+}
+
+/** Area merges follow a physical Thermostat, never a shared Area or display number. */
+export function buildThermostatAreaMergeInfo(rows: readonly CfsZoneRow[]): Map<string, MergeInfo> {
+  const result = new Map<string, MergeInfo>();
+  const keyFor = (row: CfsZoneRow): string | undefined => {
+    const assignmentId = row.isHvac ? row.circuits[0]?.circuit.circuitGroupId : undefined;
+    return assignmentId ? JSON.stringify([assignmentId, row.locationId]) : undefined;
+  };
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index], key = keyFor(row);
+    if (!key) { result.set(row.id, { isFirst: true, rowSpan: 1 }); continue; }
+    if (index > 0 && keyFor(rows[index - 1]) === key) {
+      result.set(row.id, { isFirst: false, rowSpan: 0 }); continue;
+    }
+    let rowSpan = 1;
+    while (index + rowSpan < rows.length && keyFor(rows[index + rowSpan]) === key) rowSpan++;
+    result.set(row.id, { isFirst: true, rowSpan });
+  }
+  return result;
+}
+
 export type CfsSortMode = "device" | "area" | "internal" | "programmingName";
 export type CfsDisplayAssignment = DeviceAssignment & { assignmentIds: string[] };
 export type FunctionColumnGroup = {
@@ -127,6 +154,12 @@ export const BASE_COLUMNS: BaseColumn[] = [
   { key: "programmingName", label: "Programming Name", minWidth: 240 },
 ];
 export const CFS_FUNCTION_COLUMN_WIDTH = 106;
+
+export function cfsBacklightHeading(row: CfsZoneRow): string {
+  const switches = row.backlightTargetLabel;
+  return switches && switches !== "-" ? `${row.device}\n${switches}` : row.device;
+}
+
 // The Backlight Logic merged band assumes its keys are CONTIGUOUS in the
 // default column order (colSpan math in CfsView/cfsExcelExport), and the
 // band anchor is the FIRST visible key of this array, so the array order

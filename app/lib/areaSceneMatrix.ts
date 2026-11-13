@@ -8,6 +8,8 @@ import type {
   SwitchEntry,
 } from "../types";
 import { formatLevel } from "./cfsValueResolver";
+import { sceneSettingModeForCircuitGroup } from "./circuitGroups";
+import { settingValueMode } from "./sceneValueMode";
 import { OTHER_AREA_ID } from "./cfsTableModel";
 import {
   circuitGroupMembers,
@@ -238,12 +240,15 @@ function displayDimmingType(target: AreaSceneTarget): string {
 
 function cellForScene(scene: Scene | undefined, target: AreaSceneTarget, circuits: CircuitEntry[]): AreaSceneCell {
   if (!scene) return { state: "na", rawValue: "", displayValue: "" };
-  const rawValue = settingValueForTarget(scene, target, circuits).trim();
-  if (!rawValue) return { state: "empty", rawValue: "", displayValue: "" };
+  const rawValue = settingValueForTarget(scene, target, circuits);
+  const mode = target.kind === "lighting" && target.circuit
+    ? sceneSettingModeForCircuitGroup(scene.settings, circuits, target.circuit)
+    : settingValueMode(scene.settings.find((setting) => setting.circuitId === target.id));
+  if (!rawValue.trim()) return { state: "empty", rawValue: "", displayValue: "" };
   return {
     state: "value",
     rawValue,
-    displayValue: formatLevel(rawValue, displayDimmingType(target)),
+    displayValue: formatLevel(rawValue, displayDimmingType(target), mode),
   };
 }
 

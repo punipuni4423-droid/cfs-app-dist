@@ -27,10 +27,12 @@ import type {
   RoomScene,
   RoomsSubTab,
   Scene,
+  SceneCircuitSetting,
   SwitchEntry,
   SwitchKind,
   RevisionFieldChanges,
 } from "../types";
+import { settingComparisonKey } from "../lib/sceneValueMode";
 import {
   backlightLevelsFromSwitches,
   createDefaultCfsRowDisplaySettings,
@@ -42,6 +44,8 @@ import { useAppSettings } from "../lib/appSettings";
 import { useGridArrowNavigation } from "../lib/useGridArrowNavigation";
 import { buildProjectCircuitSuggestions } from "../lib/projectCircuitSuggestions";
 import { duplicateRoomType } from "../lib/roomTypeCopy";
+import { deriveTstatOccupancy, preserveThermostatNumberReservations, tstatAreaChangeWarnings, updateTstatRegistration } from "../lib/tstatOccupancy";
+import HvacAssignView from "./HvacAssignView";
 import { cfsWindowChannelName, cfsWindowUrl, stripRoomTypeForWindow, type CfsWindowMessage, type CfsWindowRoomTypeEntry, type CfsWindowSnapshot } from "../lib/cfsWindowSync";
 import { circuitsForRoomType, inferRoomTypeCircuitIds, normalizeProjectRoomTypeCircuitIds, syncProjectRoomTypeLinks } from "../lib/roomTypeSync";
 import { normalizeRoomSceneSettingLinksAfterCommit } from "../lib/roomSceneSettingLinks";
@@ -348,6 +352,7 @@ export default function ProjectScreen({
   const recoveryPanel = useDisclosurePanel(reliabilityUi.scopeKey, 'save-recovery-panel');
   const commonHistoryPanel = useDisclosurePanel(reliabilityUi.scopeKey, 'common-history-panel');
   const pendingCfsGuardRef = useRef<PendingCfsGuard | null>(null);
+  const flushBacklightNameRef = useRef<(() => boolean) | null>(null);
   const registerPendingCfsGuard = useCallback((guard: PendingCfsGuard | null) => {
     pendingCfsGuardRef.current = guard;
   }, []);
@@ -501,7 +506,7 @@ export default function ProjectScreen({
       cloneProjectData(project),
     ];
     setHistoryVersion((v) => v + 1);
-    onUpdateProject(() => cloneProjectData(previous));
+    onUpdateProject((current) => preserveThermostatNumberReservations(cloneProjectData(previous), current));
   }, pendingCfsGuardRef, !inspectionHistoryStatus.active);
 
   const handleRedo = usePendingCfsAction((): void => {
@@ -522,7 +527,7 @@ export default function ProjectScreen({
       cloneProjectData(project),
     ];
     setHistoryVersion((v) => v + 1);
-    onUpdateProject(() => cloneProjectData(next));
+    onUpdateProject((current) => preserveThermostatNumberReservations(cloneProjectData(next), current));
   }, pendingCfsGuardRef, !inspectionHistoryStatus.active);
 
   const canUndo = inspectionHistoryStatus.active
@@ -636,6 +641,7 @@ export default function ProjectScreen({
     () => project.roomTypes.find((rt) => rt.id === activeRoomTypeId),
     [project.roomTypes, activeRoomTypeId],
   );
+  const activeTstatOccupancy = useMemo(() => activeRoomType ? deriveTstatOccupancy(activeRoomType) : null, [activeRoomType]);
   const activeRoomTypeRevisionCount = activeRoomType?.revisions?.length ?? 0;
   const displayedRevisions = useMemo(
     () =>
@@ -769,6 +775,7 @@ export default function ProjectScreen({
       rows: rt.rows,
       deviceAssignments: rt.deviceAssignments,
       hvacAssignments: rt.hvacAssignments,
+      nextThermostatNumber: rt.nextThermostatNumber,
       hvacSeasons: rt.hvacSeasons,
       curtainAssignments: rt.curtainAssignments ?? [],
       cfsRowDisplay: rt.cfsRowDisplay,
@@ -861,19 +868,19 @@ export default function ProjectScreen({
   const changedSettingTargetFields = useCallback(<T extends { id: string },>(
     before: T[] = [],
     after: T[] = [],
-    settingsFor: (row: T | undefined) => Array<{ circuitId: string; percentage: string }> | undefined,
+    settingsFor: (row: T | undefined) => SceneCircuitSetting[] | undefined,
   ): RevisionFieldChanges => {
     const beforeById = new Map(before.map((item) => [item.id, item]));
     const afterById = new Map(after.map((item) => [item.id, item]));
     const ids = new Set([...beforeById.keys(), ...afterById.keys()]);
     const result: RevisionFieldChanges = {};
 
-    const byTarget = (settings: Array<{ circuitId: string; percentage: string }> | undefined): Map<string, string> => {
+    const byTarget = (settings: SceneCircuitSetting[] | undefined): Map<string, string> => {
       const map = new Map<string, string>();
       for (const setting of settings ?? []) {
         const targetId = setting.circuitId.trim();
         if (!targetId) continue;
-        map.set(targetId, setting.percentage.trim());
+        map.set(targetId, settingComparisonKey(setting));
       }
       return map;
     };
@@ -1016,8 +1023,8 @@ export default function ProjectScreen({
       { tabIds: ["circuit", "cfs"], label: "Dry Contact", count: changedIds(before.dryContacts, after.dryContacts).length },
       { tabIds: ["circuit"], label: "CFS rows", count: changedIds(before.rows, after.rows).length },
       { tabIds: ["deviceAssign", "cfs"], label: "Device Assign", count: changedIds(before.deviceAssignments, after.deviceAssignments).length },
-      { tabIds: ["deviceAssign", "cfs"], label: "HVAC", count: changedIds(before.hvacAssignments, after.hvacAssignments).length },
-      { tabIds: ["deviceAssign"], label: "HVAC seasons", count: changedIds(before.hvacSeasons, after.hvacSeasons).length },
+      { tabIds: ["switch", "cfs"], label: "Thermostat", count: changedIds(before.hvacAssignments, after.hvacAssignments).length },
+      { tabIds: ["switch"], label: "Thermostat seasons", count: changedIds(before.hvacSeasons, after.hvacSeasons).length },
       { tabIds: ["deviceAssign", "cfs"], label: "Lutron Curtain", count: changedIds(before.curtainAssignments, after.curtainAssignments).length },
       { tabIds: ["areaScene"], label: "Area Scene", count: changedIds(before.scenes, after.scenes).length },
       { tabIds: ["scene"], label: "Scene", count: changedIds(before.roomScenes, after.roomScenes).length },
@@ -1197,7 +1204,7 @@ export default function ProjectScreen({
       changedIds(before.hvacAssignments, after.hvacAssignments).length > 0 ||
       changedIds(before.hvacSeasons, after.hvacSeasons).length > 0
     ) {
-      highlighted.add("deviceAssign");
+      highlighted.add("switch");
       highlighted.add("cfs");
     }
     if (Object.keys(revisionDiff.sceneFields).length > 0) {
@@ -1537,6 +1544,7 @@ export default function ProjectScreen({
   }, []);
 
   const handleSelectRoomTypeTab = usePendingCfsAction((id: string): void => {
+    flushBacklightNameRef.current?.();
     if (id === ROOM_TYPE_MANAGE_ID) {
       setActiveRoomTypeId("");
       return;
@@ -1544,8 +1552,12 @@ export default function ProjectScreen({
     setActiveRoomTypeId(id);
     setActiveSubTab((prev) => prev);
   }, pendingCfsGuardRef);
-  const handleSelectParentTab = usePendingCfsAction((id: string) => setActiveTab(id as ProjectTab), pendingCfsGuardRef);
+  const handleSelectParentTab = usePendingCfsAction((id: string) => {
+    flushBacklightNameRef.current?.();
+    setActiveTab(id as ProjectTab);
+  }, pendingCfsGuardRef);
   const handleSelectSubTab = usePendingCfsAction((id: string) => {
+    flushBacklightNameRef.current?.();
     setActiveSubTab(id as RoomsSubTab);
     setShowRevisionManager(false);
   }, pendingCfsGuardRef);
@@ -1637,6 +1649,7 @@ export default function ProjectScreen({
       onReadOnlyAction?.();
       return false;
     }
+    flushBacklightNameRef.current?.();
     return saveActiveRoomTypeRevision((rt) => {
       return saveRoomTypeRevision(rt, circuitsForRoomType(project, rt), options);
     });
@@ -1647,6 +1660,7 @@ export default function ProjectScreen({
       onReadOnlyAction?.();
       return false;
     }
+    flushBacklightNameRef.current?.();
     return onSaveProjectDraft((current) => syncProjectRoomTypeLinks(current, { devices }));
   }, [canEdit, devices, onReadOnlyAction, onSaveProjectDraft]);
 
@@ -1775,18 +1789,19 @@ export default function ProjectScreen({
       onReadOnlyAction?.();
       return;
     }
+    const committedBacklightName = flushBacklightNameRef.current?.();
     batchRevisionOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setBatchRevisionDrafts(
       project.roomTypes.map((rt) => ({
         roomTypeId: rt.id,
         revision: nextRoomTypeRevisionValue(rt),
         note: "",
-        selected: roomTypeHasRevisionDraft(rt),
+        selected: (committedBacklightName === true && rt.id === activeRoomTypeId) || roomTypeHasRevisionDraft(rt),
       })),
     );
     setBatchRevisionError("");
     setBatchRevisionDialogOpen(true);
-  }, [canEdit, onReadOnlyAction, project.roomTypes, roomTypeHasRevisionDraft]);
+  }, [activeRoomTypeId, canEdit, onReadOnlyAction, project.roomTypes, roomTypeHasRevisionDraft]);
 
   const canSaveCommonRevision = useMemo(() => {
     if (hasUnsavedCommonChanges) return true;
@@ -1967,6 +1982,7 @@ export default function ProjectScreen({
   useLayoutEffect(() => {
     collaboration.setFinishGuard(async ({ idle }) => {
       if (isDatabaseOperationBusy()) return false;
+      flushBacklightNameRef.current?.();
       const pendingGuard = pendingCfsGuardRef.current;
       if (pendingGuard) {
         if (await pendingGuard()) window.setTimeout(() => { collaboration.resumeIdleAfterSave?.(); void collaboration.finishEditing({ idle }); }, 0);
@@ -2002,6 +2018,7 @@ export default function ProjectScreen({
 
   const handleBackToProjectList = usePendingCfsAction((): void => {
     if (isDatabaseOperationBusy()) return;
+    flushBacklightNameRef.current?.();
     if (hasUnsavedDatabaseChangesNow()) {
       openFinishRevisionDialog(false, "back");
       return;
@@ -2193,8 +2210,12 @@ export default function ProjectScreen({
             || !current.roomTypes.some(rt => rt.id === started.activeRoomTypeId)) return null;
           // Resolve links first, then capture each new snapshot and its scoped
           // circuits from this same current project. Old snapshots are retained.
-          const linked = syncProjectRoomTypeLinks({ ...current, roomTypes: current.roomTypes.map(rt => rt.id === started.activeRoomTypeId
-            ? { ...applyInspectionPayloadToRoomType(rt, capturedPayload), updatedAt: new Date().toISOString() } : rt) }, { devices });
+          const linked = syncProjectRoomTypeLinks({ ...current, roomTypes: current.roomTypes.map(rt => {
+            const inspected = rt.id === started.activeRoomTypeId
+              ? { ...applyInspectionPayloadToRoomType(rt, capturedPayload), updatedAt: new Date().toISOString() } : rt;
+            return rt.id === started.activeRoomTypeId && inspected.switches.some(row => row.tstatBinding)
+              ? updateTstatRegistration(inspected, inspected.hvacAssignments) : inspected;
+          }) }, { devices });
           if (!options.saveAsNewRevision) return linked;
           if (!selectedRoomTypeIds.size) { saveValidationError = 'Select at least one room type to save a new revision.'; return null; }
           const revisions = new Map<string, string>();
@@ -2304,9 +2325,12 @@ export default function ProjectScreen({
 
   const setHvacAssignments = useCallback(
     (next: HvacAssignment[]): void => {
-      updateActiveRoomType((rt) => ({ ...rt, hvacAssignments: next }));
+      if (!canEdit) return;
+      const warnings = activeRoomType ? tstatAreaChangeWarnings(activeRoomType, next, project.locations) : [];
+      if (warnings.length && !window.confirm(`${warnings.join("\n\n")}\n\nContinue?`)) return;
+      updateActiveRoomType((rt) => updateTstatRegistration(rt, next));
     },
-    [updateActiveRoomType],
+    [updateActiveRoomType, canEdit, activeRoomType, project.locations],
   );
 
   const setHvacSeasons = useCallback(
@@ -2341,8 +2365,8 @@ export default function ProjectScreen({
   );
 
   const setScenes = useCallback(
-    (next: Scene[]): void => {
-      updateActiveRoomType((rt) => ({ ...rt, scenes: next }));
+    (next: Scene[] | ((current: Scene[]) => Scene[])): void => {
+      updateActiveRoomType((rt) => ({ ...rt, scenes: typeof next === "function" ? next(rt.scenes) : next }));
     },
     [updateActiveRoomType],
   );
@@ -2365,10 +2389,19 @@ export default function ProjectScreen({
     // switches instead of a prop snapshot; array snapshots computed from stale
     // props were overwriting just-made edits (e.g. Palladiom By-Scene).
     (next: SwitchEntry[] | ((current: SwitchEntry[]) => SwitchEntry[])): void => {
-      updateActiveRoomType((rt) => ({
-        ...rt,
-        switches: typeof next === "function" ? next(rt.switches) : next,
-      }));
+      updateActiveRoomType((rt) => {
+        const view = deriveTstatOccupancy(rt).switches;
+        const proposed = typeof next === "function" ? next(view) : next;
+        const beforeById = new Map(view.map((row) => [row.id, row]));
+        const tstatChanged = proposed.some((row) => row.kind === "tstat" && valuesDiffer(beforeById.get(row.id), row));
+        if (tstatChanged) return updateTstatRegistration({ ...rt, switches: proposed }, rt.hvacAssignments);
+        const storedIds = new Set(rt.switches.map((row) => row.id));
+        const storedById = new Map(rt.switches.map((row) => [row.id, row]));
+        // Mount-time normalizers of other Switch tabs cannot materialize virtual controls.
+        // Nor may a read-only derived label/binding update persist merely by mounting.
+        return { ...rt, switches: proposed.filter((row) => !row.tstatBinding || storedIds.has(row.id))
+          .map((row) => row.tstatBinding ? storedById.get(row.id) ?? row : row) };
+      });
     },
     [updateActiveRoomType],
   );
@@ -2752,7 +2785,7 @@ export default function ProjectScreen({
               <div className="revision-top-controls">
                 {activeRoomType ? (
                   <span className="muted-pill">
-                    {activeRoomType.name || "Room Type"} Revision {activeRoomType.revision || "1.00"}
+                    Rev {activeRoomType.revision || "1.00"}
                   </span>
                 ) : null}
                   <span
@@ -3041,8 +3074,6 @@ export default function ProjectScreen({
           {activeSubTab === "deviceAssign" && (
             <DeviceAssignView
               assignments={activeRoomType.deviceAssignments}
-              hvacAssignments={activeRoomType.hvacAssignments}
-              hvacSeasons={activeRoomType.hvacSeasons}
               curtainAssignments={activeRoomType.curtainAssignments ?? []}
               devices={devices}
               inputMasters={inputMasters}
@@ -3051,8 +3082,6 @@ export default function ProjectScreen({
               circuits={activeRoomTypeCircuits}
               dryContacts={activeRoomType.dryContacts ?? []}
               onChange={setDeviceAssignments}
-              onHvacAssignmentsChange={setHvacAssignments}
-              onHvacSeasonsChange={setHvacSeasons}
               onCurtainAssignmentsChange={setCurtainAssignments}
               revisionChanges={revisionDiff?.assignmentFields}
               curtainRevisionChanges={revisionDiff?.curtainAssignmentFields}
@@ -3101,7 +3130,14 @@ export default function ProjectScreen({
           {activeSubTab === "switch" && (
             <SwitchView
               key={activeRoomType.id}
-              switches={activeRoomType.switches}
+              switches={activeTstatOccupancy?.switches ?? activeRoomType.switches}
+              thermostatRegistrationPanel={(
+                <HvacAssignView assignments={activeRoomType.hvacAssignments} seasons={activeRoomType.hvacSeasons}
+                  projectName={project.name} roomTypeName={activeRoomType.name} roomTypeRevision={activeRoomType.revision}
+                  locations={project.locations} onAssignmentsChange={setHvacAssignments}
+                  onSeasonsChange={setHvacSeasons} canEdit={canEdit} />
+              )}
+              thermostatWarnings={activeTstatOccupancy?.warnings}
               backlightLevels={activeRoomType.backlightLevels}
               onBacklightLevelsChange={setBacklightLevels}
               scenes={activeRoomType.scenes}
@@ -3115,6 +3151,7 @@ export default function ProjectScreen({
               triggerMasters={triggerMasters}
               activeKind={activeSwitchKind}
               onActiveKindChange={setActiveSwitchKind}
+              buttonCopyBlocked={saveStatus === "savingDraft" || saveStatus === "savingProject" || saveStatus === "savingRevision" || isSavingBatchRevision}
               onChange={setSwitches}
               revisionChanges={revisionDiff?.switchFields}
               canEdit={canEdit}
@@ -3122,6 +3159,7 @@ export default function ProjectScreen({
           )}
           {activeSubTab === "command" && (
             <CommandView
+              operationBlocked={saveStatus === "savingDraft" || saveStatus === "savingProject" || saveStatus === "savingRevision" || isSavingBatchRevision}
               switches={activeRoomType.switches}
               scenes={activeRoomType.scenes}
               locations={project.locations}
@@ -3140,6 +3178,11 @@ export default function ProjectScreen({
           )}
           {activeSubTab === "backlight" && (
             <BacklightView
+              key={activeRoomType.id}
+              projectName={project.name}
+              roomTypeName={activeRoomType.name}
+              roomTypeRevision={activeRoomType.revision}
+              flushNameRef={flushBacklightNameRef}
               switches={activeRoomType.switches}
               backlightLevels={activeRoomType.backlightLevels}
               onChange={setSwitches}
@@ -3165,6 +3208,8 @@ export default function ProjectScreen({
                 circuits={activeRoomTypeCircuits}
                 projectRoomTypeEntries={cfsWindowRoomTypeEntries}
                 projectRemarks={project.remarks}
+                projectExcelSnapshot={project}
+                wattPerPdu={settings.wattPerPdu}
                 devices={devices}
                 fixtures={project.fixtures}
                 locations={project.locations}

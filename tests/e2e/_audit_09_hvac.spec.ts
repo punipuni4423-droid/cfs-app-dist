@@ -4,7 +4,7 @@
  *
  * アクセス導線:
  *   プロジェクト作成 → Room Type タブ → ルームタイプ作成(自動選択)
- *   → Device Assign サブタブ → サブモードチップ "HVAC" をクリック
+ *   → Switch サブタブ → Thermostat をクリック（旧 On/Off 導線確認は維持）
  *   → HvacAssignView (割り当てテーブル + Season Schedule) が表示される。
  *
  * 検証内容:
@@ -89,7 +89,7 @@ async function createRoomTypeAndSelect(page: Page, roomName: string): Promise<vo
   ).toBeVisible({ timeout: 8000 });
 }
 
-/** Device Assign サブタブ → HVAC サブモードへ */
+/** Device Assign の On/Off を確認し、Switch の Thermostat へ */
 async function openHvacView(page: Page, roomName: string): Promise<void> {
   await createRoomTypeAndSelect(page, roomName);
   await page.locator('[role="tab"]').filter({ hasText: /Device Assign/i }).first().click();
@@ -98,8 +98,9 @@ async function openHvacView(page: Page, roomName: string): Promise<void> {
   await expect(
     page.locator(".scene-area-chip").filter({ hasText: /On\/Off/i }).first(),
   ).toBeVisible({ timeout: 8000 });
-  // HVAC サブモードチップをクリック
-  const hvacChip = page.locator(".scene-area-chip").filter({ hasText: /^HVAC$/ }).first();
+  // Switch の Thermostat タブを開く
+  await page.getByRole("tab", { name: "Switch", exact: true }).click();
+  const hvacChip = page.getByRole("tablist", { name: "Switch type", exact: true }).getByRole("tab", { name: "Thermostat", exact: true });
   await expect(hvacChip).toBeVisible({ timeout: 5000 });
   await hvacChip.click();
   await page.waitForTimeout(400);
@@ -148,8 +149,8 @@ test.describe("AUDIT-09 HVAC 管理", () => {
   test("B. 割り当て行の追加とプロトコル/温度/Summer-Winter/Note 操作", async ({ page }) => {
     await openHvacView(page, "HvacRoom-B");
 
-    // "+ HVAC Add" で行追加
-    const addBtn = assignTable(page).locator(".btn-add-row, button.btn-add-row").filter({ hasText: /HVAC Add/i }).first();
+    // 登録表の行末から追加
+    const addBtn = assignTable(page).getByRole("button", { name: "Add Row (Thermostat)", exact: true });
     await expect(addBtn).toBeVisible({ timeout: 5000 });
     await addBtn.click();
     await page.waitForTimeout(300);
@@ -192,7 +193,7 @@ test.describe("AUDIT-09 HVAC 管理", () => {
   test("C. 割り当ての永続化 (local draft 保存 + 同タブ内再描画で保持)", async ({ page }) => {
     await openHvacView(page, "HvacRoom-C");
 
-    const addBtn = assignTable(page).locator(".btn-add-row").filter({ hasText: /HVAC Add/i }).first();
+    const addBtn = assignTable(page).getByRole("button", { name: "Add Row (Thermostat)", exact: true });
     await addBtn.click();
     await page.waitForTimeout(300);
 
@@ -223,9 +224,11 @@ test.describe("AUDIT-09 HVAC 管理", () => {
     expect(storedOk).toBe(true);
 
     // (2) サブモードを切り替えて戻る (再描画) → 値が保持されることを確認
+    await page.getByRole("tab", { name: "Device Assign", exact: true }).click();
     await page.locator(".scene-area-chip").filter({ hasText: /On\/Off/i }).first().click();
     await page.waitForTimeout(300);
-    await page.locator(".scene-area-chip").filter({ hasText: /^HVAC$/ }).first().click();
+    await page.getByRole("tab", { name: "Switch", exact: true }).click();
+    await page.getByRole("tablist", { name: "Switch type", exact: true }).getByRole("tab", { name: "Thermostat", exact: true }).click();
     await page.waitForTimeout(400);
     await shot(page, "05-after-remount");
 
@@ -237,7 +240,7 @@ test.describe("AUDIT-09 HVAC 管理", () => {
   test("D. Season Schedule の追加/編集/日付ピッカー", async ({ page }) => {
     await openHvacView(page, "HvacRoom-D");
 
-    const addSeasonBtn = page.locator("button").filter({ hasText: /\+ Season/ }).first();
+    const addSeasonBtn = seasonTable(page).getByRole("button", { name: "Add Row (Season)", exact: true });
     await expect(addSeasonBtn).toBeVisible({ timeout: 5000 });
 
     const rowsBefore = await seasonTable(page).locator("tbody tr").count();
@@ -278,7 +281,7 @@ test.describe("AUDIT-09 HVAC 管理", () => {
   test("E. 割り当て行の削除", async ({ page }) => {
     await openHvacView(page, "HvacRoom-E");
 
-    const addBtn = assignTable(page).locator(".btn-add-row").filter({ hasText: /HVAC Add/i }).first();
+    const addBtn = assignTable(page).getByRole("button", { name: "Add Row (Thermostat)", exact: true });
     await addBtn.click();
     await page.waitForTimeout(300);
 
@@ -288,15 +291,13 @@ test.describe("AUDIT-09 HVAC 管理", () => {
     const deleteBtn = assignTable(page)
       .locator("tbody tr:has(select)")
       .first()
-      .locator("button")
-      .filter({ hasText: /Delete/i })
-      .first();
+      .getByRole("button", { name: "Delete Thermostat", exact: true });
     await expect(deleteBtn).toBeVisible({ timeout: 3000 });
     await deleteBtn.click();
     await page.waitForTimeout(400);
 
     const rowsAfter = await assignTable(page).locator("tbody tr:has(select)").count();
-    const emptyState = await page.locator("text=No HVAC assignments are registered").count();
+    const emptyState = await assignTable(page).getByText("No Thermostats are registered. Add one below.", { exact: true }).count();
     expect(rowsAfter < rowsBefore || emptyState > 0).toBe(true);
     await shot(page, "07-after-delete");
   });

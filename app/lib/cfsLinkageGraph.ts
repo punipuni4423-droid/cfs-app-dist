@@ -6,6 +6,9 @@ import { buildAreaAddressAssignmentMap } from "./programming";
 import { hasMeaningfulBacklightSource } from "./switchSync";
 import { additionalCircuitNumbersOf } from "./zoneCircuitMerges";
 import { ccoLightingCircuit, isCcoLighting } from "./ccoLighting";
+import { deriveTstatOccupancy, isCfsSwitchControlActive } from "./tstatOccupancy";
+import { excludedCfsThermostatSwitchIds } from "./cfsThermostatColumns";
+import { hasTstatBindingQuarantine } from "./tstatBindingQuarantine";
 
 export type CfsLinkNodeGroup =
   | "Circuit"
@@ -356,7 +359,10 @@ export function buildCfsLinkageGraph(params: {
   circuits: CircuitEntry[];
   locations: LocationMaster[];
 }): CfsLinkageGraph {
-  const { roomType, circuits, locations } = params;
+  const { circuits, locations } = params;
+  const { switches, columnLabels } = deriveTstatOccupancy(params.roomType);
+  const excludedThermostatColumns = excludedCfsThermostatSwitchIds(params.roomType, switches);
+  const roomType = { ...params.roomType, switches };
   const nodes = createNodeStore();
   const issues = createIssueStore();
   const edges: CfsLinkEdge[] = [];
@@ -616,18 +622,22 @@ export function buildCfsLinkageGraph(params: {
 
   const switchSignatures = new Map<string, SwitchEntry[]>();
   for (const sw of roomType.switches) {
+    const active = isCfsSwitchControlActive(sw, roomType.hvacAssignments, roomType.switches);
+    const number = active ? columnLabels.get(sw.id) ?? sw.switchNumber : sw.switchNumber;
     const switchNodeId = `switch:${sw.id}`;
     const group = switchSourceGroup(sw);
     nodes.add({
       id: switchNodeId,
       group,
       kind: "record",
-      label: [sw.switchNumber, sw.switchName, sw.buttonFunction || sw.buttonLabel].filter(Boolean).join(" / ") || sw.id.slice(0, 6),
-      detail: [sw.kind, sw.condition].filter(Boolean).join(" / "),
+      label: [number, sw.switchName, sw.buttonFunction || sw.buttonLabel].filter(Boolean).join(" / ") || sw.id.slice(0, 6),
+      detail: [sw.kind, active ? "" : "Inactive TSTAT controls", sw.condition].filter(Boolean).join(" / "),
     });
+    // Keep a diagnostic node, never derive active edges from forensic controls.
+    if (hasTstatBindingQuarantine(sw)) continue;
 
     const signature = switchColumnSignature(sw);
-    if (sw.kind !== "command" && sw.kind !== "qsm" && clean(sw.switchNumber || sw.switchName)) {
+    if (active && sw.kind !== "command" && sw.kind !== "qsm" && !excludedThermostatColumns.has(sw.id) && clean(sw.switchNumber || sw.switchName)) {
       const list = switchSignatures.get(signature) ?? [];
       list.push(sw);
       switchSignatures.set(signature, list);
@@ -669,11 +679,11 @@ export function buildCfsLinkageGraph(params: {
       sourceId: sw.id,
       settings: sw.buttonSetting.circuitSettings,
       label: "Switch value",
-      editableFromCfs: true,
+      editableFromCfs: active,
       targetCatalog,
     });
 
-    const targets = hasMeaningfulBacklightSource(sw)
+    const targets = active && hasMeaningfulBacklightSource(sw)
       ? sw.backlightTarget.split(",").map((value) => clean(value)).filter(Boolean)
       : [];
     for (const target of targets) {

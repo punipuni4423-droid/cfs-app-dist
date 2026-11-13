@@ -1,5 +1,6 @@
 "use client";
 
+import AddRowButton from "./AddRowButton";
 import type { AddressMode, DeviceMaster } from "../types";
 import { CONTROL_OPTIONS, createEmptyDevice } from "../lib/constants";
 import { useDragReorder } from "../lib/useDragReorder";
@@ -214,15 +215,7 @@ export default function DevicesView({ devices, onChange }: DevicesViewProps) {
               })
             )}
           </tbody>
-          <tfoot>
-            <tr className="add-row-tr">
-              <td colSpan={12}>
-                <button className="btn-add-row" onClick={add} title="Add Row">
-                  + Add Row
-                </button>
-              </td>
-            </tr>
-          </tfoot>
+          <AddRowButton colSpan={12} onClick={add} title="Add Row" />
         </table>
       </div>
     </section>

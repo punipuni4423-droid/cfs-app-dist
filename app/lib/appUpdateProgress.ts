@@ -31,6 +31,18 @@ export interface AppUpdateStatus {
   };
 }
 
+export const STARTUP_MAINTENANCE_RUNNING_CODE = "startup_maintenance_running";
+export const STARTUP_MAINTENANCE_RUNNING_MESSAGE = "Startup maintenance is still finishing. Please try again in about a minute.";
+// Frozen bootstrap v1 busy ACK (scripts/cfs-update-bootstrap.ps1); the text is pinned there.
+const BOOTSTRAP_BUSY_MESSAGE = "An update or maintenance operation is already running.";
+
+/** Notice for a rejected POST /api/app-update/apply. The Update button stays enabled; no automatic retry. */
+export function applyRejectionNotice(payload: { error?: string; code?: string } | null): string {
+  if (payload?.code === STARTUP_MAINTENANCE_RUNNING_CODE) return payload.error || STARTUP_MAINTENANCE_RUNNING_MESSAGE;
+  if (payload?.error === BOOTSTRAP_BUSY_MESSAGE) return `${payload.error} If CFS was just started, startup maintenance may still be finishing. Please try again in about a minute.`;
+  return payload?.error ?? "Update could not be started.";
+}
+
 const STATES = new Set(["current", "available", "build_required", "blocked", "not_configured", "checking_failed"]);
 export function isAppUpdateStatus(value: unknown): value is AppUpdateStatus {
   if (!value || typeof value !== "object") return false;
