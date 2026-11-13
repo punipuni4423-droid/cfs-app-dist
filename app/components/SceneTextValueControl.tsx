@@ -5,6 +5,7 @@ import type { SceneValueMode } from "../types";
 import { canUseStandardValue } from "../lib/sceneValueMode";
 
 interface Props {
+  standardOnly?: boolean;
   value: string;
   mode: SceneValueMode;
   dimmingType: string;
@@ -17,7 +18,27 @@ interface Props {
 }
 
 /** Text stays literal unless the user confirms clearing it to return to Standard. */
-export default function SceneTextValueControl({ value, mode, dimmingType, label, disabled, standardAllowed, onModeChange, onChange, children }: Props) {
+export default function SceneTextValueControl(props: Props) {
+  if (props.standardOnly) {
+    const { value, mode, dimmingType, label, children } = props;
+    if (mode === "text") {
+      return <span className="cell-readonly" aria-label={`Saved text ${label}`} style={{ whiteSpace: "pre-wrap" }}>{value || "—"}</span>;
+    }
+    return (
+      <div onChangeCapture={(event) => {
+        if (!(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) return;
+        if (canUseStandardValue(event.target.value, dimmingType)) return;
+        event.stopPropagation();
+        event.target.value = value;
+      }}>
+        {children}
+      </div>
+    );
+  }
+  return <SceneTextModeControl {...props} />;
+}
+
+function SceneTextModeControl({ value, mode, dimmingType, label, disabled, standardAllowed, onModeChange, onChange, children }: Props) {
   const canSelectStandard = standardAllowed ?? canUseStandardValue(value, dimmingType);
   const [validationError, setValidationError] = useState("");
   const root = useRef<HTMLDivElement>(null);

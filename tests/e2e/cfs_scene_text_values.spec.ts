@@ -94,10 +94,10 @@ test("Mixed Inspection mode-only changes preserve each body and explicit clearin
   const ast = ts.createSourceFile("CfsView.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const functions: string[] = [];
   const visit = (node: ts.Node) => {
-    if (ts.isFunctionDeclaration(node) && ["inspectionCellModel", "changeInspectionCell"].includes(node.name?.text ?? "")) functions.push(node.getText(ast));
+    if (ts.isFunctionDeclaration(node) && ["inspectionCellModel", "isStandardOnlyInspectionCell", "inspectionSavedText", "changeInspectionCell"].includes(node.name?.text ?? "")) functions.push(node.getText(ast));
     ts.forEachChild(node, visit);
   };
-  visit(ast); expect(functions).toHaveLength(2);
+  visit(ast); expect(functions).toHaveLength(4);
   function run(values: string[], modes: ("standard" | "text")[] = ["standard", "standard"]) {
     const refs = values.map((value, index) => ({ key: String(index), targetId: String(index), areaId: "area", sourceType: "roomScene", sourceId: "scene", previousValue: value, previousValueMode: modes[index] }));
     const drafts: Record<string, { value: string; valueMode: string }> = {};
@@ -116,8 +116,8 @@ test("Mixed Inspection mode-only changes preserve each body and explicit clearin
     };
     const context = vm.createContext(env);
     vm.runInContext(ts.transpileModule(functions.join("\n"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
-    const model = () => vm.runInContext("inspectionCellModel({}, {roomScene:{}})", context);
-    const change = (mode: string, kind = "mode", value = "") => vm.runInContext(`changeInspectionCell({}, {roomScene:{}}, ${JSON.stringify(value)}, ${JSON.stringify(mode)}, ${JSON.stringify(kind)})`, context);
+    const model = () => vm.runInContext("inspectionCellModel({}, {roomScene:{},kind:'command'})", context);
+    const change = (mode: string, kind = "mode", value = "") => vm.runInContext(`changeInspectionCell({}, {roomScene:{},kind:"command"}, ${JSON.stringify(value)}, ${JSON.stringify(mode)}, ${JSON.stringify(kind)})`, context);
     return { env, model, change, history: () => history };
   }
   for (const values of [["50", "75"], ["0", "Off"]]) {
@@ -169,22 +169,24 @@ async function setup(page: Page, project = fixture()) {
 async function currentRoom(page: Page) { return (await readNativeDraftProject(page, "scene-text-project"))?.roomTypes[0]; }
 function roomSetting(page: Page) { return page.locator(".setting-overlay-panel .switch-individual-table tbody tr").filter({ hasText: "T140 Light" }); }
 
-test("Edit Text persists through save/reload and Project export includes unvisited tabs without saving", async ({ page }, info) => {
+test("CFS scene editor shows only lighting values and preserves saved text in project Excel", async ({ page }, info) => {
   test.setTimeout(150_000);
-  const state = await setup(page);
+  const project = fixture();
+  const lighting = project.roomTypes[0].roomScenes[0].settings.find((setting) => setting.circuitId === "t140-light")!;
+  lighting.percentage = text;
+  lighting.valueMode = "text";
+  const state = await setup(page, project);
   await expect(page.locator("table.cfs-matrix-table thead tr").first()).toContainText("Door Magnet Scene");
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await page.getByRole("button", { name: /Open Scene Setting Overlay for.*T140 Arrival/i }).click();
   const target = roomSetting(page);
-  await target.getByRole("radio", { name: "Text", exact: true }).click();
-  await target.getByRole("textbox", { name: /Text value/ }).fill(text);
-  await expect(target.getByRole("radio", { name: "Standard", exact: true })).toBeDisabled();
-  await expect(target.getByRole("button", { name: "+1", exact: true })).toHaveCount(0);
+  await expect(target.getByLabel(/Saved text/)).toHaveText(text, { useInnerText: true });
+  await expect(target.getByRole("radio")).toHaveCount(0);
+  await expect(target.getByRole("textbox")).toHaveCount(0);
   const onOff = page.locator(".setting-overlay-panel .switch-individual-table tbody tr").filter({ hasText: "OnOff Text load" });
-  await onOff.getByRole("radio", { name: "Text", exact: true }).click();
-  await onOff.getByRole("textbox", { name: /Text value/ }).fill("Door open: On\nDoor closed: Off");
+  await expect(onOff.getByRole("radio")).toHaveCount(0);
+  await onOff.getByRole("button", { name: "Off", exact: true }).click();
   await page.locator(".setting-overlay-panel").getByRole("button", { name: "Close", exact: true }).click();
-  await expect.poll(async () => (await currentRoom(page))?.roomScenes.find((scene) => scene.id === "t140-arrival")?.settings.find((setting) => setting.circuitId === "t140-light")).toMatchObject({ percentage: text, valueMode: "text" });
   await save(page);
   await page.reload(); await navigate(page);
   const before = JSON.stringify(state.projects);
@@ -197,153 +199,131 @@ test("Edit Text persists through save/reload and Project export includes unvisit
   const book = new ExcelJS.Workbook(); await book.xlsx.readFile(output);
   const contents: string[] = []; for (const sheet of book.worksheets) sheet.eachRow((row) => row.eachCell((cell) => contents.push(cell.text)));
   expect(contents).toContain(text);
-  expect(book.getWorksheet("Project Index")?.getColumn(1).values).toContain("Unvisited Room");
+  expect(book.getWorksheet("Project Index")?.getColumn(1).values).toContain("Unvisited Room Rev1.00");
   expect(book.worksheets.some((sheet) => sheet.name.includes("TSTAT"))).toBe(true);
   expect(JSON.stringify(state.projects)).toBe(before);
   expect(JSON.stringify(await readNativeDraftProject(page, "scene-text-project"))).toBe(beforeDraft);
   await page.locator("table.cfs-matrix-table").screenshot({ path: info.outputPath("door-and-text-cfs.png") });
 });
 
-test("Mixed Inspection UI mode selection retains targets through Undo Redo copy and Revert", async ({ page }) => {
+test("CFS Inspection uses the standard lighting input and rejects arbitrary text", async ({ page }) => {
   test.setTimeout(120_000);
-  const project = fixture(); const room = project.roomTypes[0];
-  const extra = { ...createEmptyCircuitEntry("MIXED-L2"), id: "mixed-light-2", circuitGroupId: "mixed-group-2", area: project.locations[0].id, dimmingType: "Phase", detail: "Mixed second load" };
-  project.circuits[0].dimmingType = "Phase";
-  project.circuits.push(extra); room.circuitIds = [...(room.circuitIds ?? []), extra.id];
-  room.deviceAssignments[0].additionalCircuitNumbers = [extra.designerNumber];
-  room.roomScenes[0].settings = [{ circuitId: "t140-light", percentage: "50" }, { circuitId: extra.id, percentage: "75" }];
-  room.roomScenes[1].settings = [{ circuitId: "t140-light", percentage: "0" }, { circuitId: extra.id, percentage: "Off" }];
-  const state = await setup(page, project); const original = JSON.stringify(state.projects);
-  const readValues = async (sceneIndex = 0) => (await currentRoom(page))?.roomScenes[sceneIndex].settings.filter((setting) => ["t140-light", extra.id].includes(setting.circuitId)).map((setting) => [setting.percentage, setting.valueMode ?? "standard"]);
-  await page.getByRole("button", { name: "InspectionMode", exact: true }).click();
-  await page.getByRole("button", { name: "Start Current Revision", exact: true }).click();
-  const row = page.locator("table.cfs-matrix-table tbody tr").filter({ hasText: "Z1" }).first();
-  const source = row.getByRole("button", { name: /Edit Inspection value.*T140 Arrival/ });
-  const destination = row.getByRole("button", { name: /Edit Inspection value.*T140 Departure/ });
-  const popover = page.locator(".cfs-inspection-popover:not(.cfs-low-high-popover)");
-  await source.click();
-  await expect(popover.getByRole("textbox", { name: /^Inspection value/ })).toHaveValue("");
-  await popover.getByRole("radio", { name: "Text", exact: true }).click();
-  await expect.poll(() => readValues()).toEqual([["50", "text"], ["75", "text"]]);
-  await popover.getByRole("button", { name: "OK", exact: true }).click();
-  await page.getByRole("button", { name: "Undo", exact: true }).click();
-  await expect.poll(() => readValues()).toEqual([["50", "standard"], ["75", "standard"]]);
-  await page.getByRole("button", { name: "Redo", exact: true }).click();
-  await expect.poll(() => readValues()).toEqual([["50", "text"], ["75", "text"]]);
-  await source.click();
-  await popover.getByRole("radio", { name: "Standard", exact: true }).click();
-  await expect.poll(() => readValues()).toEqual([["50", "standard"], ["75", "standard"]]);
-  await popover.getByRole("radio", { name: "Text", exact: true }).click();
-  await popover.getByRole("textbox", { name: /Text value/ }).fill("Explicit replacement");
-  await popover.getByRole("textbox", { name: /Text value/ }).fill("");
-  await expect.poll(() => readValues()).toEqual([["", "text"], ["", "text"]]);
-  await popover.getByRole("button", { name: "OK", exact: true }).click();
-  await page.getByRole("button", { name: "Undo", exact: true }).click();
-  await page.getByRole("button", { name: "Undo", exact: true }).click();
-  await expect.poll(() => readValues()).toEqual([["50", "text"], ["75", "text"]]);
-  const tools = page.getByLabel("Inspection selection tools", { exact: true });
-  await tools.getByRole("button", { name: "Select", exact: true }).click(); await source.click();
-  await tools.getByRole("button", { name: "Copy", exact: true }).click(); await destination.click();
-  await tools.getByRole("button", { name: "Paste", exact: true }).click();
-  await expect.poll(() => readValues(1)).toEqual([["0", "standard"], ["Off", "standard"]]);
-  await page.getByLabel("Inspection draft controls", { exact: true }).getByRole("button", { name: "Revert", exact: true }).click();
-  await expect.poll(() => readValues()).toEqual([["50", "standard"], ["75", "standard"]]);
-  expect(JSON.stringify(state.projects)).toBe(original);
-});
-
-test("Inspection Text supports mode-only change, Undo/Redo, Reset and confirmed save", async ({ page }, info) => {
-  test.setTimeout(150_000);
   const state = await setup(page);
   await page.getByRole("button", { name: "InspectionMode", exact: true }).click();
   await page.getByRole("button", { name: "Start Current Revision", exact: true }).click();
   const cell = page.locator("table.cfs-matrix-table tbody tr").filter({ hasText: "Z1" }).first().getByRole("button", { name: /Edit Inspection value.*T140 Arrival/ });
   await cell.click();
   const popover = page.locator(".cfs-inspection-popover:not(.cfs-low-high-popover)");
-  await popover.getByRole("radio", { name: "Text", exact: true }).click();
-  await expect(popover.getByRole("textbox", { name: /Text value/ })).toHaveValue("37");
+  await expect(popover.getByRole("radio")).toHaveCount(0);
+  const input = popover.getByRole("textbox", { name: /Inspection value/ });
+  await input.fill("not a lighting value");
+  await expect(input).toHaveValue("37");
+  await input.fill("51");
+  await expect(input).toHaveValue("51");
   await popover.getByRole("button", { name: "OK", exact: true }).click();
-  const controls = page.getByLabel("Inspection draft controls", { exact: true });
-  await page.getByRole("button", { name: "Undo", exact: true }).click();
-  await cell.click(); await expect(popover.getByRole("radio", { name: "Standard", exact: true })).toHaveAttribute("aria-checked", "true");
-  await popover.getByRole("button", { name: "OK", exact: true }).click();
-  await page.getByRole("button", { name: "Redo", exact: true }).click();
-  await cell.click(); await expect(popover.getByRole("radio", { name: "Text", exact: true })).toHaveAttribute("aria-checked", "true");
-  await popover.getByRole("textbox", { name: /Text value/ }).fill(text);
-  await popover.getByRole("button", { name: "Reset", exact: true }).click();
-  await cell.click(); await expect(popover.getByRole("radio", { name: "Standard", exact: true })).toHaveAttribute("aria-checked", "true");
-  await popover.getByRole("radio", { name: "Text", exact: true }).click();
-  await popover.getByRole("textbox", { name: /Text value/ }).fill(text);
-  await popover.getByRole("button", { name: "OK", exact: true }).click();
-  await cell.screenshot({ path: info.outputPath("inspection-text.png") });
   await page.getByRole("button", { name: "InspectionMode", exact: true }).click();
   await page.getByRole("dialog", { name: "Finish InspectionMode", exact: true }).getByRole("button", { name: "Finish Current Revision", exact: true }).click();
-  await expect(controls).toHaveCount(0);
-  const saved = state.projects[0] as unknown as ProjectData;
-  expect(saved.roomTypes[0].roomScenes.find((scene) => scene.id === "t140-arrival")?.settings.find((setting) => setting.circuitId === "t140-light")).toMatchObject({ percentage: text, valueMode: "text" });
-  expect(saved.roomTypes[0].inspectionMarks?.some((mark) => mark.value === text && mark.valueMode === "text")).toBe(true);
+  await expect.poll(() => (state.projects[0] as unknown as ProjectData).roomTypes[0].roomScenes[0].settings.find((setting) => setting.circuitId === "t140-light")).toMatchObject({ percentage: "51" });
 });
 
-test("Inspection linked Text and copy preserve source modes, then Revert restores the complete session", async ({ page }) => {
-  test.setTimeout(90_000);
-  const project = fixture(); const room = project.roomTypes[0];
-  room.roomScenes[0].settings = [];
+test("CFS Area Scene and Switch settings keep saved text visible without a text editor", async ({ page }) => {
+  test.setTimeout(120_000);
+  const project = fixture();
+  const room = project.roomTypes[0];
+  room.scenes[0].settings[0] = { circuitId: "t140-light", percentage: text, valueMode: "text" };
   room.roomScenes[0].areaSceneSelections = [{ areaId: project.locations[0].id, sceneId: room.scenes[0].id }];
-  const state = await setup(page, project);
-  const original = JSON.stringify(state.projects);
-  await page.getByRole("button", { name: "InspectionMode", exact: true }).click();
-  await page.getByRole("button", { name: "Start Current Revision", exact: true }).click();
-  const row = page.locator("table.cfs-matrix-table tbody tr").filter({ hasText: "Z1" }).first();
-  const source = row.getByRole("button", { name: /Edit Inspection value.*T140 Arrival/ });
-  const destination = row.getByRole("button", { name: /Edit Inspection value.*T140 Departure/ });
-  await source.click();
-  const popover = page.locator(".cfs-inspection-popover:not(.cfs-low-high-popover)");
-  await popover.getByRole("radio", { name: "Text", exact: true }).click();
-  await popover.getByRole("textbox", { name: /Text value/ }).fill(text);
-  await popover.getByRole("button", { name: "OK", exact: true }).click();
-  await expect.poll(async () => (await currentRoom(page))?.scenes[0].settings[0]).toMatchObject({ percentage: text, valueMode: "text" });
-  expect((await currentRoom(page))?.roomScenes[0].settings).toEqual([]);
-  const tools = page.getByLabel("Inspection selection tools", { exact: true });
-  await tools.getByRole("button", { name: "Select", exact: true }).click(); await source.click();
-  await tools.getByRole("button", { name: "Copy", exact: true }).click(); await destination.click();
-  await tools.getByRole("button", { name: "Paste", exact: true }).click();
-  await expect.poll(async () => (await currentRoom(page))?.roomScenes[1].settings.find((setting) => setting.circuitId === "t140-light")).toMatchObject({ percentage: text, valueMode: "text" });
-  await page.getByLabel("Inspection draft controls", { exact: true }).getByRole("button", { name: "Revert", exact: true }).click();
-  await expect(page.getByLabel("Inspection draft controls", { exact: true })).toHaveCount(0);
-  await expect.poll(async () => (await currentRoom(page))?.scenes[0].settings[0].percentage).toBe("45");
-  expect((await currentRoom(page))?.scenes[0].settings[0].valueMode).toBeUndefined();
-  expect((await currentRoom(page))?.roomScenes[1].settings.find((setting) => setting.circuitId === "t140-light")?.percentage).toBe("62");
-  expect(JSON.stringify(state.projects)).toBe(original);
-});
-
-test("CFS Edit opens Area Scene Text controls and explicit standard conversion keeps the value", async ({ page }) => {
-  test.setTimeout(90_000);
-  const project = fixture(); const room = project.roomTypes[0];
-  room.roomScenes[0].settings = [];
-  room.roomScenes[0].areaSceneSelections = [{ areaId: project.locations[0].id, sceneId: room.scenes[0].id }];
-  const state = await setup(page, project);
+  room.switches[0].buttonSetting.circuitSettings = [{ circuitId: "t140-light", percentage: "0045", valueMode: "text" }];
+  await setup(page, project);
   await page.getByRole("button", { name: "Edit", exact: true }).click();
-  const openDefinitions = async () => {
-    await page.getByRole("button", { name: /Open Scene Setting Overlay for.*T140 Arrival/i }).click();
-    await page.locator(".setting-overlay-panel").getByRole("button", { name: "Edit Area Scene definitions", exact: true }).click();
-    await expect(page.locator(".setting-overlay-panel")).toContainText("Area Scene Setting / Text area");
-  };
-  await openDefinitions();
-  const target = page.locator(".setting-overlay-panel table.scene-table tbody tr").filter({ hasText: "T140 Light" });
-  await target.getByRole("radio", { name: "Text", exact: true }).click();
-  await target.getByRole("textbox", { name: /Text value/ }).fill(text);
+  await page.getByRole("button", { name: /Open Scene Setting Overlay for.*T140 Arrival/i }).click();
+  await page.locator(".setting-overlay-panel").getByRole("button", { name: "Edit Area Scene definitions", exact: true }).click();
+  const areaTarget = page.locator(".setting-overlay-panel table.scene-table tbody tr").filter({ hasText: "T140 Light" });
+  await expect(areaTarget.getByLabel(/Saved text/)).toHaveText(text, { useInnerText: true });
+  await expect(areaTarget.getByRole("radio")).toHaveCount(0);
   await page.locator(".setting-overlay-panel").getByRole("button", { name: "Close", exact: true }).click();
-  await expect.poll(async () => (await currentRoom(page))?.scenes[0].settings.find((setting) => setting.circuitId === "t140-light")).toMatchObject({ percentage: text, valueMode: "text" });
-  await save(page);
-  expect((state.projects[0] as unknown as ProjectData).roomTypes[0].scenes[0].settings.find((setting) => setting.circuitId === "t140-light")).toMatchObject({ percentage: text, valueMode: "text" });
-  await openDefinitions();
-  await target.getByRole("textbox", { name: /Text value/ }).fill("50");
-  await target.getByRole("radio", { name: "Standard", exact: true }).click();
-  await expect(target.locator('[data-value-pane="standard"].is-active input.scene-level-input')).toHaveValue("50");
-  await page.locator(".setting-overlay-panel").getByRole("button", { name: "Close", exact: true }).click();
-  await expect.poll(async () => {
-    const project = await readNativeDraftProject(page, "scene-text-project");
-    const room = project?.roomTypes[0];
-    const setting = room?.scenes[0]?.settings.find((entry) => entry.circuitId === "t140-light");
-    return { project: Boolean(project), room: Boolean(room), setting: Boolean(setting), percentage: setting?.percentage, mode: setting?.valueMode };
-  }).toEqual({ project: true, room: true, setting: true, percentage: "50", mode: undefined });
+  await page.getByRole("button", { name: /Open Switch Setting Overlay for PD-BY \/ By Scene \/ 1/ }).click();
+  const switchTarget = roomSetting(page);
+  await expect(switchTarget.getByLabel(/Saved text/)).toHaveText("0045");
+  await expect(switchTarget.getByRole("radio")).toHaveCount(0);
+});
+
+const ccoDetails = ["Sheer Open", "Sheer Close", "Drape Open", "Drape Close"];
+
+function ccoFixture() {
+  const project = fixture();
+  const room = project.roomTypes[0];
+  room.deviceAssignments.push(...ccoDetails.map((detail, index) => ({
+    ...createEmptyDeviceAssignment(),
+    id: `text-cco-${index + 1}`,
+    device: "GCU-HOSP",
+    deviceNum: "1",
+    area: project.locations[0].id,
+    zoneAddress: `CCO${index + 1}`,
+    detail,
+  })));
+  return project;
+}
+
+function ccoRow(page: Page, detail: string) {
+  return page.locator(".setting-overlay-panel .switch-individual-table tbody tr")
+    .filter({ has: page.getByText(detail, { exact: true }) });
+}
+
+for (const tab of ["Scene", "Switch"] as const) {
+  test(`${tab} uses only standard controls for all four CCO rows`, async ({ page }) => {
+    await setup(page, ccoFixture());
+    await page.getByRole("tab", { name: tab, exact: true }).click();
+    if (tab === "Scene") {
+      await page.locator(".room-scene-pms-table tbody tr").first()
+        .getByRole("button", { name: "Setting", exact: true }).first().click();
+    } else {
+      await page.locator(".scene-area-chip").filter({ hasText: /^Palladiom$/ }).click();
+      await page.locator("tbody tr").filter({ hasText: "PD-BY" }).first()
+        .getByRole("button", { name: "Setting", exact: true }).first().click();
+    }
+    const panel = page.locator(".setting-overlay-panel");
+    await panel.getByRole("button", { name: "Scene Value", exact: true }).click();
+    const area = panel.getByRole("button", { name: /^> T140 Area/ });
+    if (await area.isVisible()) await area.click();
+    for (const [index, detail] of ccoDetails.entries()) {
+      const row = ccoRow(page, detail);
+      await expect(row.getByText(`CCO${index + 1}`, { exact: true })).toBeVisible();
+      await expect(row.getByRole("radio")).toHaveCount(0);
+      await expect(row.getByRole("textbox")).toHaveCount(0);
+      await expect(row.getByRole("button", { name: "On", exact: true })).toBeEnabled();
+      await expect(row.getByRole("button", { name: "Off", exact: true })).toBeEnabled();
+    }
+    const firstCco = ccoRow(page, ccoDetails[0]);
+    await firstCco.getByRole("button", { name: "On", exact: true }).click();
+    await expect(firstCco.getByRole("button", { name: "On", exact: true })).toHaveClass(/active/);
+  });
+}
+
+test("Command tab retains the text toggle on CCO rows", async ({ page }) => {
+  await setup(page, ccoFixture());
+  await page.getByRole("tab", { name: "Command", exact: true }).click();
+  await page.locator("tbody tr").filter({ has: page.locator(".setting-status-button") }).first()
+    .getByRole("button", { name: "Setting", exact: true }).first().click();
+  const panel = page.locator(".setting-overlay-panel");
+  await panel.getByRole("button", { name: "Scene Value", exact: true }).click();
+  await panel.getByRole("button", { name: /^> T140 Area/ }).click();
+  const row = ccoRow(page, ccoDetails[0]);
+  await expect(row.getByRole("radio", { name: "Standard", exact: true })).toBeVisible();
+  await row.getByRole("radio", { name: "Text", exact: true }).click();
+  await expect(row.getByRole("textbox", { name: /Text value/ })).toBeEnabled();
+});
+
+test("Command's own settings retain the text editor", async ({ page }) => {
+  test.setTimeout(90_000);
+  const project = fixture();
+  const command = project.roomTypes[0].switches.find((entry) => entry.kind === "command")!;
+  command.buttonSetting.circuitSettings = [{ circuitId: "t140-light", percentage: text, valueMode: "text" }];
+  await setup(page, project);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("button", { name: /Command Setting Overlay for.*T140 Command/ }).first().click();
+  await page.locator(".setting-overlay-panel").getByRole("button", { name: "Scene Value", exact: true }).click();
+  await page.locator(".setting-overlay-panel").getByRole("button", { name: /^> T140 Area/ }).click();
+  const target = roomSetting(page);
+  await expect(target.getByRole("radio", { name: "Text", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(target.getByRole("textbox", { name: /Text value/ })).toHaveValue(text);
 });

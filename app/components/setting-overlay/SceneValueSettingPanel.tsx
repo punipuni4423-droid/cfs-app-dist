@@ -2,11 +2,13 @@
 import type { ReactNode } from "react";
 import type { LocationMaster, Scene, SceneValueMode } from "../../types";
 import type { SettingTarget, SettingTargetGroup } from "../../lib/settingTargets";
+import { isLightingOrCcoSettingTarget } from "../../lib/settingTargets";
 import type { BulkSettingMode } from "../../lib/settingValues";
 import CurtainActionButtons from "../CurtainActionButtons";
 import SceneTextValueControl from "../SceneTextValueControl";
 
 interface SceneValueSettingPanelProps {
+  standardLightingAndCcoOnly?: boolean;
   areasWithScenes: LocationMaster[];
   scenes: Scene[];
   targetGroups: SettingTargetGroup[];
@@ -37,7 +39,7 @@ interface SceneValueSettingPanelProps {
 function isCurtainTarget(target: SettingTarget): boolean {
   return target.isCurtain === true || target.dimmingType === "Curtain";
 }
-export default function SceneValueSettingPanel({ areasWithScenes, scenes, targetGroups, canEdit, sceneForArea, onSceneForAreaChange, isAreaExpanded, onAreaToggle, areaHasSetting, bulk, valueForTarget, onTargetValueChange, onTargetStep, modeForTarget, onTargetModeChange, onTargetModeOnlyChange, standardAllowedForTarget, renderValueInput, cardClassName = '', children }: SceneValueSettingPanelProps): ReactNode {
+export default function SceneValueSettingPanel({ standardLightingAndCcoOnly, areasWithScenes, scenes, targetGroups, canEdit, sceneForArea, onSceneForAreaChange, isAreaExpanded, onAreaToggle, areaHasSetting, bulk, valueForTarget, onTargetValueChange, onTargetStep, modeForTarget, onTargetModeChange, onTargetModeOnlyChange, standardAllowedForTarget, renderValueInput, cardClassName = '', children }: SceneValueSettingPanelProps): ReactNode {
     return (
       <div className={`scene-card switch-setting-card ${cardClassName}`}>
         <div className="switch-setting-layout">
@@ -178,6 +180,7 @@ export default function SceneValueSettingPanel({ areasWithScenes, scenes, target
                                     <td>
                                       {onTargetModeChange && !isCurtainTarget(target) ? (
                                         <SceneTextValueControl value={value} mode={modeForTarget?.(target) ?? "standard"}
+                                          standardOnly={standardLightingAndCcoOnly && isLightingOrCcoSettingTarget(target)}
                                           dimmingType={target.dimmingType} label={target.circuitNumber || target.id} disabled={!canEdit}
                                           standardAllowed={standardAllowedForTarget?.(target)}
                                           onModeChange={mode => onTargetModeOnlyChange ? onTargetModeOnlyChange(target, mode) : onTargetModeChange(target, value, mode)}

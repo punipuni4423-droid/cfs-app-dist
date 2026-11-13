@@ -35,6 +35,10 @@ export interface SettingTargetGroup {
   targets: SettingTarget[];
 }
 
+export function isLightingOrCcoSettingTarget(target: SettingTarget): boolean {
+  return !target.hvacMetric && !target.isCurtain && target.dimmingType !== "Curtain" && !/^cci:/i.test(target.id);
+}
+
 export function settingTargetIds(target: SettingTarget): string[] {
   return target.groupCircuitIds && target.groupCircuitIds.length > 0
     ? target.groupCircuitIds

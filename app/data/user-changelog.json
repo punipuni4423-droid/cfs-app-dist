@@ -1,6 +1,14 @@
 {
   "entries": [
     {
+      "id": "2026-11-13-lighting-value-entry",
+      "date": "2026-11-13",
+      "title": "Lighting settings use standard values ／ 照明設定の入力を統一",
+      "items": [
+        "Area Scene, Scene, and Switch use the usual lighting value controls, including when opened from CFS. Scene and Switch also use the usual CCO controls. Previously saved text remains visible as read-only. ／ Area Scene・Scene・Switchの照明設定は、CFSから開いた場合も従来の照明値で入力します。Scene・SwitchのCCOも従来の選択肢を使います。入力済みの文字はそのまま表示します。"
+      ]
+    },
+    {
       "id": "2026-10-13-delete-unverified-save-warning",
       "date": "2026-10-13",
       "title": "Warning before deleting a project whose last save is unverified ／ 保存未確認の案件を削除する前に警告",

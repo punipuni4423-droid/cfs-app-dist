@@ -643,7 +643,7 @@ export default function SceneView({
     if (mode === "percent" && !valueForMode) return null;
 
     const targets = targetCircuitsForBulk()
-      .filter((circuit) => mode === "clear" || sceneSettingModeForCircuitGroup(selectedScene.settings, circuits, circuit) !== "text")
+      .filter((circuit) => sceneSettingModeForCircuitGroup(selectedScene.settings, circuits, circuit) !== "text")
       .map((circuit) => ({
         circuit,
         value: settingValueForBulkMode(mode, isOnOff(circuit), valueForMode),
@@ -702,7 +702,9 @@ export default function SceneView({
   }
 
   function hasBulkTargetsForMode(mode: BulkMode): boolean {
-    return targetCircuitsForBulk().some((circuit) => bulkModeAppliesToTarget(mode, isOnOff(circuit)));
+    return targetCircuitsForBulk().some((circuit) => selectedScene &&
+      sceneSettingModeForCircuitGroup(selectedScene.settings, circuits, circuit) !== "text" &&
+      bulkModeAppliesToTarget(mode, isOnOff(circuit)));
   }
 
   function getCircuitLabel(c: CircuitEntry): string {
@@ -1170,7 +1172,7 @@ export default function SceneView({
                         <span className="cell-readonly">{fixtureKindLabel(fixtureKind)}</span>
                       </td>
                       <td>
-                        <SceneTextValueControl value={value} mode={sceneSettingModeForCircuitGroup(selectedScene.settings, circuits, c)}
+                        <SceneTextValueControl standardOnly value={value} mode={sceneSettingModeForCircuitGroup(selectedScene.settings, circuits, c)}
                           dimmingType={c.dimmingType} label={getCircuitLabel(c)} disabled={!canEdit}
                           standardAllowed={circuitGroupMembers(circuits, c).every((member) => canUseStandardValue(selectedScene.settings.find((setting) => setting.circuitId === member.id)?.percentage ?? "", c.dimmingType))}
                           onModeChange={mode => changeCircuitSettingMode(c, mode)}

@@ -9,7 +9,7 @@
 - 選択: 独立チェックはcheckbox、排他選択はselectまたはradioの意味を維持する。外観だけで複数/単一選択の意味を変えない。
 - 一括選択: Switch、Command、Scene、Backlightでは件数表示・専用の読み上げを置かず、チェックボックスで各行の選択状態を示す。選択を切り替えても操作バーと表の位置を維持する。
 - SwitchのCopy: 元のボタンを再押下するとClearと同じように解除する。選択状態は既存のアクセント色と `aria-pressed` で示す。
-- Text入力: `SceneTextValueControl` の入力欄左に123（Standard）/Ab（Text）の直接切替を置き、英語aria/titleとradiogroupの矢印/Tab/disabledを保持する。両paneは同じgrid trackを共有し、mode切替のみでは行/設定paneの高さ・viewport/inner scroll・入力focusを変えない。本文と本人の明示resizeは保持する。Standardの新しい自由文を確定せず、旧本文や変換不能Textを黙って破棄しない。
+- 照明とCCOの設定値: Area Scene・Scene・Switchと、CFSから開く同じ設定は従来の照明値の入力欄を使う。Scene・SwitchのCCOも従来の選択肢を使う。保存済みのTextは本文と改行を読み取り専用で表示する。Commandなど切り替えが残る画面では123（Standard）/Ab（Text）の英語aria/titleとキーボード操作を保持し、切り替えで行の高さやスクロール、入力フォーカスを変えない。
 - 混在値: モードのみの切替と本文編集を別イベントとして扱い、各対象の本文を保持する。Editの確定・取消、Inspectionの確定・Undo/Redo/Revertは本文とmodeを一体で扱う。
 - Excel: 既存のExcel Exportスコープメニューを拡張し、Current/All RoomsとProject全タブの出力範囲を明示する。TSTATは既存toolbarのボタンを使用する。
 - Project出力の案内: 未確定Inspection/LowHighドラフトを含まないことと、必要な値を先に確定することを英語menu/tooltipで明示する。出力時の自動確定・保存は行わない。

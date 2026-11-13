@@ -3985,17 +3985,32 @@ export default function CfsView({
     };
   }
 
+  function isStandardOnlyInspectionCell(row: CfsZoneRow, col: FunctionColumn, refs: InspectionDraftRef[]): boolean {
+    if (row.isCurtain || ((row.isIoAssignment || row.inputKind === "CCO") && !row.ccoLighting)) return false;
+    return col.kind !== "command" || refs.some((ref) => ref.sourceType === "areaScene");
+  }
+
+  function inspectionSavedText(refs: InspectionDraftRef[]): string[] {
+    return refs.flatMap((ref) => {
+      const draft = inspectionDrafts[ref.key];
+      const mode = draft?.valueMode ?? sourceModeForInspectionDraft(ref.sourceType, ref.sourceId, ref.targetId);
+      return mode === "text" ? [draft?.value ?? sourceValueForInspectionDraft(ref.sourceType, ref.sourceId, ref.targetId)] : [];
+    });
+  }
+
   function changeInspectionCell(row: CfsZoneRow, col: FunctionColumn, value: string, requestedMode?: SceneValueMode, changeKind: "value" | "mode" = "value"): void {
     if (!canEdit || !inspectionMode || inspectionSavePendingRef.current) return;
     const model = inspectionCellModel(row, col);
     if (!model.editable) return;
     const valueMode = requestedMode ?? model.valueMode ?? "standard";
+    const refs = activeInspectionDraftRefsForCell(row, col);
+    if (refs.length === 0) return;
+    if (isStandardOnlyInspectionCell(row, col, refs) &&
+      (valueMode === "text" || model.valueMode === "text" || inspectionSavedText(refs).length > 0)) return;
     // Guard the writeback too (paste/other callers need not pass through an input).
     // Legacy loaded Standard bodies remain untouched until an explicit valid edit.
     if (changeKind === "value" && valueMode === "standard" && !canUseStandardValue(value, model.dimmingType)) return;
     const normalizedValue = normalizeInspectionInput(value, model.dimmingType, valueMode);
-    const refs = activeInspectionDraftRefsForCell(row, col);
-    if (refs.length === 0) return;
     // A mixed display value is a placeholder, never the body of its targets.
     // Mode changes retain each target's body; typing (including clearing) replaces it.
     const nextValueForRef = (ref: InspectionDraftRef) => changeKind === "mode"
@@ -4356,6 +4371,10 @@ export default function CfsView({
     const model = inspectionCellModel(row, col);
     if (!model.editable) return null;
     const originalValue = inspectionOriginalDisplayValue(row, col, model.dimmingType);
+    const refs = activeInspectionDraftRefsForCell(row, col);
+    const standardOnly = isStandardOnlyInspectionCell(row, col, refs);
+    const savedText = standardOnly ? inspectionSavedText(refs) : [];
+    const readOnlyText = standardOnly && (model.valueMode === "text" || savedText.length > 0);
     const title = functionColumnLabel(col);
     const popover = (
       <div
@@ -4377,7 +4396,9 @@ export default function CfsView({
           <div className="cfs-inspection-popover-title" title={title}>{title}</div>
           <div className="cfs-inspection-current-value" title="Original value">{originalValue}</div>
         </div>
-        <SceneTextValueControl value={model.value} mode={model.valueMode ?? "standard"} dimmingType={model.dimmingType}
+        <SceneTextValueControl standardOnly={standardOnly}
+          value={readOnlyText ? [...new Set(savedText)].join("\n") || model.value || (model.placeholder === "Mixed" ? "Mixed" : "") : model.value}
+          mode={readOnlyText ? "text" : model.valueMode ?? "standard"} dimmingType={model.dimmingType}
           label={`Inspection ${title}`} disabled={!canEdit || inspectionSavePending}
           standardAllowed={model.standardAllowed}
           onModeChange={(mode) => changeInspectionCell(row, col, model.value, mode, "mode")}

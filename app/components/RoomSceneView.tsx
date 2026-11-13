@@ -35,7 +35,7 @@ import ActionIconButton from "./ActionIconButton";
 import DragHandle from "./DragHandle";
 import AutoGrowTextarea from "./AutoGrowTextarea";
 import Combobox from "./Combobox";
-import { buildSettingTargetGroups, hvacSettingTargets as buildHvacSettingTargets, settingTargetIds, type SettingTarget } from "../lib/settingTargets";
+import { buildSettingTargetGroups, hvacSettingTargets as buildHvacSettingTargets, isLightingOrCcoSettingTarget, settingTargetIds, type SettingTarget } from "../lib/settingTargets";
 import {
   bulkModeAppliesToTarget,
   clampPercentValue,
@@ -524,7 +524,7 @@ export default function RoomSceneView({
   function applyAreaBulk(scene: RoomScene, areaTargets: SettingTarget[], mode: BulkSettingMode, key: string): void {
     let nextScene = scene;
     for (const target of areaTargets) {
-      if (mode !== "clear" && settingTargetMode(scene, target) === "text") continue;
+      if (settingTargetMode(scene, target) === "text" && (mode !== "clear" || isLightingOrCcoSettingTarget(target))) continue;
       if (isCurtainTarget(target) && mode !== "clear") continue;
       const value = settingValueForBulkMode(mode, target.isOnOff, areaBulkValues[key] || "");
       if (value !== null) {
@@ -542,6 +542,7 @@ export default function RoomSceneView({
   function renderSettingPanel(scene: RoomScene): ReactNode {
     return (
       <SceneValueSettingPanel
+        standardLightingAndCcoOnly
         areasWithScenes={areasWithScenes} scenes={scenes} targetGroups={areaGroups} canEdit={canEdit}
         sceneForArea={areaId => selectedAreaSceneId(scene, areaId)}
         onSceneForAreaChange={(areaId, sceneId) => applyAreaScene(scene, areaId, sceneId)}

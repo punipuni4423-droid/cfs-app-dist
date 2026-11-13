@@ -39,7 +39,7 @@ import DragHandle from "./DragHandle";
 import AutoGrowTextarea from "./AutoGrowTextarea";
 import Combobox from "./Combobox";
 import ResizableMatrixScroll from "./ResizableMatrixScroll";
-import { buildSettingTargetGroups, hvacSettingTargets as buildHvacSettingTargets, settingTargetIds, type SettingTarget } from "../lib/settingTargets";
+import { buildSettingTargetGroups, hvacSettingTargets as buildHvacSettingTargets, isLightingOrCcoSettingTarget, settingTargetIds, type SettingTarget } from "../lib/settingTargets";
 import HvacSettingPanel from "./HvacSettingPanel";
 import {
   buildPirRegistrationCounts,
@@ -894,7 +894,7 @@ export default function SwitchView({
   ): void {
     updateButtonSetting(sw.id, (current, row) =>
       areaTargets.reduce((next, target) => {
-        if (mode !== "clear" && targetValueMode(next, target) === "text") return next;
+        if (targetValueMode(next, target) === "text" && (mode !== "clear" || isLightingOrCcoSettingTarget(target))) return next;
         if (isCurtainTarget(target) && mode !== "clear") return next;
         const value = settingValueForBulkMode(mode, target.isOnOff, areaBulkValues[key] || "");
         return value === null
@@ -1410,6 +1410,7 @@ export default function SwitchView({
   function renderSettingPanel(sw: SwitchEntry): ReactNode {
     return (
       <SceneValueSettingPanel
+        standardLightingAndCcoOnly
         areasWithScenes={areasWithScenes} scenes={scenes} targetGroups={settingTargetGroups} canEdit={canEdit}
         sceneForArea={areaId => sceneForArea(sw, areaId)}
         onSceneForAreaChange={(areaId, sceneId) => setSceneForArea(sw, areaId, sceneId)}
