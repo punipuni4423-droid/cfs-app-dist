@@ -1,9 +1,12 @@
 import path from "node:path";
-import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import { spawn } from "node:child_process";
 
 export type BootstrapStartResult = { state: "started" | "busy" | "failed" | "unknown"; message: string };
+
+// Canonical LF bytes. Keep this pin and UPDATE_CFS_APP.cmd in sync when
+// changing scripts/cfs-update-bootstrap.ps1.
+const UPDATE_ENTRY_SHA256 = "f9d586ffbd64827c980165f670681538d095bf96057aa178664efef4c3fb0ded";
 
 /**
  * The launcher (-RunStartup) and the frozen bootstrap both hold
@@ -101,12 +104,17 @@ export async function startBootstrap(args: string[], appRoot: string, attemptId:
 }
 
 export function buildBootstrapInvocation(options: { appDir: string; port: string; hostName: string; expectedHead: string; startedAt: string; attemptId: string; repairBuild: boolean }): string[] {
-  const cached = path.join(options.appDir, '.cfs-updater', 'bootstrap-v1.ps1');
-  const bootstrap = existsSync(cached) ? cached : path.join(options.appDir, 'scripts', 'cfs-update-bootstrap.ps1');
+  const bootstrap = path.join(options.appDir, 'scripts', 'cfs-update-bootstrap.ps1');
   const command = [
     "$ErrorActionPreference='Stop';",
-    `$cursor=${psString(bootstrap)}; while($cursor){ if(Test-Path -LiteralPath $cursor){if((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Update path is a reparse point.'}}; $cursor=[IO.Path]::GetDirectoryName($cursor) };`,
-    `& ${psString(bootstrap)} -AppDir ${psString(options.appDir)} -Port ${psString(options.port)} -HostName ${psString(options.hostName)} -ExpectedHead ${psString(options.expectedHead)} -StartedAt ${psString(options.startedAt)} -AttemptId ${psString(options.attemptId)} -ApiHandshake${options.repairBuild ? ' -RepairBuild' : ''}; exit $LASTEXITCODE;`,
+    `$entry=${psString(bootstrap)}; $cursor=$entry; while($cursor){ if(Test-Path -LiteralPath $cursor){if((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Update path is a reparse point.'}}; $cursor=[IO.Path]::GetDirectoryName($cursor) };`,
+    // A local edit or commit can escape git status. Execute the same bytes
+    // checked against the release pin, without loading the file again.
+    "$utf8=[Text.UTF8Encoding]::new($false,$true); $scriptText=$utf8.GetString([IO.File]::ReadAllBytes($entry));",
+    "$bytes=$utf8.GetBytes($scriptText.Replace([string][char]13+[char]10,[string][char]10));",
+    "$hash=[Security.Cryptography.SHA256]::Create(); try {$actual=([BitConverter]::ToString($hash.ComputeHash($bytes))).Replace('-','')} finally {$hash.Dispose()};",
+    `if($actual -ine '${UPDATE_ENTRY_SHA256}'){throw 'The installed update entry does not match this release.'}; $entry=[scriptblock]::Create($scriptText.TrimStart([char]0xFEFF));`,
+    `& $entry -AppDir ${psString(options.appDir)} -Port ${psString(options.port)} -HostName ${psString(options.hostName)} -ExpectedHead ${psString(options.expectedHead)} -StartedAt ${psString(options.startedAt)} -AttemptId ${psString(options.attemptId)} -ApiHandshake${options.repairBuild ? ' -RepairBuild' : ''}; exit $LASTEXITCODE;`,
   ].join(' ');
   return ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')];
 }

@@ -11,16 +11,20 @@ UPDATE_CFS_APP.cmd
 
 別のアプリや別フォルダのCFSを停止してポートを奪うことはしません。利用中の正しいフォルダとポートを指定してください。アプリ未起動の場合もこの入口を使えます。
 
-## まだ独立入口のないGit管理版
+## 古い入口で止まる場合や独立入口のないGit管理版
 
 配布担当者から、公開済みの固定コミットに対応した `scripts/cfs-update-bootstrap.ps1` 単体とSHA256を受け取り、ハッシュを照合してアプリ外の作業フォルダへ保存します。例えば `C:\CFS-Recovery\cfs-update-bootstrap.ps1` から、既存インストール先を明示して実行します。PowerShellの実行ポリシー変更をPC全体に保存する必要はありません。
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath 'C:\CFS-Recovery\cfs-update-bootstrap.ps1'
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File 'C:\CFS-Recovery\cfs-update-bootstrap.ps1' -AppDir 'C:\CFS App' -Port 3014 -RepairBuild
+$entry = 'C:\CFS-Recovery\cfs-update-bootstrap.ps1'
+$expected = Read-Host 'SHA-256 supplied by the release owner'
+if ($expected -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash -Algorithm SHA256 -LiteralPath $entry).Hash -ne $expected) {
+  throw 'Recovery file does not match the published checksum.'
+}
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $entry -AppDir 'C:\CFS App' -Port 3014 -RepairBuild
 ```
 
-この単体スクリプトはアプリや古いworkerを必要とせず、OSのPowerShellと同梱Gitを使います。公式公開リポジトリから同一コミットの新workerとhelperを取得して実行します。初回成功後はインストール先の `UPDATE_CFS_APP.cmd` を使います。配布担当者の最終検証を終えていない候補スクリプトは使わないでください。
+この単体スクリプトはアプリや古い更新処理を必要とせず、OSのPowerShellと同梱Gitを使います。公式公開リポジトリから同一コミットの更新処理と補助ファイルを取得して実行します。初回成功後は、画面のUpdateかインストール先の `UPDATE_CFS_APP.cmd` を使います。更新後はどちらもインストール済みの新しい入口を優先し、保存済みの旧入口は控えとして残ります。配布担当者の最終検証を終えていない候補スクリプトは使わないでください。
 
 ## 停止した場合
 
@@ -30,6 +34,8 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File 'C:\CFS-
 - buildや起動確認の失敗は `artifacts/self-update/status.json` と更新ログへ記録します。原因を直した公開版が出たら同じ入口から取り込めます。古いruntimeが存在するだけでは自動起動しません。
 - ログファイルを別の処理が開いていても、ログの書込み障害だけでは更新を中断しません。ログの一部を書けなかった場合は `status.json` の `logWarning` に残します。更新コマンド自体の失敗は `failed` のまま保持し、`failure` に原因調査用の例外情報を記録します。状態ファイルも書けない場合は、そこに最新結果があるとは判断できません。
 - 別の更新・起動処理が実行中なら待ちます。`.cfs-updater/maintenance.lock` はファイルの存在でなくOSの排他ハンドルで判定するので、残ったファイルを削除する必要はありません。
+- PowerShellの処理を識別できないと表示された場合は、表示の処理番号、生成時刻、理由を控えて配布担当者に伝えてください。停止中に別の更新を始めたり、番号だけで処理を終了したりしないでください。
+- 更新後の入口が見つからない場合や、入口の内容を照合できない場合は、上記の単体の復旧用ファイルを使ってください。
 
 `.cfs-updater/bootstrap-v1.ps1` は保全する入口、`repository.git` と `stages` は取得用キャッシュです。キャッシュ異常で停止した場合は、すべての起動・更新プロセスが終了したことを確認してから配布担当者と復旧してください。`data`、公開設定、同梱runtime、保全入口を削除する `git clean` やフォルダの丸ごと上書きは行わないでください。
 

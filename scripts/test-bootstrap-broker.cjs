@@ -7,13 +7,23 @@ const ts = require('typescript');
 const Module = require('node:module');
 const source = path.resolve(__dirname, '..');
 const helperPath = path.join(source, 'app/lib/appUpdateLaunch.ts');
-const loaded = new Module(helperPath, module);
-loaded.filename = helperPath; loaded.paths = module.paths;
-loaded._compile(ts.transpileModule(fs.readFileSync(helperPath, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true } }).outputText, helperPath);
-const helper = loaded.exports;
+const sourceCode = fs.readFileSync(helperPath, 'utf8');
+const sha256 = text => crypto.createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex');
+const productPin = sha256(fs.readFileSync(path.join(source, 'scripts/cfs-update-bootstrap.ps1'), 'utf8'));
+assert(sourceCode.includes(productPin), 'Refresh the browser pin when changing the installed bootstrap');
+function fixtureHelper(dir) {
+  const fixturePin = fs.readFileSync(path.join(dir, 'fixture-pin.txt'), 'utf8');
+  const loaded = new Module(helperPath, module);
+  loaded.filename = helperPath; loaded.paths = module.paths;
+  loaded._compile(ts.transpileModule(sourceCode.replace(productPin, fixturePin), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true } }).outputText, helperPath);
+  return loaded.exports;
+}
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 function options(dir, attemptId) { return { appDir: dir, port: '3096', hostName: '127.0.0.1', expectedHead: 'a'.repeat(40), startedAt: new Date().toISOString(), attemptId, repairBuild: true }; }
-async function launch(dir, attemptId) { return helper.startBootstrap(helper.buildBootstrapInvocation(options(dir, attemptId)), dir, attemptId); }
+async function launch(dir, attemptId) {
+  const helper = fixtureHelper(dir);
+  return helper.startBootstrap(helper.buildBootstrapInvocation(options(dir, attemptId)), dir, attemptId);
+}
 if (process.argv[2] === '--parent') {
   const [dir, attemptId] = process.argv.slice(3);
   launch(dir, attemptId).then(ack => { fs.writeFileSync(path.join(dir, 'parent-ack.json'), JSON.stringify({ ack, at: new Date().toISOString() })); });
@@ -62,6 +72,7 @@ try{
 exit 0
 `;
     fs.writeFileSync(path.join(dir, 'scripts/cfs-update-bootstrap.ps1'), body);
+    fs.writeFileSync(path.join(dir, 'fixture-pin.txt'), sha256(body));
     return dir;
   }
   for (const state of ['started', 'busy', 'failed', 'throw']) {
@@ -83,12 +94,18 @@ exit 0
   assert.equal(unknown.state, 'unknown'); assert(Date.now() - started >= 19500);
   results.push({ name: 'missing ACK and unrelated attempt remain unknown', elapsedMs: Date.now() - started });
   const collisionDir = fixture('collision', { state: 'started' }), id = crypto.randomUUID();
+  const helper = fixtureHelper(collisionDir);
   await helper.reserveBootstrapAcknowledgement(collisionDir, id);
   await assert.rejects(() => helper.reserveBootstrapAcknowledgement(collisionDir, id), /EEXIST/);
   const linked = path.join(root, 'reparse'); fs.mkdirSync(linked);
   fs.symlinkSync(path.join(collisionDir, 'artifacts'), path.join(linked, 'artifacts'), 'junction');
   await assert.rejects(() => helper.reserveBootstrapAcknowledgement(linked, crypto.randomUUID()), /plain directory/);
   results.push({ name: 'reservation collision and reparse rejected' });
+  const modified = fixture('modified', { state: 'started', holdMs: 0 });
+  fs.appendFileSync(path.join(modified, 'scripts/cfs-update-bootstrap.ps1'), '\n# locally modified\n');
+  assert.equal((await launch(modified, crypto.randomUUID())).state, 'failed');
+  assert(!fs.existsSync(path.join(modified, 'after-ack.json')));
+  results.push({ name: 'an altered tracked entry is refused before execution' });
   const attemptId = crypto.randomUUID();
   const dir = fixture('parent-stop-日本語 space', { state: 'started', holdMs: 4000, killParent: true, parentId: 0 });
   const parent = spawn(process.execPath, [__filename, '--parent', dir, attemptId], { stdio: 'ignore', windowsHide: true });

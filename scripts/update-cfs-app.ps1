@@ -565,7 +565,7 @@ Start-CfsUpdateMonitor
 Write-UpdateStatus -State "running" -Step "start" -Message "Preparing self update." -Progress 5
 Write-Log "CFS self update started. AppDir=$appPath Port=$Port HostName=$HostName"
 Set-CfsObservationOperation 'legacy-worker-check'
-Assert-CfsNoLegacyUpdateWorker $appPath
+Assert-CfsUpdatePowerShellIdle $appPath
 Set-CfsObservationOperation '' -End
 Clear-NextRuntimeEnvironmentForBuild
 

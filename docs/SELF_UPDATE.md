@@ -43,8 +43,8 @@ Git管理ZIPの場合、利用者PCにGit for Windowsが無くても、同梱の
 App Updateと独立CMDは共通のbootstrapを通り、次の順番で処理します。
 
 1. 公式remote・branch・現在HEAD・追跡ファイルを検査します。利用者の編集を自動checkoutで消す処理は行いません。
-2. `.cfs-updater/maintenance.lock` の排他を取得してから実行状態を公開します。旧更新プロセスを識別できない場合や別の更新・起動処理がある場合は停止します。
-3. 公式公開Gitから取得した固定コミットの契約ファイルを検査し、workerと必要helperを同じコミットからステージへ展開・blob照合します。既存の `.cfs-updater/bootstrap-v1.ps1` は更新ごとに上書きしません。
+2. `.cfs-updater/maintenance.lock` の排他を取得してから実行状態を公開します。読み取れないPowerShellの処理は番号と生成時刻を使って短時間で再確認します。終了が確認できない処理の関係を判断できない場合や、同じインストール先の更新・起動処理がある場合は停止します。
+3. 公式公開Gitから取得した固定コミットの契約ファイルを検査し、workerと必要helperを同じコミットからステージへ展開・blob照合します。画面のUpdateと独立CMDは、インストール済みの新しい入口を優先します。既存の `.cfs-updater/bootstrap-v1.ps1` は控えとして保全します。旧入口で停止する場合は [独立Git復旧の手順](../GIT_RECOVERY_GUIDE_JA.md) を参照してください。
 4. 新しいworkerへ実排他ハンドルと期待HEAD・固定targetを渡します。両版で `data` と `.cfs-updater` がGit追跡対象外か確認し、旧保存先が非空なら移行案内で停止します。dirty・ahead・分岐を拒否し、検査済みtargetへ `git merge --ff-only` だけを適用します。
 5. 同梱Node.js 20以上とnpmを優先して準備します。文書だけの変更でもビルドと起動検証を行い、過去のbuild失敗を文書更新で成功扱いにしません。
 6. コード更新では対象CFSの全書込プロセスを停止し、`data`全体を`artifacts/data-recovery`へ原文でバックアップ・照合します。停止やロック状態、保全を確認できなければ進めません。

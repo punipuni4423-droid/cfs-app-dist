@@ -141,23 +141,88 @@ function Write-BootstrapStatus {
   } finally { if ([IO.File]::Exists($temporary)) { try { [IO.File]::Delete($temporary) } catch { } } }
 }
 
-function Assert-BootstrapNoOldWorker {
+function Assert-CfsUpdatePowerShellIdle {
   param([string]$Root)
-  $normalRoot = $Root.Replace('/', '\').TrimEnd('\')
-  foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" -ErrorAction Stop)) {
-    if ([int]$process.ProcessId -eq $PID) { continue }
-    $command = [string]$process.CommandLine
-    if ([string]::IsNullOrWhiteSpace($command)) { throw 'A PowerShell process cannot be identified. Close previous update windows before retrying.' }
-    if ($command -match '(?i)-(?:EncodedCommand|enc)\s+["'']?([A-Za-z0-9+/=]+)') {
-      try { $command += ' ' + [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches[1])) }
-      catch { throw 'An encoded PowerShell process cannot be identified. Close previous update windows before retrying.' }
+  $normalRoot = [IO.Path]::GetFullPath($Root).Replace('/', '\').TrimEnd('\')
+  $rootPattern = '(?i)' + [regex]::Escape($normalRoot) + '(?=[\\''";)]|$)|' + [regex]::Escape($normalRoot) + '(?=\s+-[A-Za-z])'
+  $entryPattern = '(?:update-cfs-app|cfs-update-bootstrap|bootstrap-v1)\.ps1'
+  # Recognize actual script invocations, including quoted relative paths.
+  $scriptArgument = '(?:"([^"]*' + $entryPattern + ')"|''([^'']*' + $entryPattern + ')''|([^\s"'';]*' + $entryPattern + '))(?=[\s;"'']|$)'
+  $invocationPattern = '(?i)(?:\s-(?:File|f)\s+|(?:^|[;{]\s*|\s)&\s+)' + $scriptArgument
+  $pending = @{}
+  for ($observation = 1; $observation -le 3; $observation++) {
+    $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" -OperationTimeoutSec 2 -ErrorAction Stop)
+    foreach ($process in $processes) {
+      $processId = [int]$process.ProcessId
+      if ($processId -eq $PID) { continue }
+      if ($processId -le 0) { throw 'A PowerShell process has no usable process number. Update was refused.' }
+      $created = if ($process.CreationDate -is [datetime]) { $process.CreationDate.ToUniversalTime().ToString('o') } else { 'unknown' }
+      $command = [string]$process.CommandLine
+      if ([string]::IsNullOrWhiteSpace($command) -or $created -eq 'unknown') {
+        $pending[$processId] = $created
+        continue
+      }
+      # A complete row, including a replacement with a reused PID, is
+      # classified by its own command. It is never accepted by PID alone.
+      if ($pending.ContainsKey($processId)) {
+        $previous = $pending[$processId]
+        if ($previous -ne 'unknown' -and $previous -cne $created) {
+          Write-Verbose "PowerShell process number reused. [pid=$processId; created=$created; reason=reidentified]"
+        }
+        $pending.Remove($processId)
+      }
+      $decoded = ''
+      $startup = ($command -split '(?i)\s+-(?:Command|File|c|f)(?:\s|$)',2)[0]
+      if ($startup -match '(?i)(?:^|\s)-(?:EncodedCommand|enc|ec|e)(?:\s|$)') {
+        try {
+          $encoded = [regex]::Match($startup, '(?i)(?:^|\s)-(?:EncodedCommand|enc|ec|e)\s+["'']?([A-Za-z0-9+/=]+)(?=["''\s]|$)')
+          if (-not $encoded.Success) { throw 'Missing encoded command.' }
+          $decoded = [Text.UnicodeEncoding]::new($false,$false,$true).GetString([Convert]::FromBase64String($encoded.Groups[1].Value))
+          $command += ' ' + $decoded
+        }
+        catch { throw "An encoded PowerShell process cannot be identified. Update was refused. [pid=$processId; created=$created; reason=invalid-encoded-command]" }
+      }
+      $normalCommand = $command.Replace('/', '\').Replace("''", "'")
+      if ($command -notmatch $entryPattern) { continue }
+      $invocation = [regex]::Match($normalCommand, $invocationPattern)
+      if (-not $invocation.Success) {
+        $commandBody = if ($decoded) { $decoded } else { ($command -split '(?i)\s+-(?:Command|c)\s+',2 | Select-Object -Skip 1) }
+        if ($commandBody) {
+          $commandBody = $commandBody.Replace([char]47, [char]92).TrimStart().TrimStart('"')
+          $invocation = [regex]::Match($commandBody, '(?i)^' + $scriptArgument)
+        }
+      }
+      # The verified launchers invoke captured script text rather than a path.
+      $capturedEntry = $normalCommand -match '(?i)&\s+\$entry\s+-AppDir|&\s+\(\[scriptblock\]::Create\(\$scriptText'
+      if (-not $invocation.Success -and -not $capturedEntry) { continue }
+      if ($normalCommand -match $rootPattern) {
+        throw "A previous update process still exists for this installation. Wait for it to finish. [pid=$processId; created=$created; reason=same-installation]"
+      }
+      if ($invocation.Success) {
+        $argument = @($invocation.Groups | Select-Object -Skip 1 | Where-Object Success)[0].Value
+        if ($argument -notmatch '^(?:[A-Z]:\\|\\\\)') {
+          throw "A PowerShell update process has no identifiable installation. Update was refused. [pid=$processId; created=$created; reason=unknown-installation]"
+        }
+      }
     }
-    $normalCommand = $command.Replace('/', '\').Replace("''", "'")
-    $rootPattern = '(?i)' + [regex]::Escape($normalRoot) + '(?=[\\\s''";)]|$)'
-    if ($normalCommand -match $rootPattern -and $command -match '(?i)update-cfs-app\.ps1|cfs-update-bootstrap\.ps1|bootstrap-v1\.ps1') {
-      throw 'A previous update process still exists for this installation. Wait for it to finish.'
+
+    foreach ($processId in @($pending.Keys)) {
+      try {
+        $process = Get-Process -Id $processId -ErrorAction Stop
+        if ($process -is [IDisposable]) { $process.Dispose() }
+      } catch {
+        if ($_.FullyQualifiedErrorId -ne 'NoProcessFoundForGivenId,Microsoft.PowerShell.Commands.GetProcessCommand' -or
+            $_.CategoryInfo.Category -ne [Management.Automation.ErrorCategory]::ObjectNotFound) {
+          throw "A PowerShell process cannot be identified. Update was refused. [pid=$processId; created=$($pending[$processId]); reason=process-query-failed]"
+        }
+        $pending.Remove($processId)
+      }
     }
+    if ($pending.Count -eq 0) { return }
+    if ($observation -lt 3) { Start-Sleep -Milliseconds 100 }
   }
+  $processId = @($pending.Keys | Sort-Object)[0]
+  throw "A PowerShell process cannot be identified. Update was refused. [pid=$processId; created=$($pending[$processId]); reason=incomplete-identity]"
 }
 
 function Get-BootstrapSnapshot {
@@ -244,7 +309,7 @@ try {
   $lockPath = Assert-BootstrapPlainPath (Join-Path $cacheRoot 'maintenance.lock')
   try { $script:bootstrapLock = [IO.File]::Open($lockPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None) }
   catch [IO.IOException] { Send-BootstrapAck 'busy' 'An update or maintenance operation is already running.'; exit 2 }
-  Assert-BootstrapNoOldWorker $script:bootstrapRoot
+  Assert-CfsUpdatePowerShellIdle $script:bootstrapRoot
   if (-not $StartedAt) { $StartedAt = [DateTime]::UtcNow.ToString('o') }
   $parsedStart = [DateTimeOffset]::MinValue
   if (-not [DateTimeOffset]::TryParse($StartedAt,[ref]$parsedStart)) { throw 'Invalid update start timestamp.' }
@@ -254,8 +319,8 @@ try {
   $statusDirectory = Assert-BootstrapPlainPath (Join-Path $script:bootstrapRoot 'artifacts\self-update')
   $null = New-Item -ItemType Directory -Force -Path $statusDirectory
   $script:bootstrapStatus = Assert-BootstrapPlainPath (Join-Path $statusDirectory 'status.json')
-  $stableCore = Assert-BootstrapPlainPath (Join-Path $cacheRoot 'bootstrap-v1.ps1')
-  if (-not [IO.File]::Exists($stableCore)) { [IO.File]::Copy($PSCommandPath,$stableCore,$false) }
+  # Keep the first shipped recovery entry as a historical fallback.
+  # The installed entry is now preferred, so never seed the old slot with this revision.
   Write-BootstrapStatus 'running' 'queued' 'Fetching a fresh updater from the official distribution.'
   Send-BootstrapAck 'started' 'Update maintenance started. Keep this window open until the result is shown.'
   $repository = Assert-BootstrapPlainPath (Join-Path $cacheRoot 'repository.git')

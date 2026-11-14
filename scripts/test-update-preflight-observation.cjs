@@ -4,7 +4,7 @@ const root=fs.mkdtempSync(path.join(process.env.CFS_PREFLIGHT_TEST_DIR||os.tmpdi
 const app=path.join(root,'app');fs.mkdirSync(path.join(app,'scripts'),{recursive:true});
 for(const file of JSON.parse(fs.readFileSync(path.join(__dirname,'cfs-update-contract.json'),'utf8')).files)fs.copyFileSync(path.join(__dirname,'..',file),path.join(app,file));
 fs.appendFileSync(path.join(app,'scripts/cfs-update-maintenance.ps1'),`
-function Assert-CfsNoLegacyUpdateWorker {
+function Assert-CfsUpdatePowerShellIdle {
  param([string]$Root)
  $directory=Join-Path $Root 'artifacts/self-update/observability/preflight-fixture'
  $health=Get-Content -LiteralPath (Join-Path $directory 'health.json') -Raw|ConvertFrom-Json
